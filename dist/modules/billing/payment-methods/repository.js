@@ -1,5 +1,10 @@
 import { pool } from '../../../config/database.js';
 import { BillingProvider } from '../shared/types.js';
+export const PAYMENT_METHOD_COLUMNS = `
+  id, organization_id, provider, provider_payment_method_id, type,
+  last4, brand, expiry_month, expiry_year, is_default, is_active,
+  billing_details, metadata, created_at, updated_at
+`;
 export class PaymentMethodsRepository {
     db;
     constructor(db = pool) {
@@ -26,7 +31,7 @@ export class PaymentMethodsRepository {
             ? 'organization_id = $1'
             : 'organization_id = $1 AND is_active = TRUE';
         const countResult = await db.query(`SELECT COUNT(*)::int AS total FROM payment_methods WHERE ${where}`, [orgId]);
-        const result = await db.query(`SELECT *
+        const result = await db.query(`SELECT ${PAYMENT_METHOD_COLUMNS}
          FROM payment_methods
         WHERE ${where}
         ORDER BY is_default DESC, created_at DESC
@@ -43,7 +48,7 @@ export class PaymentMethodsRepository {
          organization_id, provider, provider_payment_method_id, type, last4, brand,
          expiry_month, expiry_year, is_default, billing_details, metadata
        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
-       RETURNING *`, [
+       RETURNING ${PAYMENT_METHOD_COLUMNS}`, [
             orgId,
             body.provider,
             body.providerPaymentMethodId,
@@ -59,7 +64,7 @@ export class PaymentMethodsRepository {
         return result.rows[0];
     }
     async setDefault(orgId, paymentMethodId, db) {
-        const existing = await db.query(`SELECT * FROM payment_methods
+        const existing = await db.query(`SELECT ${PAYMENT_METHOD_COLUMNS} FROM payment_methods
         WHERE id = $1 AND organization_id = $2 AND is_active = TRUE
         FOR UPDATE`, [paymentMethodId, orgId]);
         if (!existing.rows[0])
@@ -70,14 +75,14 @@ export class PaymentMethodsRepository {
         const result = await db.query(`UPDATE payment_methods
           SET is_default = TRUE, updated_at = NOW()
         WHERE id = $1 AND organization_id = $2
-        RETURNING *`, [paymentMethodId, orgId]);
+        RETURNING ${PAYMENT_METHOD_COLUMNS}`, [paymentMethodId, orgId]);
         return result.rows[0] ?? null;
     }
     async deactivate(orgId, paymentMethodId, db = this.db) {
         const result = await db.query(`UPDATE payment_methods
           SET is_active = FALSE, is_default = FALSE, updated_at = NOW()
         WHERE id = $1 AND organization_id = $2 AND is_active = TRUE
-        RETURNING *`, [paymentMethodId, orgId]);
+        RETURNING ${PAYMENT_METHOD_COLUMNS}`, [paymentMethodId, orgId]);
         return result.rows[0] ?? null;
     }
 }

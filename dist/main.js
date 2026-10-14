@@ -1,30 +1,19 @@
+import './config/dns.js';
 import { buildApp } from './app.js';
 import { env } from './config/env.js';
 import { logger } from './config/logger.js';
 import { closeDatabase, connectDB } from './config/database.js';
 import { connectLogDB, logDB } from './config/log-database.js';
-import { startPgBoss, stopPgBoss } from './lib/pgboss.js';
+import { logProcessConnectionBudget } from './config/connection-budget.js';
+import { retryConfiguredStartupOperation } from './config/startup-retry.js';
+import { closeRedis, connectRedis } from './config/redis.js';
+import { pgmq } from './lib/pgmq.js';
+import { memoryDiagnostics } from './lib/memory-diagnostics.js';
+// Multi-sample memory diagnostics monitoring
+memoryDiagnostics.startMonitoring();
 const bootLogger = logger.child({ component: 'bootstrap' });
-const HEAP_CHECK_INTERVAL_MS = 60_000;
-const HEAP_GROWTH_THRESHOLD = 0.15;
-let lastHeapUsed = process.memoryUsage().heapUsed;
-setInterval(() => {
-    const current = process.memoryUsage();
-    const growth = lastHeapUsed > 0 ? (current.heapUsed - lastHeapUsed) / lastHeapUsed : 0;
-    if (growth > HEAP_GROWTH_THRESHOLD) {
-        bootLogger.warn({
-            heapUsedMB: Math.round(current.heapUsed / 1024 / 1024),
-            heapTotalMB: Math.round(current.heapTotal / 1024 / 1024),
-            rssMB: Math.round(current.rss / 1024 / 1024),
-            growthPercent: Math.round(growth * 100),
-        }, 'Significant heap growth detected');
-    }
-    lastHeapUsed = current.heapUsed;
-}, HEAP_CHECK_INTERVAL_MS).unref();
 let app = null;
-let databaseConnected = false;
-let logDatabaseConnected = false;
-let pgBossStarted = false;
+let redisConnected = false;
 let shutdownPromise = null;
 async function closeStep(name, enabled, close) {
     if (!enabled)
@@ -57,19 +46,21 @@ function shutdown(reason, exitCode) {
             await app.close();
             app = null;
         });
-        await closeStep('pg-boss', pgBossStarted, async () => {
-            await stopPgBoss(Math.min(10_000, env.SHUTDOWN_TIMEOUT_MS));
-            pgBossStarted = false;
+        await closeStep('pgmq', true, async () => {
+            await pgmq.close();
         });
-        await closeStep('log-database', logDatabaseConnected, async () => {
+        await closeStep('redis', redisConnected, async () => {
+            await closeRedis();
+            redisConnected = false;
+        });
+        await closeStep('log-database', true, async () => {
             await logDB.close();
-            logDatabaseConnected = false;
         });
-        await closeStep('database', databaseConnected, async () => {
+        await closeStep('database', true, async () => {
             await closeDatabase();
-            databaseConnected = false;
         });
         clearTimeout(forceExitTimer);
+        memoryDiagnostics.stopMonitoring();
         bootLogger.info({ reason, exitCode }, 'Shutdown complete');
         process.exit(exitCode);
     })();
@@ -89,19 +80,19 @@ process.once('uncaughtException', (err) => {
 async function bootstrap() {
     try {
         bootLogger.info('Connecting to datastores');
-        await connectDB();
-        databaseConnected = true;
-        await connectLogDB();
-        logDatabaseConnected = true;
-        // Redis connection disabled — see config/redis.ts. Re-enable by
-        // restoring the import above and uncommenting the two lines below.
-        // await connectRedis();
-        // redisConnected = true;
-        await startPgBoss();
-        pgBossStarted = true;
-        // if (!(await checkRedis())) {
-        //   throw new Error('Redis health check failed');
-        // }
+        logProcessConnectionBudget('api', bootLogger);
+        await retryConfiguredStartupOperation('primary database', connectDB, bootLogger);
+        await retryConfiguredStartupOperation('log database', connectLogDB, bootLogger);
+        try {
+            await connectRedis();
+            redisConnected = true;
+            bootLogger.info('Redis lookup cache connected');
+        }
+        catch (redisErr) {
+            if (env.REDIS_REQUIRED)
+                throw redisErr;
+            bootLogger.warn({ err: redisErr }, 'Redis connection failed during bootstrap (degrading cleanly to DB)');
+        }
         bootLogger.info('All datastores connected');
         app = await buildApp();
         await app.listen({ port: env.PORT, host: env.HOST });
@@ -112,6 +103,7 @@ async function bootstrap() {
             pid: process.pid,
             memoryMB: Math.round(process.memoryUsage().rss / 1024 / 1024),
         }, 'Server started successfully');
+        memoryDiagnostics.markStartupComplete();
         if (typeof process.send === 'function')
             process.send('ready');
     }

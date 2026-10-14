@@ -3,15 +3,35 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import type { Pool, PoolClient } from 'pg';
 import type { Logger } from 'pino';
+import { isTransientPostgresError } from '../../config/postgres-ssl.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 export const LOGDB_MIGRATIONS_DIR = path.resolve(
   __dirname,
-  '../../../database/migrations/logdb',
+  '../../../database/logdbv2/migrations',
 );
 
-const LOGDB_MIGRATION_LOCK_KEY = 74_373_201;
+export const LOGDB_MIGRATION_LOCK_KEY = 74_373_201;
+
+/**
+ * Serialize forward and rollback operations without waiting indefinitely.
+ * Advisory locks are session-scoped, so callers must hold the same client
+ * until releaseLogDbMigrationLock() completes.
+ */
+export async function acquireLogDbMigrationLock(client: PoolClient): Promise<void> {
+  const result = await client.query<{ acquired: boolean }>(
+    'SELECT pg_try_advisory_lock($1) AS acquired',
+    [LOGDB_MIGRATION_LOCK_KEY],
+  );
+  if (result.rows[0]?.acquired !== true) {
+    throw new Error('Another Log DB migration or rollback already holds the migration lock');
+  }
+}
+
+export async function releaseLogDbMigrationLock(client: PoolClient): Promise<void> {
+  await client.query('SELECT pg_advisory_unlock($1)', [LOGDB_MIGRATION_LOCK_KEY]);
+}
 
 export interface LogDbMigrationFile {
   filename: string;
@@ -19,10 +39,25 @@ export interface LogDbMigrationFile {
   basename: string;
 }
 
+export type LogDbMigrationExecutionMode = 'automatic' | 'operator';
+
 export interface ApplyLogDbMigrationsOptions {
   dryRun?: boolean;
   only?: string[];
   logger?: Logger;
+  /**
+   * `automatic` is for unattended process startup and defers migrations marked
+   * `requires-operator-drain`. `operator` executes every selected migration and
+   * leaves each migration's own safety gates authoritative.
+   *
+   * Defaults to `operator` when omitted. A no-options call executes every
+   * pending migration's SQL unconditionally, including drain-gated files like
+   * `030_events_logs_idempotency.up.sql` — safe only against an empty/fresh
+   * database (e.g. scratch test pools). Never call this without
+   * `executionMode: 'automatic'` from unattended process startup against a
+   * live/populated database.
+   */
+  executionMode?: LogDbMigrationExecutionMode;
 }
 
 export interface ApplyLogDbMigrationsResult {
@@ -30,6 +65,8 @@ export interface ApplyLogDbMigrationsResult {
   found: number;
   applied: number;
   skipped: number;
+  /** Pending operator-only migrations included in `skipped`. */
+  deferred: number;
   failed: number;
 }
 
@@ -75,12 +112,11 @@ async function ensureMigrationsTable(client: PoolClient): Promise<void> {
   `);
 }
 
-async function hasMigrationBeenApplied(client: PoolClient, filename: string): Promise<boolean> {
-  const applied = await client.query<{ id: number }>(
-    'SELECT id FROM logdb_migrations WHERE filename = $1',
-    [filename],
+async function getAppliedMigrationFilenames(client: PoolClient): Promise<Set<string>> {
+  const applied = await client.query<{ filename: string }>(
+    'SELECT filename FROM logdb_migrations',
   );
-  return applied.rows.length > 0;
+  return new Set(applied.rows.map((row) => row.filename));
 }
 
 async function recordMigration(
@@ -105,6 +141,10 @@ function hasNoTransactionDirective(sql: string): boolean {
   return /^--\s*codex-logdb-migration:\s*no-transaction\b/im.test(sql);
 }
 
+export function requiresOperatorDrain(sql: string): boolean {
+  return /^--\s*codex-logdb-migration:\s*requires-operator-drain\b/im.test(sql);
+}
+
 async function executeNoTransactionMigration(client: PoolClient, sql: string): Promise<void> {
   const statements = sql
     .split(';')
@@ -116,23 +156,37 @@ async function executeNoTransactionMigration(client: PoolClient, sql: string): P
   }
 }
 
+type ApplyOneMigrationStatus = 'applied' | 'already-applied' | 'dry-run' | 'deferred';
+
+interface ApplyOneMigrationResult {
+  status: ApplyOneMigrationStatus;
+  durationMs: number;
+}
+
 async function applyOneMigration(
   client: PoolClient,
   migration: LogDbMigrationFile,
   dryRun: boolean,
-): Promise<{ applied: boolean; durationMs: number }> {
-  if (await hasMigrationBeenApplied(client, migration.filename)) {
-    return { applied: false, durationMs: 0 };
+  executionMode: LogDbMigrationExecutionMode,
+  appliedFilenames: Set<string>,
+): Promise<ApplyOneMigrationResult> {
+  if (appliedFilenames.has(migration.filename)) {
+    return { status: 'already-applied', durationMs: 0 };
   }
 
   if (dryRun) {
-    return { applied: false, durationMs: 0 };
+    return { status: 'dry-run', durationMs: 0 };
   }
 
   const sql = await fs.readFile(migration.filepath, 'utf8');
+  if (executionMode === 'automatic' && requiresOperatorDrain(sql)) {
+    return { status: 'deferred', durationMs: 0 };
+  }
+
   if (sql.trim().length === 0) {
     await recordMigration(client, migration.filename, 0);
-    return { applied: true, durationMs: 0 };
+    appliedFilenames.add(migration.filename);
+    return { status: 'applied', durationMs: 0 };
   }
 
   const startedAt = Date.now();
@@ -155,7 +209,8 @@ async function applyOneMigration(
 
   const durationMs = Date.now() - startedAt;
   await recordMigration(client, migration.filename, durationMs);
-  return { applied: true, durationMs };
+  appliedFilenames.add(migration.filename);
+  return { status: 'applied', durationMs };
 }
 
 export async function applyLogDbMigrations(
@@ -163,6 +218,7 @@ export async function applyLogDbMigrations(
   options: ApplyLogDbMigrationsOptions = {},
 ): Promise<ApplyLogDbMigrationsResult> {
   const dryRun = options.dryRun === true;
+  const executionMode = options.executionMode ?? 'operator';
   const allMigrations = await findLogDbMigrationFiles();
   const filters = options.only?.map((value) => value.trim()).filter(Boolean) ?? [];
   const migrations = filters.length === 0
@@ -178,28 +234,65 @@ export async function applyLogDbMigrations(
     found: migrations.length,
     applied: 0,
     skipped: 0,
+    deferred: 0,
     failed: 0,
   };
 
-  const client = await pool.connect();
+  let client: PoolClient;
+  let attempts = 0;
+  while (true) {
+    try {
+      client = await pool.connect();
+      break;
+    } catch (err) {
+      attempts++;
+      if (attempts < 5 && isTransientPostgresError(err)) {
+        await new Promise((r) => setTimeout(r, Math.min(3000, 500 * 2 ** (attempts - 1))));
+        continue;
+      }
+      throw err;
+    }
+  }
+  let lockAcquired = false;
   try {
-    await client.query('SELECT pg_advisory_lock($1)', [LOGDB_MIGRATION_LOCK_KEY]);
+    await acquireLogDbMigrationLock(client);
+    lockAcquired = true;
     await ensureMigrationsTable(client);
+    const appliedFilenames = await getAppliedMigrationFilenames(client);
 
     for (const migration of migrations) {
       try {
-        const applied = await applyOneMigration(client, migration, dryRun);
-        if (applied.applied) {
+        const outcome = await applyOneMigration(
+          client,
+          migration,
+          dryRun,
+          executionMode,
+          appliedFilenames,
+        );
+        if (outcome.status === 'applied') {
           result.applied += 1;
           options.logger?.info(
-            { migration: migration.filename, durationMs: applied.durationMs },
+            { migration: migration.filename, durationMs: outcome.durationMs },
             'Log DB migration applied',
+          );
+        } else if (outcome.status === 'deferred') {
+          result.skipped += 1;
+          result.deferred += 1;
+          options.logger?.warn(
+            {
+              migration: migration.filename,
+              executionMode,
+              operatorCommand: `npm run db:migrate:logdb -- --only ${migration.filename}`,
+            },
+            'Operator-drained Log DB migration deferred during automatic startup',
           );
         } else {
           result.skipped += 1;
           options.logger?.debug(
-            { migration: migration.filename, dryRun },
-            dryRun ? 'Log DB migration dry-run skipped' : 'Log DB migration already applied',
+            { migration: migration.filename, dryRun, executionMode },
+            outcome.status === 'dry-run'
+              ? 'Log DB migration dry-run skipped'
+              : 'Log DB migration already applied',
           );
         }
       } catch (err) {
@@ -211,16 +304,20 @@ export async function applyLogDbMigrations(
 
     options.logger?.info(
       {
+        executionMode,
         found: result.found,
         applied: result.applied,
         skipped: result.skipped,
+        deferred: result.deferred,
         failed: result.failed,
       },
       'Log DB migrations complete',
     );
     return result;
   } finally {
-    await client.query('SELECT pg_advisory_unlock($1)', [LOGDB_MIGRATION_LOCK_KEY]).catch(() => undefined);
+    if (lockAcquired) {
+      await releaseLogDbMigrationLock(client).catch(() => undefined);
+    }
     client.release();
   }
 }

@@ -167,10 +167,46 @@ export class WorkerMetrics {
   errorGroupsReused = 0;
   errorRegressions = 0;
   errorDuplicates = 0;
+  /**
+   * Times the set-based error grouper bailed out to per-event resolution because
+   * a matched group had `merged_into` set. This is the only remaining O(N)
+   * database path in error ingestion, so a non-trivial rate here is the signal
+   * that error-batch query count has degraded from O(1) to ~3N.
+   */
+  errorGroupMergeFallbacks = 0;
+  errorGroupMergeFallbackEvents = 0;
+
+  // ── Write admission (DB concurrency ceiling) ──────────────────────────────
+  /** Configured concurrent ingest transactions permitted. */
+  private writePermits = 0;
+  /** Permits currently held (i.e. transactions in flight). */
+  private writeInFlight = 0;
+  /** Handlers waiting for a permit — the saturation signal. */
+  private writeQueued = 0;
+  /** High-water mark of `writeQueued`, so short bursts are not missed by scrapes. */
+  private writeQueuedPeak = 0;
   private readonly errorGroupLookupMs = new Map<string, LatencyStat>();
   private readonly errorGroupUpsertMs = new Map<string, LatencyStat>();
   private readonly errorTransactionMs = new Map<string, LatencyStat>();
   private readonly errorDomainEventMs = new Map<string, LatencyStat>();
+
+  // ── Database, Pool, Lock, and Queue Observability ────────────────────────
+  private readonly poolAcquireMs = new Map<string, LatencyStat>();
+  private readonly poolAcquireTimeouts = new Map<string, number>();
+  private readonly transactionMs = new Map<string, LatencyStat>();
+  private readonly transactionCommitMs = new Map<string, LatencyStat>();
+  private readonly transactionRollbacks = new Map<string, number>();
+  private readonly longTransactions = new Map<string, number>();
+  private readonly querySlowCount = new Map<string, number>();
+  private readonly queryErrors = new Map<string, number>();
+  private readonly lockWaitMs = new Map<string, LatencyStat>();
+  private readonly lockWaits = new Map<string, number>();
+  private readonly deadlocks = new Map<string, number>();
+  private readonly queuePollMs = new Map<string, LatencyStat>();
+  private readonly queueMessagesFetched = new Map<string, number>();
+  private readonly queueEmptyPolls = new Map<string, number>();
+  private readonly queueVisibilityTimeouts = new Map<string, number>();
+  private readonly startupPhaseMs = new Map<string, number>();
 
   private observe(map: Map<string, LatencyStat>, key: string, ms: number): void {
     if (!Number.isFinite(ms) || ms < 0) return;
@@ -295,11 +331,98 @@ export class WorkerMetrics {
     this.errorDuplicates += 1;
   }
 
+  /** One batch fell back to per-event group resolution; `events` is that batch's size. */
+  recordErrorGroupMergeFallback(events: number): void {
+    this.errorGroupMergeFallbacks += 1;
+    if (Number.isFinite(events) && events > 0) {
+      this.errorGroupMergeFallbackEvents += Math.trunc(events);
+    }
+  }
+
+  /** Configured write-admission permits (reported once at worker construction). */
+  setWritePermits(permits: number): void {
+    if (!Number.isFinite(permits) || permits <= 0) return;
+    this.writePermits = Math.trunc(permits);
+  }
+
+  /**
+   * Current admission occupancy. Called on every admit, so the peak is tracked
+   * here rather than sampled — a burst that fills and drains between two Prometheus
+   * scrapes would otherwise be invisible, which is exactly the event we most need
+   * to see when diagnosing a latency spike.
+   */
+  setWriteAdmission(inFlight: number, queued: number): void {
+    this.writeInFlight = Number.isFinite(inFlight) ? Math.max(0, Math.trunc(inFlight)) : 0;
+    this.writeQueued = Number.isFinite(queued) ? Math.max(0, Math.trunc(queued)) : 0;
+    if (this.writeQueued > this.writeQueuedPeak) this.writeQueuedPeak = this.writeQueued;
+  }
+
   recordErrorLatencies(lookup: number | null, upsert: number | null, transaction: number | null, domain: number | null): void {
     if (lookup !== null) this.observe(this.errorGroupLookupMs, 'lookup', lookup);
     if (upsert !== null) this.observe(this.errorGroupUpsertMs, 'upsert', upsert);
     if (transaction !== null) this.observe(this.errorTransactionMs, 'transaction', transaction);
     if (domain !== null) this.observe(this.errorDomainEventMs, 'domain_event', domain);
+  }
+
+  recordPoolAcquire(pool: string, durationMs: number): void {
+    this.observe(this.poolAcquireMs, pool, durationMs);
+  }
+
+  recordPoolAcquireTimeout(pool: string): void {
+    this.poolAcquireTimeouts.set(pool, (this.poolAcquireTimeouts.get(pool) ?? 0) + 1);
+  }
+
+  recordTransaction(op: string, durationMs: number, committed: boolean, commitDurationMs?: number): void {
+    this.observe(this.transactionMs, op, durationMs);
+    if (commitDurationMs != null && commitDurationMs >= 0) {
+      this.observe(this.transactionCommitMs, op, commitDurationMs);
+    }
+    if (!committed) {
+      this.transactionRollbacks.set(op, (this.transactionRollbacks.get(op) ?? 0) + 1);
+    }
+    if (durationMs > 1000) {
+      this.longTransactions.set(op, (this.longTransactions.get(op) ?? 0) + 1);
+    }
+  }
+
+  recordDbQuery(op: string, durationMs: number, isSlow = false): void {
+    this.observe(this.dbQueryMs, op, durationMs);
+    if (isSlow || durationMs > 1000) {
+      this.querySlowCount.set(op, (this.querySlowCount.get(op) ?? 0) + 1);
+    }
+  }
+
+  recordDbQueryError(op: string, reason = 'unknown'): void {
+    const key = `${op}|${reason}`;
+    this.queryErrors.set(key, (this.queryErrors.get(key) ?? 0) + 1);
+  }
+
+  recordLockWait(table: string, durationMs: number): void {
+    this.observe(this.lockWaitMs, table, durationMs);
+    this.lockWaits.set(table, (this.lockWaits.get(table) ?? 0) + 1);
+  }
+
+  recordDeadlock(table: string): void {
+    this.deadlocks.set(table, (this.deadlocks.get(table) ?? 0) + 1);
+  }
+
+  recordQueuePoll(queue: string, durationMs: number, messagesFetched: number): void {
+    this.observe(this.queuePollMs, queue, durationMs);
+    if (messagesFetched > 0) {
+      this.queueMessagesFetched.set(queue, (this.queueMessagesFetched.get(queue) ?? 0) + messagesFetched);
+    } else {
+      this.queueEmptyPolls.set(queue, (this.queueEmptyPolls.get(queue) ?? 0) + 1);
+    }
+  }
+
+  recordVisibilityTimeoutFailure(queue: string): void {
+    this.queueVisibilityTimeouts.set(queue, (this.queueVisibilityTimeouts.get(queue) ?? 0) + 1);
+  }
+
+  recordStartupPhase(phase: string, durationMs: number): void {
+    if (Number.isFinite(durationMs) && durationMs >= 0) {
+      this.startupPhaseMs.set(phase, durationMs);
+    }
   }
 
   recordRollupSuccess(stats: RollupRunStats): void {
@@ -338,6 +461,42 @@ export class WorkerMetrics {
     counter('ingest_error_groups_reused_total', 'Existing error groups reused.', this.errorGroupsReused);
     counter('ingest_error_regressions_total', 'Resolved error groups regressed to open.', this.errorRegressions);
     counter('ingest_error_duplicates_total', 'Duplicate error events rejected.', this.errorDuplicates);
+    counter(
+      'ingest_error_group_merge_fallback_total',
+      'Error batches that fell back to per-event group resolution (query count degrades to O(N)).',
+      this.errorGroupMergeFallbacks,
+    );
+    counter(
+      'ingest_error_group_merge_fallback_events_total',
+      'Error events processed through the per-event group resolution fallback.',
+      this.errorGroupMergeFallbackEvents,
+    );
+
+    // ── Write admission ────────────────────────────────────────────────────
+    // Read these three together to tell capacity problems apart from DB problems:
+    //   queued > 0 sustained          -> not enough write capacity (raise permits/pool)
+    //   in_flight == permits, queued 0 -> perfectly saturated, this is the goal
+    //   in_flight < permits but slow   -> the database is the bottleneck, not admission
+    gauge(
+      'ingest_write_admission_permits',
+      'Configured ceiling on concurrent ingest database transactions.',
+      this.writePermits,
+    );
+    gauge(
+      'ingest_write_admission_in_flight',
+      'Ingest database transactions currently holding an admission permit.',
+      this.writeInFlight,
+    );
+    gauge(
+      'ingest_write_admission_queued',
+      'Job handlers waiting for a write-admission permit.',
+      this.writeQueued,
+    );
+    gauge(
+      'ingest_write_admission_queued_peak',
+      'High-water mark of handlers waiting for a write-admission permit.',
+      this.writeQueuedPeak,
+    );
 
     const queueMetrics: Array<[keyof QueueCounters, string, string]> = [
       ['jobsProcessed', 'ingest_jobs_processed_total', 'Jobs completed by the ingestion workers.'],
@@ -531,6 +690,16 @@ export class WorkerMetrics {
           state: row.state,
         }));
       }
+
+      if (depth.perEventType) {
+        out.push('# HELP ingest_queue_jobs_by_event_type Jobs per event type broken down by lifecycle status (pending, inserting, failed).');
+        out.push('# TYPE ingest_queue_jobs_by_event_type gauge');
+        for (const [type, info] of Object.entries(depth.perEventType)) {
+          out.push(formatSample('ingest_queue_jobs_by_event_type', info.pending, { event_type: type, status: 'pending' }));
+          out.push(formatSample('ingest_queue_jobs_by_event_type', info.inserting, { event_type: type, status: 'inserting' }));
+          out.push(formatSample('ingest_queue_jobs_by_event_type', info.failed, { event_type: type, status: 'failed' }));
+        }
+      }
     }
 
     if (dbPools.length > 0) {
@@ -543,6 +712,79 @@ export class WorkerMetrics {
         out.push(formatSample('ingest_db_pool_connections', inUse, { pool: pool.name, state: 'in_use' }));
         out.push(formatSample('ingest_db_pool_connections', pool.waiting, { pool: pool.name, state: 'waiting' }));
       }
+    }
+
+    // Database Pool Latency & Timeouts
+    latency('ingest_db_pool_acquire_duration_ms', 'Database connection acquisition latency', this.poolAcquireMs, (pool) => ({ pool }));
+    out.push('# HELP ingest_db_pool_acquire_timeout_total Connection acquisition timeouts on pool.');
+    out.push('# TYPE ingest_db_pool_acquire_timeout_total counter');
+    for (const [pool, count] of this.poolAcquireTimeouts) {
+      out.push(formatSample('ingest_db_pool_acquire_timeout_total', count, { pool }));
+    }
+
+    // Database Transactions
+    latency('ingest_db_transaction_duration_ms', 'Database transaction duration', this.transactionMs, (op) => ({ op }));
+    latency('ingest_db_transaction_commit_duration_ms', 'Database transaction commit duration', this.transactionCommitMs, (op) => ({ op }));
+    out.push('# HELP ingest_db_transaction_rollbacks_total Database transactions rolled back.');
+    out.push('# TYPE ingest_db_transaction_rollbacks_total counter');
+    for (const [op, count] of this.transactionRollbacks) {
+      out.push(formatSample('ingest_db_transaction_rollbacks_total', count, { op }));
+    }
+    out.push('# HELP ingest_db_long_transactions_total Database transactions exceeding 1000ms threshold.');
+    out.push('# TYPE ingest_db_long_transactions_total counter');
+    for (const [op, count] of this.longTransactions) {
+      out.push(formatSample('ingest_db_long_transactions_total', count, { op }));
+    }
+
+    // Database Queries
+    out.push('# HELP ingest_db_slow_queries_total Individual SQL queries exceeding 1000ms threshold.');
+    out.push('# TYPE ingest_db_slow_queries_total counter');
+    for (const [op, count] of this.querySlowCount) {
+      out.push(formatSample('ingest_db_slow_queries_total', count, { op }));
+    }
+    out.push('# HELP ingest_db_query_errors_total Database query errors by operation and sanitized reason.');
+    out.push('# TYPE ingest_db_query_errors_total counter');
+    for (const [key, count] of this.queryErrors) {
+      const [op, reason] = key.split('|', 2);
+      out.push(formatSample('ingest_db_query_errors_total', count, { op: op ?? 'unknown', reason: reason ?? 'unknown' }));
+    }
+
+    // Locks & Deadlocks
+    latency('ingest_db_lock_wait_duration_ms', 'Lock acquisition wait duration', this.lockWaitMs, (table) => ({ table }));
+    out.push('# HELP ingest_db_lock_waits_total Database row/table lock wait events.');
+    out.push('# TYPE ingest_db_lock_waits_total counter');
+    for (const [table, count] of this.lockWaits) {
+      out.push(formatSample('ingest_db_lock_waits_total', count, { table }));
+    }
+    out.push('# HELP ingest_db_deadlocks_total Database 40P01 deadlock occurrences.');
+    out.push('# TYPE ingest_db_deadlocks_total counter');
+    for (const [table, count] of this.deadlocks) {
+      out.push(formatSample('ingest_db_deadlocks_total', count, { table }));
+    }
+
+    // Queue Polling
+    latency('ingest_queue_poll_duration_ms', 'Queue polling operation latency', this.queuePollMs, (queue) => ({ queue }));
+    out.push('# HELP ingest_queue_messages_fetched_total Messages fetched from queue polling.');
+    out.push('# TYPE ingest_queue_messages_fetched_total counter');
+    for (const [queue, count] of this.queueMessagesFetched) {
+      out.push(formatSample('ingest_queue_messages_fetched_total', count, { queue }));
+    }
+    out.push('# HELP ingest_queue_empty_polls_total Poll operations returning 0 messages.');
+    out.push('# TYPE ingest_queue_empty_polls_total counter');
+    for (const [queue, count] of this.queueEmptyPolls) {
+      out.push(formatSample('ingest_queue_empty_polls_total', count, { queue }));
+    }
+    out.push('# HELP ingest_queue_visibility_timeout_failures_total Queue visibility timeout expiration failures.');
+    out.push('# TYPE ingest_queue_visibility_timeout_failures_total counter');
+    for (const [queue, count] of this.queueVisibilityTimeouts) {
+      out.push(formatSample('ingest_queue_visibility_timeout_failures_total', count, { queue }));
+    }
+
+    // Startup Phase Timing
+    out.push('# HELP ingest_startup_phase_duration_ms Startup stage duration in milliseconds.');
+    out.push('# TYPE ingest_startup_phase_duration_ms gauge');
+    for (const [phase, ms] of this.startupPhaseMs) {
+      out.push(formatSample('ingest_startup_phase_duration_ms', ms, { phase }));
     }
 
     out.push('');

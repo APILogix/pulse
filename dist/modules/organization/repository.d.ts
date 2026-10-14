@@ -20,7 +20,7 @@ export declare class OrganizationRepository extends BaseRepository {
      * (is_sensitive = TRUE) are retained regardless — compliance/forensics keep
      * those even when normal operational logs roll off.
      */
-    purgeExpiredAuditLogs(): Promise<number>;
+    purgeExpiredAuditLogs(batchSize?: number): Promise<number>;
     /**
      * Retrieves the multi-organization context for a given user.
      * This is called during the login flow to append context to the response.

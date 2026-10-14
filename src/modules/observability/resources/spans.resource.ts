@@ -47,6 +47,11 @@ const spanFields: Record<string, FieldDef> = {
   messagingOperation: { column: 'messaging_operation', type: 'string', filterable: true, projectable: true, label: 'Messaging Operation' },
   requestId: { column: 'request_id', type: 'string', filterable: true, projectable: true, label: 'Request ID' },
   tenantId: { column: 'tenant_id', type: 'string', filterable: true, projectable: true, label: 'Tenant' },
+  startTime: { column: 'start_time', type: 'timestamp', filterable: true, sortable: true, projectable: true, label: 'Start Time' },
+  endTime: { column: 'end_time', type: 'timestamp', filterable: true, sortable: true, projectable: true, label: 'End Time' },
+  attributes: { column: 'attributes', type: 'json', filterable: true, projectable: true, label: 'Attributes' },
+  events: { column: 'events', type: 'json', filterable: true, projectable: true, label: 'Events' },
+  links: { column: 'links', type: 'json', filterable: true, projectable: true, label: 'Links' },
 };
 
 export const spansResource: ExplorerResource = {
@@ -70,7 +75,11 @@ export const spansResource: ExplorerResource = {
   defaultSort: { field: 'occurredAt', direction: 'desc' },
   defaultProjection: [
     'id', 'publicId', 'environment', 'occurredAt', 'traceId', 'spanId', 'parentSpanId', 'name',
-    'spanKind', 'spanType', 'spanStatus', 'endpoint', 'depth', 'service', 'durationMs', 'dbSystem', 'httpMethod', 'httpStatusCode',
+    'spanKind', 'spanType', 'spanStatus', 'endpoint', 'depth', 'service', 'durationMs', 'exclusiveDurationMs',
+    'dbSystem', 'dbName', 'dbOperation', 'dbCollection', 'dbStatement',
+    'netPeerIp', 'netPeerPort',
+    'httpMethod', 'httpStatusCode', 'startTime', 'endTime',
+    'attributes', 'events',
   ],
   preferredIndexes: ['idx_events_spans_trace_time', 'idx_events_spans_parent_time', 'idx_events_spans_type_time', 'idx_events_spans_endpoint_time'],
   errorPredicate: "span_status = 'error' OR severity IN ('error','critical','fatal')",

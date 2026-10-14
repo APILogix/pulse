@@ -47,6 +47,12 @@ export interface InvoicePaymentResult {
   };
 }
 
+export const INVOICE_COLUMNS = `
+  id, organization_id, subscription_id, provider, provider_invoice_id, invoice_number,
+  status, currency, subtotal_amount, tax_amount, discount_amount, total_amount,
+  amount_paid, period_start, period_end, due_at, paid_at, pdf_url, created_at
+`;
+
 export class InvoicesRepository {
   constructor(private readonly db: Pool = pool) {}
 
@@ -88,7 +94,7 @@ export class InvoicesRepository {
     const limitOffsetParams = options.status ? `LIMIT $3 OFFSET $4` : `LIMIT $2 OFFSET $3`;
 
     const result = await db.query(
-      `SELECT * FROM invoices WHERE ${whereClause} ORDER BY created_at DESC ${limitOffsetParams}`,
+      `SELECT ${INVOICE_COLUMNS} FROM invoices WHERE ${whereClause} ORDER BY created_at DESC ${limitOffsetParams}`,
       dataValues
     );
 
@@ -97,7 +103,7 @@ export class InvoicesRepository {
 
   async getInvoiceById(orgId: string, invoiceId: string, db: Db = this.db): Promise<InvoiceRow | null> {
     const result = await db.query(
-      `SELECT * FROM invoices WHERE id = $1 AND organization_id = $2 AND deleted_at IS NULL`,
+      `SELECT ${INVOICE_COLUMNS} FROM invoices WHERE id = $1 AND organization_id = $2 AND deleted_at IS NULL`,
       [invoiceId, orgId]
     );
     return result.rows[0] || null;
@@ -106,7 +112,7 @@ export class InvoicesRepository {
   async getUpcomingInvoicePreview(orgId: string, db: Db = this.db): Promise<Record<string, unknown> | null> {
     const result = await db.query(
       `WITH active_subscription AS (
-         SELECT os.*
+         SELECT os.id, os.organization_id, os.plan_id, os.billing_interval, os.current_period_end, os.status, os.created_at
          FROM organization_subscriptions os
          WHERE os.organization_id = $1
            AND os.status IN ('trialing','active','past_due')
@@ -118,7 +124,7 @@ export class InvoicesRepository {
          LIMIT 1
        ),
        price AS (
-         SELECT pp.*
+         SELECT pp.currency, pp.amount_minor, pp.is_default, pp.starts_at, pp.created_at
          FROM plan_prices pp
          JOIN active_subscription os ON os.plan_id = pp.plan_id
          WHERE pp.billing_interval = os.billing_interval
@@ -129,10 +135,10 @@ export class InvoicesRepository {
          LIMIT 1
        ),
        usage AS (
-         SELECT *
-         FROM organization_usage_current_period
-         WHERE organization_id = $1
-         ORDER BY period_end DESC
+         SELECT usage.organization_id, usage.events_used, usage.event_limit, usage.ai_credits_used, usage.ai_credit_limit, usage.overage_events, usage.overage_ai_credits
+         FROM organization_usage_current_period usage
+         WHERE usage.organization_id = $1
+         ORDER BY usage.period_end DESC
          LIMIT 1
        )
        SELECT jsonb_build_object(
@@ -171,7 +177,7 @@ export class InvoicesRepository {
 
   async getInvoiceByIdForUpdate(orgId: string, invoiceId: string, db: PoolClient): Promise<InvoiceRow | null> {
     const result = await db.query(
-      `SELECT * FROM invoices
+      `SELECT ${INVOICE_COLUMNS} FROM invoices
        WHERE id = $1 AND organization_id = $2 AND deleted_at IS NULL
        FOR UPDATE`,
       [invoiceId, orgId]
@@ -247,7 +253,7 @@ export class InvoicesRepository {
            metadata = metadata || jsonb_build_object('last_payment_id', $4::uuid),
            updated_at = NOW()
        WHERE id = $1 AND organization_id = $2
-       RETURNING *`,
+       RETURNING ${INVOICE_COLUMNS}`,
       [invoice.id, invoice.organization_id, amountDue, paymentResult.rows[0].id]
     );
 

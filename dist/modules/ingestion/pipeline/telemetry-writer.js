@@ -33,12 +33,18 @@
  *     the event-analytics worker and the ingestion event-processor, NOT
  *     written here — this writer only persists raw events.
  */
-import { randomUUID } from 'crypto';
+import { createHash } from 'crypto';
+import { v7 as uuidv7, validate as uuidValidate } from 'uuid';
+import { generatePublicId, PUBLIC_ID_PREFIXES } from '../../../shared/utils/public-id-generator.js';
 import { STATUS_CODES } from 'http';
-import { parseSafeEpochMs, resolveTimestamp } from './event-normalizer.js';
+import { LIMITS, parseSafeEpochMs, resolveTimestamp } from './event-normalizer.js';
 import { RequestEnricher } from './request-enrichment.js';
 import { computeErrorFingerprint, ERROR_FINGERPRINT_VERSION } from '../../errors/fingerprint.js';
 import { env } from '../../../config/env.js';
+function resolveScopedTimestamp(event, occurredAtMs) {
+    const stable = parseSafeEpochMs(occurredAtMs);
+    return stable !== null && stable > 0 ? stable : resolveTimestamp(event);
+}
 export function parseSafeIsoTimestamp(raw, context) {
     if (raw === null || raw === undefined || raw === '') {
         return null;
@@ -158,6 +164,37 @@ const TRACE_ATTRIBUTE_DUPLICATES = new Set([
     'application_name', 'applicationName', 'application_version', 'applicationVersion',
     'release', 'timestamp',
 ]);
+const LOG_ATTR_DUPES = new Set([
+    'parentSpanId', 'parent_span_id', 'tenantId', 'tenant_id',
+    'name', 'loggerName', 'logger_name', 'logSource', 'log_source',
+    'logCategory', 'log_category', 'endpoint', 'httpMethod', 'http_method',
+    'statusCode', 'status_code', 'durationMs', 'duration_ms',
+    'environment', 'projectId', 'project_id', 'organizationId', 'organization_id',
+    'sdkName', 'sdk_name', 'sdkVersion', 'sdk_version',
+    'applicationName', 'application_name', 'applicationVersion', 'application_version',
+    'release', 'timestamp', 'eventId', 'event_id',
+    'requestId', 'request_id', 'sessionId', 'session_id',
+    'traceId', 'trace_id', 'spanId', 'span_id', 'level', 'message',
+]);
+const CRON_ATTR_DUPES = new Set([
+    'monitorSlug', 'monitor_slug', 'monitorName', 'monitor_name',
+    'status', 'duration', 'duration_ms',
+    'checkinType', 'checkin_type', 'scheduleType', 'schedule_type',
+    'startedAt', 'started_at', 'finishedAt', 'finished_at',
+    'isSuccess', 'is_success', 'tenantId', 'tenant_id',
+    'environment', 'projectId', 'project_id', 'organizationId', 'organization_id',
+    'sdkName', 'sdk_name', 'sdkVersion', 'sdk_version',
+    'applicationName', 'application_name', 'applicationVersion', 'application_version',
+    'release', 'timestamp', 'eventId', 'event_id',
+    'requestId', 'request_id', 'sessionId', 'session_id',
+    'traceId', 'trace_id', 'spanId', 'span_id',
+]);
+const RE_LOG_HTTP_METHOD = /^(GET|POST|PUT|DELETE|PATCH|OPTIONS|HEAD)\s+/;
+const RE_LOG_ENDPOINT = /^(?:GET|POST|PUT|DELETE|PATCH|OPTIONS|HEAD)\s+([^?\s]+)/;
+const RE_LOG_STATUS_CODE_1 = /HTTP.*?\s([2-5][0-9]{2})\b/;
+const RE_LOG_STATUS_CODE_2 = /\b([2-5][0-9]{2})\b.*?\s\d+ms/;
+const RE_LOG_DURATION_MS = /\b(\d+)\s*ms\b/;
+const RE_LOG_NAME_HTTP = /^(GET|POST|PUT|DELETE|PATCH)\s+/;
 function plainObject(v) {
     return v && typeof v === 'object' && !Array.isArray(v) ? v : null;
 }
@@ -199,24 +236,56 @@ function deleteAttrPath(attrs, path) {
             delete parent[key];
     }
 }
+function resolveDbSystem(attrs, fallback) {
+    const val = attrValue(attrs, 'db.system.name') ?? attrValue(attrs, 'db.system') ?? fallback;
+    return str(val, 50);
+}
+function resolveDbName(attrs, fallback) {
+    const val = attrValue(attrs, 'db.namespace') ?? attrValue(attrs, 'db.name') ?? fallback;
+    return str(val, 100);
+}
+function resolveDbOperation(attrs, fallback) {
+    const val = attrValue(attrs, 'db.operation.name') ?? attrValue(attrs, 'db.operation') ?? fallback;
+    return str(val, 50);
+}
+function resolveDbCollection(attrs, fallback) {
+    const val = attrValue(attrs, 'db.collection.name') ?? attrValue(attrs, 'db.collection') ?? fallback;
+    return str(val, 100);
+}
+function resolveDbStatement(attrs, fallback) {
+    const val = attrValue(attrs, 'db.query.text') ?? attrValue(attrs, 'db.statement') ?? attrValue(attrs, 'query') ?? fallback;
+    return str(val, 8192);
+}
+function resolvePeerAddress(attrs, fallback) {
+    const val = attrValue(attrs, 'server.address') ?? attrValue(attrs, 'net.peer.name') ?? attrValue(attrs, 'net.peer.ip') ?? fallback;
+    return str(val, 255);
+}
+function resolvePeerPort(attrs, fallback) {
+    const val = attrValue(attrs, 'server.port') ?? attrValue(attrs, 'net.peer.port') ?? fallback;
+    return num(val);
+}
 function normalizedSpanAttributes(attrs) {
-    const out = attrs ? { ...attrs } : {};
-    for (const path of SPAN_ATTRIBUTE_DUPLICATES)
-        deleteAttrPath(out, path);
-    return out;
+    // Preserve full attributes so users can inspect queries, parameters, and telemetry context without loss
+    return attrs ? { ...attrs } : {};
 }
 function classifySpan(kind, name, attrs) {
     const n = (name ?? '').toLowerCase();
-    const dbSystem = attrValue(attrs, 'db.system');
+    const dbSystem = resolveDbSystem(attrs);
     const msgSystem = attrValue(attrs, 'messaging.system');
     if (attrValue(attrs, 'http.method') || attrValue(attrs, 'http.route') || attrValue(attrs, 'http.url'))
         return 'http';
     if (dbSystem)
         return n.includes('redis') || n.includes('memcache') ? 'cache' : 'database';
+    if (attrValue(attrs, 'db.operation') || attrValue(attrs, 'db.operation.name') || attrValue(attrs, 'db.collection') || attrValue(attrs, 'db.collection.name') || attrValue(attrs, 'db.statement') || attrValue(attrs, 'db.query.text'))
+        return 'database';
     if (msgSystem)
         return kind === 'producer' ? 'producer' : kind === 'consumer' ? 'consumer' : 'messaging';
     if (n.includes('redis') || n.includes('cache') || n.includes('memcache'))
         return 'cache';
+    if (n.startsWith('mongodb.') || n.startsWith('prisma.') || n.startsWith('pg.') || n.startsWith('mysql.') || n.startsWith('postgres.') || n.startsWith('mongo.'))
+        return 'database';
+    if (n.startsWith('find ') || n.includes('findone') || n.startsWith('insert') || n.startsWith('update') || n.startsWith('delete') || n.includes('createindexes') || n.startsWith('aggregate'))
+        return 'database';
     if (n.includes('queue'))
         return 'queue';
     if (n.includes('rpc') || n.includes('grpc'))
@@ -422,12 +491,42 @@ export function errorNameOf(event) {
     return typeof name === 'string' && name.length > 0 ? name.slice(0, 256) : 'UnknownError';
 }
 /**
+ * Per-event memoization of the storage fingerprint.
+ *
+ * `errorFingerprint` is called at least TWICE for every error event on the hot
+ * path — once in EventProcessor while building the error batch (feeding both
+ * `groupParams.fingerprint` and `eventRecord.fingerprint`) and again inside
+ * `appendTelemetryOutbox` when composing the outbox attributes — and a third
+ * time in `writeErrors` on the non-grouped path. Each call normalizes the stack
+ * frame array and runs a sha256, which is pure CPU burned on the event loop of
+ * the process that is also supposed to be draining queues.
+ *
+ * A WeakMap keyed on the event object gives exact-once computation per event
+ * with no lifetime management: entries become collectable the moment the batch
+ * is released. Keyed on the object identity rather than a derived string so
+ * there is zero risk of a hash collision changing a fingerprint.
+ *
+ * Correctness note: this is only sound because normalized events are treated as
+ * immutable after `normalizeEvent()`. The one mutation that does occur —
+ * assigning `eventId` in EventProcessor — is not an input to the fingerprint
+ * (which reads only `name` and `stack`), so it cannot invalidate a cached value.
+ */
+const fingerprintCache = new WeakMap();
+/**
  * Storage fingerprint for an error event (shared with the error grouper so
  * events_errors.fingerprint and analytics_error_groups.fingerprint agree).
  */
 export function errorFingerprint(event, errorName = errorNameOf(event)) {
     const e = event;
-    return computeErrorFingerprint(errorName, e.stack);
+    if (typeof event !== 'object' || event === null) {
+        return computeErrorFingerprint(errorName, e.stack);
+    }
+    const cached = fingerprintCache.get(event);
+    if (cached !== undefined)
+        return cached;
+    const fingerprint = computeErrorFingerprint(errorName, e.stack);
+    fingerprintCache.set(event, fingerprint);
+    return fingerprint;
 }
 /** Build a parameterized multi-row INSERT. JSONB values are passed as JSON text
  * (unknown→jsonb coercion handles the cast in an INSERT ... VALUES context).
@@ -435,6 +534,84 @@ export function errorFingerprint(event, errorName = errorNameOf(event)) {
  * against the (project_id, event_id) identity indexes. PostgreSQL rowCount is
  * still the inserted-row count, so hot-path inserts avoid RETURNING unless a
  * caller needs returned identity data. */
+/**
+ * PostgreSQL's wire protocol encodes the bind-parameter count as a signed
+ * 16-bit integer, so a single statement can carry at most 65535 parameters.
+ * Exceeding it is not a slow query — the statement is rejected outright.
+ */
+const PG_MAX_BIND_PARAMS = 65535;
+/**
+ * Target maximum parameters per INSERT statement. Kept bounded (~3500) to avoid
+ * CPU-intensive AST planning and index leaf page latch (LWLock) serialization
+ * across concurrent workers on the active partition tables.
+ */
+const PG_TARGET_BIND_PARAMS = 3500;
+/**
+ * Insert `rows` using bounded multi-row statements, returning the total inserted count.
+ *
+ * ## Why this is needed
+ *
+ * Most event types are 1 event -> 1 row, but tables with 40-65 columns (like events_requests
+ * and events_spans) with batches of 200 events produce 8,000 to 13,000 parameters per statement.
+ *
+ * Executing multiple 13,000-parameter statements concurrently across 16 workers saturates
+ * PostgreSQL buffer headers and index leaf blocks, causing severe LWLock serialization.
+ *
+ * Chunking into bounded statements (~3,500 parameters max) bounds memory allocation and
+ * allows page latching to be interleaved fairly across parallel workers.
+ *
+ * Chunking stays inside the caller's transaction, so atomicity is unchanged: either every
+ * chunk commits or the transaction rolls back.
+ */
+async function salvageRows(db, table, cols, rows) {
+    let salvaged = 0;
+    for (const row of rows) {
+        try {
+            await db.query('SAVEPOINT row_salvage');
+            const { text, values } = buildInsert(table, cols, [row]);
+            const res = await db.query(text, values);
+            salvaged += res.rowCount ?? 0;
+            await db.query('RELEASE SAVEPOINT row_salvage');
+        }
+        catch {
+            await db.query('ROLLBACK TO SAVEPOINT row_salvage').catch(() => undefined);
+        }
+    }
+    return salvaged;
+}
+async function insertChunked(db, table, cols, rows) {
+    if (rows.length === 0)
+        return 0;
+    const maxRowsPerStatement = Math.max(1, Math.floor(PG_MAX_BIND_PARAMS / cols.length));
+    // Common case: the whole batch fits in one statement.
+    if (rows.length <= maxRowsPerStatement) {
+        try {
+            const { text, values } = buildInsert(table, cols, rows);
+            const res = await db.query(text, values);
+            return res.rowCount ?? 0;
+        }
+        catch (err) {
+            if (rows.length <= 1)
+                throw err;
+            return salvageRows(db, table, cols, rows);
+        }
+    }
+    let inserted = 0;
+    for (let offset = 0; offset < rows.length; offset += maxRowsPerStatement) {
+        const chunk = rows.slice(offset, offset + maxRowsPerStatement);
+        try {
+            const { text, values } = buildInsert(table, cols, chunk);
+            const res = await db.query(text, values);
+            inserted += res.rowCount ?? 0;
+        }
+        catch (err) {
+            if (chunk.length <= 1)
+                throw err;
+            inserted += await salvageRows(db, table, cols, chunk);
+        }
+    }
+    return inserted;
+}
 function buildInsert(table, cols, rows, returning) {
     const values = [];
     const tuples = [];
@@ -451,7 +628,7 @@ function buildInsert(table, cols, rows, returning) {
 }
 export async function applyIngestionTransactionSettings(client) {
     const statements = [
-        `SET LOCAL synchronous_commit = ${env.INGESTION_LOG_DB_SYNCHRONOUS_COMMIT ?? 'on'}`,
+        `SET LOCAL synchronous_commit = ${env.INGESTION_LOG_DB_SYNCHRONOUS_COMMIT ?? 'off'}`,
     ];
     if (env.INGESTION_LOG_DB_LOCK_TIMEOUT_MS > 0) {
         statements.push(`SET LOCAL lock_timeout = '${env.INGESTION_LOG_DB_LOCK_TIMEOUT_MS}ms'`);
@@ -561,73 +738,202 @@ export class TelemetryWriter {
         }
         return result;
     }
+    async recordSessions(scoped, db) {
+        const sessionMap = new Map();
+        for (const s of scoped) {
+            if (!s.orgId || !s.projectId)
+                continue;
+            const recObj = rec(s.event);
+            const rawObj = s.event;
+            const sessionId = str(s.event.sessionId ?? recObj.sessionId ?? recObj.session_id ?? rawObj.sessionId ?? rawObj.session_id, 64);
+            if (!sessionId)
+                continue;
+            const key = `${s.orgId}:${s.projectId}:${sessionId}`;
+            const ts = iso(resolveScopedTimestamp(s.event, s.occurredAtMs));
+            const isErr = s.event.type === 'error' || (recObj.statusCode != null && Number(recObj.statusCode) >= 500);
+            const isCrashed = isErr && (bool(recObj.handled) === false || recObj.crashed === true);
+            const userId = str(recObj.userId ?? recObj.user_id ?? recObj.user?.id, 255);
+            const existing = sessionMap.get(key);
+            if (existing) {
+                existing.eventCount += 1;
+                if (isErr)
+                    existing.errorCount += 1;
+                if (isCrashed)
+                    existing.isCrashed = true;
+                if (userId && !existing.userId)
+                    existing.userId = userId;
+                if (ts < existing.startedAt)
+                    existing.startedAt = ts;
+                if (ts > existing.endedAt)
+                    existing.endedAt = ts;
+            }
+            else {
+                sessionMap.set(key, {
+                    orgId: s.orgId,
+                    projectId: s.projectId,
+                    sessionId,
+                    userId,
+                    environment: s.environment,
+                    startedAt: ts,
+                    endedAt: ts,
+                    eventCount: 1,
+                    errorCount: isErr ? 1 : 0,
+                    isCrashed,
+                });
+            }
+        }
+        if (sessionMap.size === 0)
+            return;
+        try {
+            const rows = Array.from(sessionMap.values());
+            const BATCH_SIZE = 500;
+            for (let i = 0; i < rows.length; i += BATCH_SIZE) {
+                const batch = rows.slice(i, i + BATCH_SIZE);
+                const orgIds = [];
+                const projectIds = [];
+                const sessionIds = [];
+                const userIds = [];
+                const environments = [];
+                const startedAts = [];
+                const endedAts = [];
+                const eventCounts = [];
+                const errorCounts = [];
+                const isCrasheds = [];
+                for (const r of batch) {
+                    orgIds.push(r.orgId);
+                    projectIds.push(r.projectId);
+                    sessionIds.push(r.sessionId);
+                    userIds.push(r.userId);
+                    environments.push(r.environment);
+                    startedAts.push(r.startedAt);
+                    endedAts.push(r.endedAt);
+                    eventCounts.push(r.eventCount);
+                    errorCounts.push(r.errorCount);
+                    isCrasheds.push(r.isCrashed);
+                }
+                await db.query(`INSERT INTO analytics_user_sessions (
+            organization_id, project_id, session_id, user_id, environment,
+            started_at, ended_at, duration_seconds, event_count, error_count, is_crashed
+          )
+          SELECT t.org_id, t.proj_id, t.sess_id, t.user_id, t.env,
+                 t.started_at, t.ended_at,
+                 GREATEST(0, EXTRACT(EPOCH FROM (t.ended_at - t.started_at))::integer),
+                 t.event_count, t.error_count, t.is_crashed
+          FROM UNNEST(
+            $1::uuid[],
+            $2::uuid[],
+            $3::text[],
+            $4::text[],
+            $5::text[],
+            $6::timestamptz[],
+            $7::timestamptz[],
+            $8::integer[],
+            $9::integer[],
+            $10::boolean[]
+          ) AS t(org_id, proj_id, sess_id, user_id, env, started_at, ended_at, event_count, error_count, is_crashed)
+          ON CONFLICT (organization_id, project_id, session_id)
+          DO UPDATE SET
+            ended_at = GREATEST(analytics_user_sessions.ended_at, EXCLUDED.ended_at),
+            duration_seconds = GREATEST(0, EXTRACT(EPOCH FROM (GREATEST(analytics_user_sessions.ended_at, EXCLUDED.ended_at) - analytics_user_sessions.started_at))::integer),
+            event_count = analytics_user_sessions.event_count + EXCLUDED.event_count,
+            error_count = analytics_user_sessions.error_count + EXCLUDED.error_count,
+            is_crashed = analytics_user_sessions.is_crashed OR EXCLUDED.is_crashed,
+            user_id = COALESCE(analytics_user_sessions.user_id, EXCLUDED.user_id),
+            environment = COALESCE(analytics_user_sessions.environment, EXCLUDED.environment)`, [
+                    orgIds,
+                    projectIds,
+                    sessionIds,
+                    userIds,
+                    environments,
+                    startedAts,
+                    endedAts,
+                    eventCounts,
+                    errorCounts,
+                    isCrasheds,
+                ]);
+            }
+        }
+        catch (err) {
+            this.log?.debug({ err }, 'Failed to record session tracking rows');
+        }
+    }
     async appendTelemetryOutbox(scoped, db = this.pool) {
-        const rows = scoped
-            .filter((event) => event.orgId !== null)
-            .filter((event) => isFastPathSignal(event))
-            .map((event) => {
+        const orgIds = [];
+        const projectIds = [];
+        const environments = [];
+        const signalKinds = [];
+        const eventIds = [];
+        const severities = [];
+        const fastPaths = [];
+        const attributes = [];
+        const occurredAts = [];
+        for (const event of scoped) {
+            if (event.orgId === null)
+                continue;
+            const isFast = isFastPathSignal(event);
+            if (!isFast)
+                continue;
             const record = rec(event.event);
             const latencyVal = record.latency ?? record.latencyMs ?? record.latency_ms ?? record.durationMs ?? record.duration_ms ?? record.duration;
             const errName = errorNameOf(event.event);
             const fingerprint = errorFingerprint(event.event, errName);
             const rawEvent = event.event;
-            return [
-                event.orgId,
-                event.projectId,
-                event.environment,
-                event.event.type,
-                this.eventId(event.event),
-                outboxSeverity(event.event),
-                isFastPathSignal(event),
-                JSON.stringify({
-                    eventType: event.event.type,
-                    message: str(record.message, 4096),
-                    service: str(record.service, 100),
-                    requestId: str(record.requestId ?? record.request_id ?? rawEvent.requestId ?? rawEvent.request_id, 64),
-                    traceId: str(record.traceId ?? record.trace_id ?? rawEvent.traceId ?? rawEvent.trace_id, 128),
-                    spanId: str(record.spanId ?? record.span_id ?? rawEvent.spanId ?? rawEvent.span_id, 64),
-                    monitorSlug: str(record.monitorSlug, 255),
-                    statusCode: record.statusCode ?? record.status_code,
-                    latency: latencyVal,
-                    latencyMs: latencyVal,
-                    durationMs: latencyVal,
-                    method: record.method,
-                    route: record.route ?? record.endpoint ?? record.url,
-                    url: record.url,
-                    responseSize: record.responseSize ?? record.response_size,
-                    release: str(record.release ?? rawEvent.release, 100),
-                    applicationName: str(record.applicationName ?? record.application_name, 100),
-                    environment: event.environment,
-                    projectSlug: event.projectSlug,
-                    projectName: event.projectName,
-                    orgSlug: event.orgSlug,
-                    orgName: event.orgName,
-                    ...(event.event.type === 'error' ? {
-                        errorName: errName,
-                        name: errName,
-                        fingerprint,
-                        stack: record.stack ?? rawEvent.stack,
-                        stackFrames: record.stackFrames ?? record.stack_frames ?? record.frames ?? rawEvent.stack_frames,
-                        handled: record.handled ?? rawEvent.handled,
-                        mechanism: record.mechanism ?? rawEvent.mechanism,
-                        severity: outboxSeverity(event.event) ?? 'error',
-                    } : {}),
-                }),
-                iso(resolveTimestamp(event.event)),
-            ];
-        });
-        if (rows.length === 0)
+            orgIds.push(event.orgId);
+            projectIds.push(event.projectId);
+            environments.push(event.environment);
+            signalKinds.push(event.event.type);
+            eventIds.push(this.eventId(event.event));
+            severities.push(outboxSeverity(event.event));
+            fastPaths.push(isFast);
+            attributes.push(JSON.stringify({
+                eventType: event.event.type,
+                message: str(record.message, 4096),
+                service: str(record.service, 100),
+                requestId: str(record.requestId ?? record.request_id ?? rawEvent.requestId ?? rawEvent.request_id, 64),
+                traceId: str(record.traceId ?? record.trace_id ?? rawEvent.traceId ?? rawEvent.trace_id, 128),
+                spanId: str(record.spanId ?? record.span_id ?? rawEvent.spanId ?? rawEvent.span_id, 64),
+                monitorSlug: str(record.monitorSlug, 255),
+                statusCode: record.statusCode ?? record.status_code,
+                latency: latencyVal,
+                latencyMs: latencyVal,
+                durationMs: latencyVal,
+                method: record.method,
+                route: record.route ?? record.endpoint ?? record.url,
+                url: record.url,
+                responseSize: record.responseSize ?? record.response_size,
+                release: str(record.release ?? rawEvent.release, 100),
+                applicationName: str(record.applicationName ?? record.application_name, 100),
+                environment: event.environment,
+                projectSlug: event.projectSlug,
+                projectName: event.projectName,
+                orgSlug: event.orgSlug,
+                orgName: event.orgName,
+                ...(event.event.type === 'error' ? {
+                    errorName: errName,
+                    name: errName,
+                    fingerprint,
+                    stack: record.stack ?? rawEvent.stack,
+                    stackFrames: record.stackFrames ?? record.stack_frames ?? record.frames ?? rawEvent.stack_frames,
+                    handled: record.handled ?? rawEvent.handled,
+                    mechanism: record.mechanism ?? rawEvent.mechanism,
+                    severity: outboxSeverity(event.event) ?? 'error',
+                } : {}),
+            }));
+            occurredAts.push(iso(resolveScopedTimestamp(event.event, event.occurredAtMs)));
+        }
+        if (orgIds.length === 0)
             return 0;
         const result = await db.query(`WITH input AS (
-         SELECT *
+         SELECT organization_id, project_id, environment, signal_kind, event_id,
+                severity, fast_path, attributes, occurred_at
            FROM UNNEST(
-             $1::uuid[], $2::uuid[], $3::text[], $4::text[], $5::text[],
+             $1::uuid[], $2::uuid[], $3::text[], $4::text[], $5::uuid[],
              $6::logdb_severity[], $7::boolean[], $8::jsonb[], $9::timestamptz[]
            ) AS t(organization_id, project_id, environment, signal_kind, event_id,
                   severity, fast_path, attributes, occurred_at)
        ), reserved AS (
          INSERT INTO alert_runtime_idempotency_keys (namespace, organization_id, idempotency_key)
-         SELECT 'telemetry_outbox', organization_id, signal_kind || ':' || event_id
+         SELECT 'telemetry_outbox', organization_id, signal_kind || ':' || event_id::text
            FROM input
          ON CONFLICT DO NOTHING
          RETURNING organization_id, idempotency_key
@@ -641,20 +947,20 @@ export class TelemetryWriter {
            FROM input t
            JOIN reserved r
              ON r.organization_id = t.organization_id
-            AND r.idempotency_key = t.signal_kind || ':' || t.event_id
+            AND r.idempotency_key = t.signal_kind || ':' || t.event_id::text
          ON CONFLICT DO NOTHING
          RETURNING id
        )
        SELECT COUNT(*)::int AS count FROM inserted`, [
-            rows.map((row) => row[0]),
-            rows.map((row) => row[1]),
-            rows.map((row) => row[2]),
-            rows.map((row) => row[3]),
-            rows.map((row) => row[4]),
-            rows.map((row) => row[5]),
-            rows.map((row) => row[6]),
-            rows.map((row) => row[7]),
-            rows.map((row) => row[8]),
+            orgIds,
+            projectIds,
+            environments,
+            signalKinds,
+            eventIds,
+            severities,
+            fastPaths,
+            attributes,
+            occurredAts,
         ]);
         return Number(result.rows[0]?.count ?? 0);
     }
@@ -673,15 +979,22 @@ export class TelemetryWriter {
             default: return { inserted: 0 };
         }
     }
-    /** Best-effort event id (events_*.event_id is NOT NULL). */
+    /** Best-effort event id (events_*.event_id is UUID NOT NULL). */
     eventId(ev) {
         const id = ev.eventId;
-        return typeof id === 'string' && id.length > 0 ? id.slice(0, 64) : randomUUID();
+        if (typeof id === 'string') {
+            if (uuidValidate(id))
+                return id;
+            if (/^[0-9a-f]{32}$/i.test(id)) {
+                return `${id.slice(0, 8)}-${id.slice(8, 12)}-${id.slice(12, 16)}-${id.slice(16, 20)}-${id.slice(20, 32)}`;
+            }
+        }
+        return uuidv7();
     }
     // ── events_errors ─────────────────────────────────────────────────────────
     async writeErrors(list, db) {
         const ids = list.map(({ event }) => this.eventId(event));
-        const rows = list.map(({ projectId, orgId, environment, apiKeyName, event }, i) => {
+        const rows = list.map(({ projectId, orgId, environment, apiKeyName, occurredAtMs, event }, i) => {
             const e = event;
             const r = rec(event);
             const errorName = errorNameOf(event);
@@ -704,18 +1017,48 @@ export class TelemetryWriter {
                 statusCode ?? null, statusText ?? null, handled,
                 str(r.userId ?? r.user?.id ?? e.context?.userId, 255),
                 str(metadataField(metadata, event, 'sdkName'), 50), str(metadataField(metadata, event, 'sdkVersion'), 50),
-                JSON.stringify(r.tags ?? {}), JSON.stringify(r.extra ?? {}), JSON.stringify(metadata), iso(resolveTimestamp(event)),
+                JSON.stringify(r.tags ?? {}), JSON.stringify(r.extra ?? {}), JSON.stringify(metadata), iso(resolveScopedTimestamp(event, occurredAtMs)),
                 payloadFor(event), e.aiResponse != null ? JSON.stringify(e.aiResponse) : null,
+                list[i]?.errorGroupId ?? e?.errorGroupId ?? e?.error_group_id ?? null,
+                uuidv7(), generatePublicId(PUBLIC_ID_PREFIXES.errors), new Date().toISOString(), new Date().toISOString(),
             ];
         });
-        const { text, values } = buildInsert('events_errors', ['organization_id', 'project_id', 'api_key_name', 'event_id', 'fingerprint', 'fingerprint_version', 'message',
+        const errorCols = [
+            'organization_id', 'project_id', 'api_key_name', 'event_id', 'fingerprint', 'fingerprint_version', 'message',
             'error_name', 'severity', 'trace_id', 'span_id', 'request_id', 'session_id',
             'mechanism', 'service', 'environment', 'release', 'server_name',
             'application_name', 'application_version',
             'stack_frames', 'breadcrumbs', 'context', 'method', 'route', 'url',
             'status_code', 'status_text', 'handled', 'user_id',
-            'sdk_name', 'sdk_version', 'tags', 'extra', 'metadata', 'occurred_at', 'payload', 'ai_response'], rows, 'event_id');
-        const res = await db.query(text, values);
+            'sdk_name', 'sdk_version', 'tags', 'extra', 'metadata', 'occurred_at', 'payload', 'ai_response',
+            'error_group_id',
+            'id', 'public_id', 'created_at', 'ingested_at'
+        ];
+        let res;
+        try {
+            const { text, values } = buildInsert('events_errors', errorCols, rows, 'event_id');
+            res = await db.query(text, values);
+        }
+        catch (err) {
+            if (rows.length <= 1)
+                throw err;
+            const salvagedRows = [];
+            for (const row of rows) {
+                try {
+                    await db.query('SAVEPOINT err_salvage');
+                    const { text, values } = buildInsert('events_errors', errorCols, [row], 'event_id');
+                    const singleRes = await db.query(text, values);
+                    if (singleRes.rows && singleRes.rows.length > 0) {
+                        salvagedRows.push(...singleRes.rows);
+                    }
+                    await db.query('RELEASE SAVEPOINT err_salvage');
+                }
+                catch {
+                    await db.query('ROLLBACK TO SAVEPOINT err_salvage').catch(() => undefined);
+                }
+            }
+            res = { rows: salvagedRows, rowCount: salvagedRows.length };
+        }
         // Pair each returned event_id with its first unpaired input occurrence, so
         // a duplicate event_id WITHIN one batch (only the first occurrence inserts)
         // is not double-counted by downstream error grouping.
@@ -738,7 +1081,7 @@ export class TelemetryWriter {
     }
     // ── events_messages ─────────────────────────────────────────────────────────
     async writeMessages(list, db) {
-        const rows = list.map(({ projectId, orgId, environment, apiKeyName, event }) => {
+        const rows = list.map(({ projectId, orgId, environment, apiKeyName, occurredAtMs, event }) => {
             const e = event;
             const r = rec(event);
             const metadata = metadataFor(event, environment);
@@ -758,22 +1101,26 @@ export class TelemetryWriter {
                 str(metadataField(metadata, event, 'serverName'), 100), str(metadataField(metadata, event, 'applicationName'), 100), str(metadataField(metadata, event, 'applicationVersion'), 50),
                 str(r.userId, 255), inet(r.userIp),
                 JSON.stringify(tags), JSON.stringify(ctx), JSON.stringify(e.breadcrumbs ?? []),
-                sdkName, str(metadataField(metadata, event, 'sdkVersion'), 50), JSON.stringify(metadata), iso(resolveTimestamp(event)),
+                sdkName, str(metadataField(metadata, event, 'sdkVersion'), 50), JSON.stringify(metadata), iso(resolveScopedTimestamp(event, occurredAtMs)),
                 payloadFor(event), e.aiResponse != null ? JSON.stringify(e.aiResponse) : null,
                 tenantId, loggerName, messageCategory, messageSource,
                 str(e.endpoint ?? r.endpoint, 8192), num(e.statusCode ?? r.statusCode ?? r.status_code),
-                name, JSON.stringify(attrs)
+                name, JSON.stringify(attrs),
+                uuidv7(), generatePublicId(PUBLIC_ID_PREFIXES.messages), new Date().toISOString(), new Date().toISOString(),
             ];
         });
-        const { text, values } = buildInsert('events_messages', ['organization_id', 'project_id', 'api_key_name', 'event_id', 'message', 'severity',
+        const cols = [
+            'organization_id', 'project_id', 'api_key_name', 'event_id', 'message', 'severity',
             'trace_id', 'span_id', 'request_id', 'session_id',
             'service', 'environment', 'release', 'server_name', 'application_name', 'application_version',
             'user_id', 'user_ip',
             'tags', 'contexts', 'breadcrumbs', 'sdk_name', 'sdk_version', 'metadata', 'occurred_at', 'payload', 'ai_response',
             'tenant_id', 'logger_name', 'message_category', 'message_source',
-            'endpoint', 'status_code', 'name', 'attributes'], rows);
-        const res = await db.query(text, values);
-        return { inserted: res.rowCount ?? 0 };
+            'endpoint', 'status_code', 'name', 'attributes',
+            'id', 'public_id', 'created_at', 'ingested_at'
+        ];
+        const inserted = await insertChunked(db, 'events_messages', cols, rows);
+        return { inserted };
     }
     // ── events_requests ─────────────────────────────────────────────────────────
     async writeRequests(list, db) {
@@ -781,7 +1128,7 @@ export class TelemetryWriter {
         // open/dynamic import latency. Until ready, enrichment still hashes IPs and
         // parses user agents, while geo columns remain NULL.
         void this.enricher.init();
-        const rows = list.map(({ projectId, orgId, environment, apiKeyName, event }) => {
+        const rows = list.map(({ projectId, orgId, environment, apiKeyName, occurredAtMs, event }) => {
             const e = event;
             const r = rec(event);
             const metadata = metadataFor(event, environment);
@@ -799,7 +1146,7 @@ export class TelemetryWriter {
             const statusCode = httpStatus(e.statusCode ?? r.statusCode ?? r.status_code);
             const durationMs = num(e.latency ?? r.duration_ms ?? r.durationMs);
             return [
-                randomUUID(), // 1. id
+                uuidv7(), // 1. id
                 orgId, // 2. organization_id
                 projectId, // 3. project_id
                 apiKeyName ?? 'unknown', // 4. api_key_name
@@ -845,24 +1192,29 @@ export class TelemetryWriter {
                 JSON.stringify(metadata), // 44. metadata
                 payloadFor(event), // 45. payload
                 e.aiResponse != null ? JSON.stringify(e.aiResponse) : (r.ai_response != null ? JSON.stringify(r.ai_response) : null), // 46. ai_response
-                iso(resolveTimestamp(event)), // 47. occurred_at
+                iso(resolveScopedTimestamp(event, occurredAtMs)), // 47. occurred_at
+                generatePublicId(PUBLIC_ID_PREFIXES.requests), // 48. public_id
+                new Date().toISOString(), // 49. created_at
+                new Date().toISOString(), // 50. ingested_at
             ];
         });
         // is_slow / is_error are GENERATED columns — do NOT insert them.
-        // created_at / ingested_at have DEFAULT NOW() — do NOT insert them.
-        const { text, values } = buildInsert('events_requests', ['id', 'organization_id', 'project_id', 'api_key_name', 'event_id', 'request_id', 'trace_id', 'span_id',
+        const cols = [
+            'id', 'organization_id', 'project_id', 'api_key_name', 'event_id', 'request_id', 'trace_id', 'span_id',
             'parent_span_id', 'session_id', 'user_id', 'tenant_id', 'endpoint', 'name', 'method',
             'status_code', 'duration_ms', 'body_size', 'response_size', 'span_count', 'root_span_status', 'is_partial',
             'client_ip_hash', 'user_agent', 'referer', 'geo_country_code', 'geo_region', 'geo_asn',
             'browser_family', 'browser_version_major', 'os_name', 'os_version_major', 'device_type', 'is_bot',
             'service', 'framework', 'environment', 'release', 'server_name', 'sdk_name', 'sdk_version',
-            'severity', 'attributes', 'metadata', 'payload', 'ai_response', 'occurred_at'], rows);
-        const res = await db.query(text, values);
-        return { inserted: res.rowCount ?? 0 };
+            'severity', 'attributes', 'metadata', 'payload', 'ai_response', 'occurred_at',
+            'public_id', 'created_at', 'ingested_at'
+        ];
+        const inserted = await insertChunked(db, 'events_requests', cols, rows);
+        return { inserted };
     }
     // ── events_spans ─────────────────────────────────────────────────────────
     async writeSpans(list, db) {
-        const rows = list.map(({ projectId, orgId, environment, apiKeyName, event }) => {
+        const rows = list.map(({ projectId, orgId, environment, apiKeyName, occurredAtMs, event }) => {
             const e = event;
             const r = rec(event);
             const attrs = plainObject(e.attributes) ?? {};
@@ -883,7 +1235,7 @@ export class TelemetryWriter {
                 e.name, e.statusMessage ?? null, endpoint,
                 parseSafeIsoTimestamp(e.startTime, { traceId: e.traceId, spanId: e.spanId, field: 'startTime', logger: this.log }),
                 parseSafeIsoTimestamp(e.endTime, { traceId: e.traceId, spanId: e.spanId, field: 'endTime', logger: this.log }),
-                num(e.duration), num(e.exclusiveDuration), iso(resolveTimestamp(event)),
+                num(e.duration), num(e.exclusiveDuration), iso(resolveScopedTimestamp(event, occurredAtMs)),
                 str(attrValue(attrs, 'http.method'), 10), str(attrValue(attrs, 'http.route'), 500),
                 str(attrValue(attrs, 'http.url'), 8192), str(attrValue(attrs, 'http.target'), 2048),
                 str(attrValue(attrs, 'http.host'), 255), str(attrValue(attrs, 'http.scheme'), 32),
@@ -892,10 +1244,10 @@ export class TelemetryWriter {
                 str(attrValue(attrs, 'http.user_agent'), 1024), str(attrValue(attrs, 'http.client_ip'), 255),
                 str(attrValue(attrs, 'net.transport'), 64), str(attrValue(attrs, 'net.host.name'), 255),
                 str(attrValue(attrs, 'net.host.ip'), 255), num(attrValue(attrs, 'net.host.port')),
-                str(attrValue(attrs, 'net.peer.ip'), 255), num(attrValue(attrs, 'net.peer.port')),
-                str(attrValue(attrs, 'db.system') ?? r.dbSystem, 50), str(attrValue(attrs, 'db.name') ?? r.dbName, 100),
-                str(attrValue(attrs, 'db.operation') ?? r.dbOperation, 50), str(attrValue(attrs, 'db.collection') ?? r.dbCollection, 100),
-                str(attrValue(attrs, 'db.statement') ?? attrValue(attrs, 'query') ?? r.dbStatement, 8192),
+                resolvePeerAddress(attrs, attrValue(attrs, 'net.peer.ip')), resolvePeerPort(attrs, attrValue(attrs, 'net.peer.port')),
+                resolveDbSystem(attrs, r.dbSystem), resolveDbName(attrs, r.dbName),
+                resolveDbOperation(attrs, r.dbOperation), resolveDbCollection(attrs, r.dbCollection),
+                resolveDbStatement(attrs, r.dbStatement),
                 str(attrValue(attrs, 'messaging.system') ?? r.messagingSystem, 50),
                 str(attrValue(attrs, 'messaging.destination') ?? r.messagingDestination, 255),
                 str(attrValue(attrs, 'messaging.operation') ?? r.messagingOperation, 50),
@@ -905,9 +1257,11 @@ export class TelemetryWriter {
                 str(metadataField(metadata, event, 'serverName'), 100), str(metadataField(metadata, event, 'applicationName'), 100), str(metadataField(metadata, event, 'applicationVersion'), 50),
                 str(metadataField(metadata, event, 'sdkName'), 50), str(metadataField(metadata, event, 'sdkVersion'), 50), JSON.stringify(metadata),
                 payloadFor(event), e.aiResponse != null ? JSON.stringify(e.aiResponse) : null,
+                uuidv7(), generatePublicId(PUBLIC_ID_PREFIXES.spans), new Date().toISOString(), new Date().toISOString(),
             ];
         });
-        const { text, values } = buildInsert('events_spans', ['organization_id', 'project_id', 'api_key_name', 'event_id', 'span_id', 'trace_id', 'parent_span_id',
+        const cols = [
+            'organization_id', 'project_id', 'api_key_name', 'event_id', 'span_id', 'trace_id', 'parent_span_id',
             'span_kind', 'span_type', 'span_status', 'is_root_span', 'is_http_span', 'is_db_span', 'is_cache_span', 'is_messaging_span',
             'name', 'message', 'endpoint', 'start_time', 'end_time',
             'duration_ms', 'exclusive_duration_ms', 'occurred_at',
@@ -918,16 +1272,18 @@ export class TelemetryWriter {
             'messaging_system', 'messaging_destination', 'messaging_operation',
             'attributes', 'events', 'links',
             'request_id', 'session_id', 'user_id', 'tenant_id',
-            'service', 'environment', 'release', 'server_name', 'application_name', 'application_version', 'sdk_name', 'sdk_version', 'metadata', 'payload', 'ai_response'], rows);
-        const res = await db.query(text, values);
-        return { inserted: res.rowCount ?? 0 };
+            'service', 'environment', 'release', 'server_name', 'application_name', 'application_version', 'sdk_name', 'sdk_version', 'metadata', 'payload', 'ai_response',
+            'id', 'public_id', 'created_at', 'ingested_at'
+        ];
+        const inserted = await insertChunked(db, 'events_spans', cols, rows);
+        return { inserted };
     }
     // ── events_traces ─────────────────────────────────────────────────────────
     async writeTraces(list, db) {
         return this.writeTracesInTransaction(list, db);
     }
     async writeTracesInTransaction(list, db) {
-        const rows = list.map(({ projectId, orgId, environment, apiKeyName, event }) => {
+        const rows = list.map(({ projectId, orgId, environment, apiKeyName, occurredAtMs, event }) => {
             const e = event;
             const r = rec(event);
             const root = plainObject(e.rootSpan) ?? {};
@@ -942,7 +1298,7 @@ export class TelemetryWriter {
             const headers = plainObject(r.headers) ?? {};
             const rawUserAgent = r.userAgent ?? r.user_agent ?? headers['user-agent'] ?? headers['User-Agent'] ?? attrValue(rootAttrs, 'http.user_agent') ?? null;
             const rawClientIp = r.clientIp ?? r.client_ip ?? headers['x-forwarded-for'] ?? headers['X-Forwarded-For'] ?? attrValue(rootAttrs, 'http.client_ip') ?? null;
-            const occurredAt = iso(resolveTimestamp(event));
+            const occurredAt = iso(resolveScopedTimestamp(event, occurredAtMs));
             return [
                 orgId, projectId, apiKeyName ?? '', this.eventId(event), e.traceId, rootSpanId, parentSpanId,
                 str(root.name, 500), rootSpanId, str(root.kind, 32), spanStatus(root.status), endpoint, httpMethod, statusCode,
@@ -954,6 +1310,7 @@ export class TelemetryWriter {
                 str(metadataField(metadata, event, 'sdkName'), 50), str(metadataField(metadata, event, 'sdkVersion'), 50), JSON.stringify(traceAttributes(event)), JSON.stringify(metadata), occurredAt,
                 str(rawUserAgent, 1024), str(rawClientIp, 255),
                 payloadFor(event), e.aiResponse != null ? JSON.stringify(e.aiResponse) : null,
+                uuidv7(), generatePublicId(PUBLIC_ID_PREFIXES.traces), new Date().toISOString(), new Date().toISOString(),
             ];
         });
         const { text, values } = buildInsert('events_traces', ['organization_id', 'project_id', 'api_key_name', 'event_id', 'trace_id', 'span_id', 'parent_span_id',
@@ -962,22 +1319,16 @@ export class TelemetryWriter {
             'spans_tree', 'request_id', 'session_id', 'user_id', 'tenant_id',
             'service', 'environment', 'release', 'server_name', 'application_name', 'application_version',
             'sdk_name', 'sdk_version', 'attributes', 'metadata', 'occurred_at',
-            'user_agent', 'client_ip_hash', 'payload', 'ai_response'], rows);
+            'user_agent', 'client_ip_hash', 'payload', 'ai_response',
+            'id', 'public_id', 'created_at', 'ingested_at'], rows);
         const res = await db.query(text, values);
         await this.writeTraceSpanTree(list, db);
         return { inserted: res.rowCount ?? 0 };
     }
     // ── events_metrics ─────────────────────────────────────────────────────────
     async writeTraceSpanTree(list, db) {
-        const rows = [];
-        for (const scoped of list) {
-            const e = scoped.event;
-            const ts = iso(resolveTimestamp(scoped.event));
-            this.collectTraceSpanRows(scoped, e.rootSpan, null, 0, ts, rows);
-        }
-        if (rows.length === 0)
-            return;
-        const { text, values } = buildInsert('events_spans', ['organization_id', 'project_id', 'api_key_name', 'event_id', 'span_id', 'trace_id', 'parent_span_id',
+        const columns = [
+            'organization_id', 'project_id', 'api_key_name', 'event_id', 'span_id', 'trace_id', 'parent_span_id',
             'name', 'span_kind', 'span_type', 'span_status', 'message', 'endpoint',
             'is_root_span', 'is_http_span', 'is_db_span', 'is_cache_span', 'is_messaging_span',
             'start_time', 'end_time', 'duration_ms', 'exclusive_duration_ms', 'occurred_at',
@@ -989,46 +1340,103 @@ export class TelemetryWriter {
             'messaging_system', 'messaging_destination', 'messaging_operation',
             'request_id', 'session_id', 'user_id', 'tenant_id',
             'service', 'environment', 'release', 'server_name', 'application_name', 'application_version',
-            'sdk_name', 'sdk_version', 'metadata', 'payload'], rows);
-        await db.query(text, values);
+            'sdk_name', 'sdk_version', 'metadata', 'payload',
+            'id', 'public_id', 'created_at', 'ingested_at',
+        ];
+        const maxRowsPerStatement = Math.max(1, Math.floor(PG_MAX_BIND_PARAMS / columns.length));
+        let rows = [];
+        const flush = async () => {
+            if (rows.length === 0)
+                return;
+            const pending = rows;
+            rows = [];
+            await insertChunked(db, 'events_spans', columns, pending);
+        };
+        for (const scoped of list) {
+            const event = scoped.event;
+            const timestamp = iso(resolveScopedTimestamp(scoped.event, scoped.occurredAtMs));
+            const visited = new WeakSet();
+            let nodeCount = 0;
+            const stack = [
+                { span: event.rootSpan, parentSpanId: null, depth: 0 },
+            ];
+            while (stack.length > 0) {
+                const current = stack.pop();
+                const span = plainObject(current.span);
+                if (!span)
+                    continue;
+                if (visited.has(span)) {
+                    throw new Error('TRACE_TREE_INVARIANT_VIOLATION: cycle or shared span reference');
+                }
+                visited.add(span);
+                nodeCount += 1;
+                if (nodeCount > LIMITS.maxTraceSpanCount || current.depth > LIMITS.maxTraceSpanDepth) {
+                    throw new Error('TRACE_TREE_INVARIANT_VIOLATION: trace bounds exceeded');
+                }
+                const built = this.buildTraceSpanRow(scoped, span, current.parentSpanId, current.depth, timestamp);
+                if (!built)
+                    continue;
+                rows.push(built.row);
+                if (rows.length >= maxRowsPerStatement)
+                    await flush();
+                const childrenValue = Object.prototype.hasOwnProperty.call(span, 'children')
+                    ? span.children
+                    : undefined;
+                if (childrenValue !== undefined && !Array.isArray(childrenValue)) {
+                    throw new Error('TRACE_TREE_INVARIANT_VIOLATION: children must be an array');
+                }
+                const children = Array.isArray(childrenValue) ? childrenValue : [];
+                if (children.length > 0 && current.depth >= LIMITS.maxTraceSpanDepth) {
+                    throw new Error('TRACE_TREE_INVARIANT_VIOLATION: trace depth exceeded');
+                }
+                for (let index = children.length - 1; index >= 0; index -= 1) {
+                    stack.push({
+                        span: children[index],
+                        parentSpanId: built.spanId,
+                        depth: current.depth + 1,
+                    });
+                }
+            }
+        }
+        await flush();
     }
-    collectTraceSpanRows(scoped, span, parentSpanId, depth, timestamp, rows) {
-        const s = plainObject(span);
-        if (!s)
-            return;
+    buildTraceSpanRow(scoped, span, parentSpanId, depth, timestamp) {
         const event = scoped.event;
         const metadata = metadataFor(event, scoped.environment);
-        const spanId = str(s.spanId ?? s.id, 64);
+        const spanId = str(span.spanId ?? span.id, 64);
         if (!spanId)
-            return;
-        const attrs = plainObject(s.attributes) ?? {};
-        const eventId = `${this.eventId(event)}:${spanId}`.slice(0, 64);
-        const kind = spanKind(s.kind);
-        const status = spanStatus(s.status);
-        const name = str(s.name, 500) ?? spanId;
+            return null;
+        const attrs = plainObject(span.attributes) ?? {};
+        const rawSpanEventId = span.eventId;
+        const eventId = typeof rawSpanEventId === 'string' && uuidValidate(rawSpanEventId)
+            ? rawSpanEventId
+            : deterministicSpanEventId(this.eventId(event), spanId);
+        const kind = spanKind(span.kind);
+        const status = spanStatus(span.status);
+        const name = str(span.name, 500) ?? spanId;
         const endpoint = str(attrValue(attrs, 'http.route') ?? attrValue(attrs, 'route'), 500);
         const spanType = classifySpan(kind, name, attrs);
         const isHttp = spanType === 'http';
         const isDb = spanType === 'database';
         const isCache = spanType === 'cache';
         const isMessaging = ['messaging', 'queue', 'producer', 'consumer'].includes(spanType);
-        const rawStartTime = s.startTime ?? s.start_time ?? s.timestamp ?? s.time ?? s.start;
+        const rawStartTime = span.startTime ?? span.start_time ?? span.timestamp ?? span.time ?? span.start;
         const startTimeIso = parseSafeIsoTimestamp(rawStartTime, {
             traceId: event.traceId,
             spanId,
             field: 'startTime',
             logger: this.log,
         });
-        const rawEndTime = s.endTime ?? s.end_time ?? s.end;
+        const rawEndTime = span.endTime ?? span.end_time ?? span.end;
         let endTimeIso = parseSafeIsoTimestamp(rawEndTime, {
             traceId: event.traceId,
             spanId,
             field: 'endTime',
             logger: this.log,
         });
-        if (endTimeIso == null && rawStartTime != null && s.duration != null) {
+        if (endTimeIso == null && rawStartTime != null && span.duration != null) {
             const startMs = parseSafeEpochMs(rawStartTime);
-            const durMs = num(s.duration);
+            const durMs = num(span.duration);
             if (startMs != null && durMs != null && durMs >= 0) {
                 endTimeIso = parseSafeIsoTimestamp(startMs + durMs, {
                     traceId: event.traceId,
@@ -1039,39 +1447,40 @@ export class TelemetryWriter {
             }
         }
         const spanOccurredAt = startTimeIso ?? timestamp;
-        rows.push([
-            scoped.orgId, scoped.projectId, scoped.apiKeyName ?? '', eventId, spanId, event.traceId, parentSpanId,
-            name, kind, spanType, status, str(s.statusMessage, 1024), endpoint,
-            parentSpanId == null, isHttp, isDb, isCache, isMessaging,
-            startTimeIso,
-            endTimeIso,
-            num(s.duration), num(s.exclusiveDuration), spanOccurredAt, JSON.stringify(normalizedSpanAttributes(attrs)),
-            s.events != null ? JSON.stringify(s.events) : JSON.stringify([]),
-            s.links != null ? JSON.stringify(s.links) : JSON.stringify([]),
-            depth,
-            str(attrValue(attrs, 'http.method'), 10), str(attrValue(attrs, 'http.route'), 500),
-            str(attrValue(attrs, 'http.url'), 8192), str(attrValue(attrs, 'http.target'), 2048),
-            str(attrValue(attrs, 'http.host'), 255), str(attrValue(attrs, 'http.scheme'), 32), str(attrValue(attrs, 'http.flavor'), 32),
-            num(attrValue(attrs, 'http.status_code')), str(attrValue(attrs, 'http.status_text'), 255),
-            num(attrValue(attrs, 'http.response.body.size')), str(attrValue(attrs, 'http.user_agent'), 1024), str(attrValue(attrs, 'http.client_ip'), 255),
-            str(attrValue(attrs, 'net.transport'), 64), str(attrValue(attrs, 'net.host.name'), 255), str(attrValue(attrs, 'net.host.ip'), 255),
-            num(attrValue(attrs, 'net.host.port')), str(attrValue(attrs, 'net.peer.ip'), 255), num(attrValue(attrs, 'net.peer.port')),
-            str(attrValue(attrs, 'db.system'), 50), str(attrValue(attrs, 'db.name'), 100), str(attrValue(attrs, 'db.operation'), 50),
-            str(attrValue(attrs, 'db.collection'), 100), str(attrValue(attrs, 'db.statement') ?? attrValue(attrs, 'query'), 8192),
-            str(attrValue(attrs, 'messaging.system'), 50), str(attrValue(attrs, 'messaging.destination'), 255), str(attrValue(attrs, 'messaging.operation'), 50),
-            event.requestId ?? str(attrValue(attrs, 'pulse.request_id'), 255), event.sessionId ?? null, str(rec(event).userId, 255),
-            str(rec(event).tenantId, 255) ?? str(attrValue(attrs, 'pulse.tenant_id'), 255),
-            str(rec(event).service, 100), scoped.environment, str(metadataField(metadata, event, 'release'), 100),
-            str(metadataField(metadata, event, 'serverName'), 100), str(metadataField(metadata, event, 'applicationName'), 100), str(metadataField(metadata, event, 'applicationVersion'), 50),
-            str(metadataField(metadata, event, 'sdkName'), 50), str(metadataField(metadata, event, 'sdkVersion'), 50),
-            JSON.stringify(metadata), payloadFor(event),
-        ]);
-        const children = Array.isArray(s.children) ? s.children : [];
-        for (const child of children)
-            this.collectTraceSpanRows(scoped, child, spanId, depth + 1, timestamp, rows);
+        return {
+            spanId,
+            row: [
+                scoped.orgId, scoped.projectId, scoped.apiKeyName ?? '', eventId, spanId, event.traceId, parentSpanId,
+                name, kind, spanType, status, str(span.statusMessage, 1024), endpoint,
+                parentSpanId == null, isHttp, isDb, isCache, isMessaging,
+                startTimeIso,
+                endTimeIso,
+                num(span.duration), num(span.exclusiveDuration), spanOccurredAt, JSON.stringify(normalizedSpanAttributes(attrs)),
+                span.events != null ? JSON.stringify(span.events) : JSON.stringify([]),
+                span.links != null ? JSON.stringify(span.links) : JSON.stringify([]),
+                depth,
+                str(attrValue(attrs, 'http.method'), 10), str(attrValue(attrs, 'http.route'), 500),
+                str(attrValue(attrs, 'http.url'), 8192), str(attrValue(attrs, 'http.target'), 2048),
+                str(attrValue(attrs, 'http.host'), 255), str(attrValue(attrs, 'http.scheme'), 32), str(attrValue(attrs, 'http.flavor'), 32),
+                num(attrValue(attrs, 'http.status_code')), str(attrValue(attrs, 'http.status_text'), 255),
+                num(attrValue(attrs, 'http.response.body.size')), str(attrValue(attrs, 'http.user_agent'), 1024), str(attrValue(attrs, 'http.client_ip'), 255),
+                str(attrValue(attrs, 'net.transport'), 64), str(attrValue(attrs, 'net.host.name'), 255), str(attrValue(attrs, 'net.host.ip'), 255),
+                num(attrValue(attrs, 'net.host.port')), resolvePeerAddress(attrs, attrValue(attrs, 'net.peer.ip')), resolvePeerPort(attrs, attrValue(attrs, 'net.peer.port')),
+                resolveDbSystem(attrs), resolveDbName(attrs), resolveDbOperation(attrs),
+                resolveDbCollection(attrs), resolveDbStatement(attrs),
+                str(attrValue(attrs, 'messaging.system'), 50), str(attrValue(attrs, 'messaging.destination'), 255), str(attrValue(attrs, 'messaging.operation'), 50),
+                event.requestId ?? str(attrValue(attrs, 'pulse.request_id'), 255), event.sessionId ?? null, str(rec(event).userId, 255),
+                str(rec(event).tenantId, 255) ?? str(attrValue(attrs, 'pulse.tenant_id'), 255),
+                str(rec(event).service, 100), scoped.environment, str(metadataField(metadata, event, 'release'), 100),
+                str(metadataField(metadata, event, 'serverName'), 100), str(metadataField(metadata, event, 'applicationName'), 100), str(metadataField(metadata, event, 'applicationVersion'), 50),
+                str(metadataField(metadata, event, 'sdkName'), 50), str(metadataField(metadata, event, 'sdkVersion'), 50),
+                JSON.stringify(metadata), payloadFor(event),
+                uuidv7(), generatePublicId(PUBLIC_ID_PREFIXES.spans), new Date().toISOString(), new Date().toISOString(),
+            ],
+        };
     }
     async writeMetrics(list, db) {
-        const rows = list.map(({ projectId, orgId, environment, apiKeyName, event }) => {
+        const rows = list.map(({ projectId, orgId, environment, apiKeyName, occurredAtMs, event }) => {
             const e = event;
             const r = rec(event);
             const tags = plainObject(e.tags) ?? {};
@@ -1124,9 +1533,10 @@ export class TelemetryWriter {
                 JSON.stringify(e.tags ?? {}),
                 JSON.stringify(metricAttributes(event)),
                 JSON.stringify(metadata),
-                iso(resolveTimestamp(event)),
+                iso(resolveScopedTimestamp(event, occurredAtMs)),
                 payloadFor(event),
                 e.aiResponse != null ? JSON.stringify(e.aiResponse) : null,
+                uuidv7(), generatePublicId(PUBLIC_ID_PREFIXES.metrics), new Date().toISOString(), new Date().toISOString(),
             ];
         });
         const { text, values } = buildInsert('events_metrics', [
@@ -1151,14 +1561,15 @@ export class TelemetryWriter {
             'application_name', 'application_version',
             'sdk_name', 'sdk_version',
             // JSONB
-            'tags', 'attributes', 'metadata', 'occurred_at', 'payload', 'ai_response'
+            'tags', 'attributes', 'metadata', 'occurred_at', 'payload', 'ai_response',
+            'id', 'public_id', 'created_at', 'ingested_at'
         ], rows);
         const res = await db.query(text, values);
         return { inserted: res.rowCount ?? 0 };
     }
     // ── events_logs ─────────────────────────────────────────────────────────
     async writeLogs(list, db) {
-        const rows = list.map(({ projectId, orgId, environment, apiKeyName, event }) => {
+        const rows = list.map(({ projectId, orgId, environment, apiKeyName, occurredAtMs, event }) => {
             const e = event;
             const r = rec(event);
             const metadata = metadataFor(event, environment);
@@ -1166,22 +1577,22 @@ export class TelemetryWriter {
             const c = plainObject(e.context) ?? {};
             const httpC = plainObject(c.http) ?? {};
             // ── Extraction logic ──────────────────────────────────────────────────────
-            const httpMethod = e.httpMethod ?? str(httpC.method, 16) ?? (msg.match(/^(GET|POST|PUT|DELETE|PATCH|OPTIONS|HEAD)\s+/)?.[1]) ?? null;
-            const endpoint = e.endpoint ?? str(httpC.url, 2048) ?? (msg.match(/^(?:GET|POST|PUT|DELETE|PATCH|OPTIONS|HEAD)\s+([^?\s]+)/)?.[1]) ?? null;
+            const httpMethod = e.httpMethod ?? str(httpC.method, 16) ?? (msg.match(RE_LOG_HTTP_METHOD)?.[1]) ?? null;
+            const endpoint = e.endpoint ?? str(httpC.url, 2048) ?? (msg.match(RE_LOG_ENDPOINT)?.[1]) ?? null;
             let statusCode = e.statusCode ?? num(httpC.status_code);
             if (statusCode == null) {
-                const sc1 = msg.match(/HTTP.*?\s([2-5][0-9]{2})\b/)?.[1];
+                const sc1 = msg.match(RE_LOG_STATUS_CODE_1)?.[1];
                 if (sc1)
                     statusCode = Number(sc1);
                 else {
-                    const sc2 = msg.match(/\b([2-5][0-9]{2})\b.*?\s\d+ms/)?.[1];
+                    const sc2 = msg.match(RE_LOG_STATUS_CODE_2)?.[1];
                     if (sc2)
                         statusCode = Number(sc2);
                 }
             }
             let durationMs = e.durationMs ?? num(httpC.duration_ms);
             if (durationMs == null) {
-                const d = msg.match(/\b(\d+)\s*ms\b/)?.[1];
+                const d = msg.match(RE_LOG_DURATION_MS)?.[1];
                 if (d)
                     durationMs = Number(d);
             }
@@ -1189,7 +1600,7 @@ export class TelemetryWriter {
             const loggerName = str(e.loggerName ?? r.loggerName ?? e.logger, 255) ?? 'unknown';
             const loggerLower = loggerName.toLowerCase();
             const msgLower = msg.toLowerCase();
-            const name = str(e.name, 255) ?? (msg.match(/^(GET|POST|PUT|DELETE|PATCH)\s+/) ? 'HTTP Request' :
+            const name = str(e.name, 255) ?? (msg.match(RE_LOG_NAME_HTTP) ? 'HTTP Request' :
                 (msgLower.includes('error') || e.level === 'error' || e.level === 'fatal') ? 'Error Log' :
                     (loggerLower.includes('db') || loggerLower.includes('postgres')) ? 'Database Query' :
                         (loggerLower.includes('cache') || loggerLower.includes('redis')) ? 'Cache Operation' :
@@ -1209,18 +1620,6 @@ export class TelemetryWriter {
                                     'application');
             // Clean attributes
             const rawAttrs = plainObject(e.attributes) ?? {};
-            const LOG_ATTR_DUPES = new Set([
-                'parentSpanId', 'parent_span_id', 'tenantId', 'tenant_id',
-                'name', 'loggerName', 'logger_name', 'logSource', 'log_source',
-                'logCategory', 'log_category', 'endpoint', 'httpMethod', 'http_method',
-                'statusCode', 'status_code', 'durationMs', 'duration_ms',
-                'environment', 'projectId', 'project_id', 'organizationId', 'organization_id',
-                'sdkName', 'sdk_name', 'sdkVersion', 'sdk_version',
-                'applicationName', 'application_name', 'applicationVersion', 'application_version',
-                'release', 'timestamp', 'eventId', 'event_id',
-                'requestId', 'request_id', 'sessionId', 'session_id',
-                'traceId', 'trace_id', 'spanId', 'span_id', 'level', 'message'
-            ]);
             const cleanAttributes = {};
             for (const [k, v] of Object.entries(rawAttrs)) {
                 if (!LOG_ATTR_DUPES.has(k))
@@ -1244,27 +1643,31 @@ export class TelemetryWriter {
                 str(r.userId, 255), inet(r.userIp),
                 str(metadataField(metadata, event, 'sdkName'), 50), str(metadataField(metadata, event, 'sdkVersion'), 50),
                 JSON.stringify(c), JSON.stringify(e.tags ?? {}), JSON.stringify(cleanAttributes),
-                JSON.stringify(metadata), iso(resolveTimestamp(event)),
+                JSON.stringify(metadata), iso(resolveScopedTimestamp(event, occurredAtMs)),
                 payloadFor(event), e.aiResponse != null ? JSON.stringify(e.aiResponse) : null,
+                uuidv7(), generatePublicId(PUBLIC_ID_PREFIXES.logs), new Date().toISOString(), new Date().toISOString(),
             ];
         });
-        const { text, values } = buildInsert('events_logs', ['organization_id', 'project_id', 'api_key_name', 'event_id', 'level', 'message',
+        const cols = [
+            'organization_id', 'project_id', 'api_key_name', 'event_id', 'level', 'message',
             'args', 'trace_id', 'span_id', 'parent_span_id', 'tenant_id',
             'name', 'logger_name', 'log_source', 'log_category', 'endpoint', 'http_method', 'status_code', 'duration_ms',
             'request_id', 'session_id',
             'service', 'environment', 'release', 'server_name', 'application_name', 'application_version',
             'user_id', 'user_ip',
             'sdk_name', 'sdk_version', 'context', 'tags', 'attributes',
-            'metadata', 'occurred_at', 'payload', 'ai_response'], rows);
-        const res = await db.query(text, values);
-        return { inserted: res.rowCount ?? 0 };
+            'metadata', 'occurred_at', 'payload', 'ai_response',
+            'id', 'public_id', 'created_at', 'ingested_at'
+        ];
+        const inserted = await insertChunked(db, 'events_logs', cols, rows);
+        return { inserted };
     }
     // ── events_profiles ─────────────────────────────────────────────────────────
     async writeProfiles(list, db) {
-        const rows = list.map(({ projectId, orgId, environment, apiKeyName, event }) => {
+        const rows = list.map(({ projectId, orgId, environment, apiKeyName, occurredAtMs, event }) => {
             const e = event;
             const r = rec(event);
-            const ts = resolveTimestamp(event);
+            const ts = resolveScopedTimestamp(event, occurredAtMs);
             const metadata = metadataFor(event, environment);
             return [
                 orgId, projectId, apiKeyName ?? '', this.eventId(event), str(e.profileType, 20) ?? 'cpu',
@@ -1276,17 +1679,19 @@ export class TelemetryWriter {
                 str(metadataField(metadata, event, 'serverName'), 100), str(metadataField(metadata, event, 'applicationName'), 100), str(metadataField(metadata, event, 'applicationVersion'), 50),
                 str(metadataField(metadata, event, 'sdkName'), 50), str(metadataField(metadata, event, 'sdkVersion'), 50), JSON.stringify(metadata), iso(ts),
                 payloadFor(event), e.aiResponse != null ? JSON.stringify(e.aiResponse) : null,
+                uuidv7(), generatePublicId(PUBLIC_ID_PREFIXES.profiles), new Date().toISOString(), new Date().toISOString(),
             ];
         });
         const { text, values } = buildInsert('events_profiles', ['organization_id', 'project_id', 'api_key_name', 'event_id', 'profile_type',
             'trace_id', 'span_id', 'request_id', 'session_id', 'user_id', 'start_time', 'end_time', 'duration_ms',
-            'profile_data', 'service', 'environment', 'release', 'server_name', 'application_name', 'application_version', 'sdk_name', 'sdk_version', 'metadata', 'occurred_at', 'payload', 'ai_response'], rows);
+            'profile_data', 'service', 'environment', 'release', 'server_name', 'application_name', 'application_version', 'sdk_name', 'sdk_version', 'metadata', 'occurred_at', 'payload', 'ai_response',
+            'id', 'public_id', 'created_at', 'ingested_at'], rows);
         const res = await db.query(text, values);
         return { inserted: res.rowCount ?? 0 };
     }
     // ── events_cron_checkins ─────────────────────────────────────────────────────
     async writeCronCheckins(list, db) {
-        const rows = list.map(({ projectId, orgId, environment, apiKeyName, event }) => {
+        const rows = list.map(({ projectId, orgId, environment, apiKeyName, occurredAtMs, event }) => {
             const e = event;
             const r = rec(event);
             const metadata = metadataFor(event, environment);
@@ -1299,19 +1704,6 @@ export class TelemetryWriter {
                         : 'scheduled');
             // Clean attributes: remove all fields that have canonical columns
             const rawAttrs = plainObject(e.attributes) ?? {};
-            const CRON_ATTR_DUPES = new Set([
-                'monitorSlug', 'monitor_slug', 'monitorName', 'monitor_name',
-                'status', 'duration', 'duration_ms',
-                'checkinType', 'checkin_type', 'scheduleType', 'schedule_type',
-                'startedAt', 'started_at', 'finishedAt', 'finished_at',
-                'isSuccess', 'is_success', 'tenantId', 'tenant_id',
-                'environment', 'projectId', 'project_id', 'organizationId', 'organization_id',
-                'sdkName', 'sdk_name', 'sdkVersion', 'sdk_version',
-                'applicationName', 'application_name', 'applicationVersion', 'application_version',
-                'release', 'timestamp', 'eventId', 'event_id',
-                'requestId', 'request_id', 'sessionId', 'session_id',
-                'traceId', 'trace_id', 'spanId', 'span_id',
-            ]);
             const cleanAttributes = {};
             for (const [k, v] of Object.entries(rawAttrs)) {
                 if (!CRON_ATTR_DUPES.has(k))
@@ -1353,9 +1745,10 @@ export class TelemetryWriter {
                 JSON.stringify(e.tags ?? {}),
                 JSON.stringify(cleanAttributes),
                 JSON.stringify(metadata),
-                iso(resolveTimestamp(event)),
+                iso(resolveScopedTimestamp(event, occurredAtMs)),
                 payloadFor(event),
                 e.aiResponse != null ? JSON.stringify(e.aiResponse) : null,
+                uuidv7(), generatePublicId(PUBLIC_ID_PREFIXES.cronCheckins), new Date().toISOString(), new Date().toISOString(),
             ];
         });
         const { text, values } = buildInsert('events_cron_checkins', [
@@ -1376,14 +1769,15 @@ export class TelemetryWriter {
             'application_name', 'application_version',
             'sdk_name', 'sdk_version',
             // JSONB
-            'tags', 'attributes', 'metadata', 'occurred_at', 'payload', 'ai_response'
+            'tags', 'attributes', 'metadata', 'occurred_at', 'payload', 'ai_response',
+            'id', 'public_id', 'created_at', 'ingested_at'
         ], rows);
         const res = await db.query(text, values);
         return { inserted: res.rowCount ?? 0 };
     }
     // ── events_replays ─────────────────────────────────────────────────────────
     async writeReplays(list, db) {
-        const rows = list.map(({ projectId, orgId, environment, apiKeyName, event }) => {
+        const rows = list.map(({ projectId, orgId, environment, apiKeyName, occurredAtMs, event }) => {
             const e = event;
             const r = rec(event);
             const metadata = metadataFor(event, environment);
@@ -1393,13 +1787,15 @@ export class TelemetryWriter {
                 e.traceId ?? null, e.spanId ?? null, e.requestId ?? null, str(r.userId, 255),
                 str(r.service, 100), environment, str(metadataField(metadata, event, 'release'), 100),
                 str(metadataField(metadata, event, 'serverName'), 100), str(metadataField(metadata, event, 'applicationName'), 100), str(metadataField(metadata, event, 'applicationVersion'), 50),
-                str(metadataField(metadata, event, 'sdkName'), 50), str(metadataField(metadata, event, 'sdkVersion'), 50), JSON.stringify(metadata), iso(resolveTimestamp(event)),
+                str(metadataField(metadata, event, 'sdkName'), 50), str(metadataField(metadata, event, 'sdkVersion'), 50), JSON.stringify(metadata), iso(resolveScopedTimestamp(event, occurredAtMs)),
                 payloadFor(event), e.aiResponse != null ? JSON.stringify(e.aiResponse) : null,
+                uuidv7(), generatePublicId(PUBLIC_ID_PREFIXES.replays), new Date().toISOString(), new Date().toISOString(),
             ];
         });
         const { text, values } = buildInsert('events_replays', ['organization_id', 'project_id', 'api_key_name', 'event_id', 'session_id', 'segment_id',
             'events', 'trace_id', 'span_id', 'request_id', 'user_id',
-            'service', 'environment', 'release', 'server_name', 'application_name', 'application_version', 'sdk_name', 'sdk_version', 'metadata', 'occurred_at', 'payload', 'ai_response'], rows);
+            'service', 'environment', 'release', 'server_name', 'application_name', 'application_version', 'sdk_name', 'sdk_version', 'metadata', 'occurred_at', 'payload', 'ai_response',
+            'id', 'public_id', 'created_at', 'ingested_at'], rows);
         const res = await db.query(text, values);
         return { inserted: res.rowCount ?? 0 };
     }
@@ -1433,5 +1829,9 @@ function isFastPathSignal(scoped) {
             || (Number.isFinite(duration) && duration >= env.INGESTION_FAST_REQUEST_MIN_DURATION_MS);
     }
     return false;
+}
+function deterministicSpanEventId(traceEventId, spanId) {
+    const hash = createHash('sha256').update(`${traceEventId}:${spanId}`).digest('hex');
+    return `${hash.slice(0, 8)}-${hash.slice(8, 12)}-4${hash.slice(13, 16)}-a${hash.slice(17, 20)}-${hash.slice(20, 32)}`;
 }
 //# sourceMappingURL=telemetry-writer.js.map

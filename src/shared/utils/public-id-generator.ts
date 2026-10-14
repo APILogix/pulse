@@ -18,16 +18,33 @@ export const PUBLIC_ID_PREFIXES = {
   replays: 'RPL',
   profiles: 'PRF',
   cronCheckins: 'CRN',
+  metrics: 'MTR',
 } as const;
 
 export type PublicIdEntity = keyof typeof PUBLIC_ID_PREFIXES;
 export type PublicIdPrefix = (typeof PUBLIC_ID_PREFIXES)[PublicIdEntity];
 
-const PUBLIC_ID_REGEX = /^(REQ|ERR|ISS|TRC|SPN|LOG|MSG|SES|RPL|PRF|CRN)-\d{1,12}$/i;
+const PUBLIC_ID_REGEX = /^(REQ|ERR|ISS|TRC|SPN|LOG|MSG|SES|RPL|PRF|CRN|MTR)-\d{1,12}$/i;
+
+let publicIdCounter = Math.floor(Math.random() * 100000);
 
 /** Format a sequence or integer ID into a canonical Public ID string. */
 export function formatPublicId(prefix: PublicIdPrefix, num: number | bigint | string): string {
   const n = String(num).padStart(9, '0');
+  return `${prefix}-${n}`;
+}
+
+/**
+ * Generate a deterministic or monotonic public ID.
+ * When num is supplied, it formats it identically to formatPublicId.
+ * Otherwise, generates a safe 9-digit padded sequence number.
+ */
+export function generatePublicId(prefix: PublicIdPrefix, num?: number | bigint | string): string {
+  if (num !== undefined) {
+    return formatPublicId(prefix, num);
+  }
+  publicIdCounter = (publicIdCounter + 1) % 900000000;
+  const n = String(100000000 + publicIdCounter).padStart(9, '0');
   return `${prefix}-${n}`;
 }
 
@@ -42,3 +59,4 @@ export function extractPublicIdPrefix(publicId: string): PublicIdPrefix | null {
   const prefix = publicId.split('-')[0]?.toUpperCase();
   return (prefix as PublicIdPrefix) ?? null;
 }
+

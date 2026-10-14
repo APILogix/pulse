@@ -22,7 +22,8 @@
  *     email tokens) is the cross-process source of truth.
  *   - Email via the Postgres-backed auth outbox worker (queue-only).
  */
-import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'crypto';
+import { createHash, randomBytes, timingSafeEqual } from 'crypto';
+import { v7 as uuidv7 } from 'uuid';
 import { promisify } from 'util';
 import bcrypt from 'bcrypt';
 import * as OTPAuth from 'otpauth';
@@ -54,7 +55,7 @@ export async function issueSessionForUser(options) {
         await repository.revokeOldestSessions(options.user.id, SESSION_CONFIG.MAX_ACTIVE_SESSIONS - 1);
     }
     const now = Date.now();
-    const sessionId = randomUUID();
+    const sessionId = uuidv7();
     const expiresAt = new Date(now + refreshTtlSeconds * 1000);
     const absoluteExpiresAt = new Date(now + ABSOLUTE_SESSION_TTL_SECONDS * 1000);
     const refreshToken = generateRefreshToken(options.user.id, sessionId, refreshTtlSeconds);
@@ -293,8 +294,27 @@ export async function refreshAccessToken(refreshToken, ipAddress, userAgent, req
         : newExpiresAt;
     const rotated = await repository.rotateRefreshToken(session.id, session.user_id, presentedHash, newRefreshHash, finalExpiresAt);
     if (!rotated) {
-        // CAS failed: a concurrent refresh already rotated. Outside the grace
-        // window we treat this as reuse for safety.
+        // CAS failed: check if a concurrent refresh already rotated within the grace window
+        const currentSession = await repository.findSessionById(session.id, session.user_id);
+        const rotatedAt = currentSession?.previous_refresh_rotated_at;
+        if (currentSession &&
+            currentSession.status === 'active' &&
+            rotatedAt &&
+            Date.now() - new Date(rotatedAt).getTime() <= REFRESH_GRACE_WINDOW_MS &&
+            currentSession.previous_refresh_token_hash === presentedHash) {
+            const mfaVerified = Boolean(currentSession.mfa_verified_at) || !user.mfa_enabled;
+            const accessToken = generateAccessToken(currentSession.user_id, currentSession.id, mfaVerified);
+            return {
+                accessToken,
+                refreshToken,
+                refreshTokenRotated: false,
+                expiresAt: new Date(currentSession.expires_at),
+                sessionId: currentSession.id,
+                userId: currentSession.user_id,
+                currentOrgId: user.current_org_id ?? null,
+            };
+        }
+        // Truly outside the grace window or malicious reuse: revoke all sessions
         await repository.revokeAllUserSessions(session.user_id, 'refresh_token_concurrent_rotation');
         markAllUserTokensRevoked(session.user_id);
         throw new AuthError('Session expired. Please sign in again.', AuthErrorCodes.SESSION_TOKEN_REUSE, 401);

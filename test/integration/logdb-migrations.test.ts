@@ -171,7 +171,7 @@ describe("canonical Log DB migrations", () => {
         "11111111-1111-4111-8111-111111111111",
         "22222222-2222-4222-8222-222222222222",
         "Customer.Prod_1",
-        "error-event-1",
+        "33333333-3333-4333-8333-333333333333",
         "boom",
         occurredAt,
         JSON.stringify({ environment: "wrong", extra: true }),
@@ -186,7 +186,7 @@ describe("canonical Log DB migrations", () => {
     expect(inserted.rows[0]!.occurred_at.toISOString()).toBe(occurredAt);
     expect(inserted.rows[0]!.payload).toMatchObject({
       environment: "Customer.Prod_1",
-      event_id: "error-event-1",
+      event_id: "33333333-3333-4333-8333-333333333333",
       message: "boom",
     });
 
@@ -197,7 +197,7 @@ describe("canonical Log DB migrations", () => {
       [
         "11111111-1111-4111-8111-111111111111",
         "22222222-2222-4222-8222-222222222222",
-        "invalid-log-1",
+        "44444444-4444-4444-8444-444444444444",
       ],
     )).rejects.toThrow();
 

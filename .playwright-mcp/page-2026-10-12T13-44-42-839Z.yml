@@ -1,0 +1,38 @@
+- main [ref=f2e2]:
+  - generic [ref=f2e3]:
+    - generic [ref=f2e4]:
+      - paragraph [ref=f2e5]: Pulse billing catalog
+      - heading "Plan catalog redesign console" [level=1] [ref=f2e6]
+      - paragraph [ref=f2e7]: Compare plan pricing, quotas, features, integrations, and the exact JSON payloads from the billing docs.
+    - generic [ref=f2e8]:
+      - generic [ref=f2e9]: Catalog source
+      - combobox "Catalog source" [ref=f2e10]:
+        - option "Canonical v2 plans" [selected]
+        - option "Enterprise finite-quota v3"
+      - generic [ref=f2e11]: Loading catalog...
+  - region "Billing catalog controls" [ref=f2e12]:
+    - group "Billing interval" [ref=f2e13]:
+      - button "Monthly" [ref=f2e14] [cursor=pointer]
+      - button "Annual" [ref=f2e15] [cursor=pointer]
+    - group "Catalog section" [ref=f2e16]:
+      - button "Summary" [ref=f2e17] [cursor=pointer]
+      - button "Quotas" [ref=f2e18] [cursor=pointer]
+      - button "Features" [ref=f2e19] [cursor=pointer]
+      - button "Integrations" [ref=f2e20] [cursor=pointer]
+      - button "JSON" [ref=f2e21] [cursor=pointer]
+    - generic [ref=f2e22]: Search
+    - searchbox "Search" [ref=f2e23]
+  - region "Plans"
+  - generic [ref=f2e24]:
+    - article [ref=f2e25]:
+      - generic [ref=f2e27]:
+        - paragraph [ref=f2e28]: Plan
+        - heading "Loading" [level=2] [ref=f2e29]
+      - paragraph
+    - complementary [ref=f2e30]:
+      - generic [ref=f2e31]:
+        - generic [ref=f2e32]:
+          - paragraph [ref=f2e33]: Raw selected plan
+          - heading "JSON browser" [level=2] [ref=f2e34]
+        - button "Copy" [ref=f2e35] [cursor=pointer]
+      - generic [ref=f2e36]: "{}"

@@ -13,6 +13,8 @@ export declare const EventUsageBodySchema: z.ZodObject<{
     projectId: z.ZodNullable<z.ZodOptional<z.ZodString>>;
     eventType: z.ZodString;
     count: z.ZodCoercedNumber<unknown>;
+    weightedCredits: z.ZodOptional<z.ZodCoercedNumber<unknown>>;
+    rawCount: z.ZodOptional<z.ZodCoercedNumber<unknown>>;
     sizeBytes: z.ZodOptional<z.ZodCoercedNumber<unknown>>;
 }, z.core.$strip>;
 export declare const BulkEventUsageBodySchema: z.ZodObject<{

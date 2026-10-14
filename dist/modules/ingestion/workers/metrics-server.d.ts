@@ -51,10 +51,42 @@ export declare class WorkerMetrics {
     errorGroupsReused: number;
     errorRegressions: number;
     errorDuplicates: number;
+    /**
+     * Times the set-based error grouper bailed out to per-event resolution because
+     * a matched group had `merged_into` set. This is the only remaining O(N)
+     * database path in error ingestion, so a non-trivial rate here is the signal
+     * that error-batch query count has degraded from O(1) to ~3N.
+     */
+    errorGroupMergeFallbacks: number;
+    errorGroupMergeFallbackEvents: number;
+    /** Configured concurrent ingest transactions permitted. */
+    private writePermits;
+    /** Permits currently held (i.e. transactions in flight). */
+    private writeInFlight;
+    /** Handlers waiting for a permit — the saturation signal. */
+    private writeQueued;
+    /** High-water mark of `writeQueued`, so short bursts are not missed by scrapes. */
+    private writeQueuedPeak;
     private readonly errorGroupLookupMs;
     private readonly errorGroupUpsertMs;
     private readonly errorTransactionMs;
     private readonly errorDomainEventMs;
+    private readonly poolAcquireMs;
+    private readonly poolAcquireTimeouts;
+    private readonly transactionMs;
+    private readonly transactionCommitMs;
+    private readonly transactionRollbacks;
+    private readonly longTransactions;
+    private readonly querySlowCount;
+    private readonly queryErrors;
+    private readonly lockWaitMs;
+    private readonly lockWaits;
+    private readonly deadlocks;
+    private readonly queuePollMs;
+    private readonly queueMessagesFetched;
+    private readonly queueEmptyPolls;
+    private readonly queueVisibilityTimeouts;
+    private readonly startupPhaseMs;
     private observe;
     recordProcessed(queue: string, type: string, eventsReceived: number, inserted: number, rejected: number, processingMs: number, e2eMsVal: number | null, batchBytes?: number): void;
     recordStage(stage: string, type: string, ms: number): void;
@@ -73,7 +105,28 @@ export declare class WorkerMetrics {
     setWorkerCapacity(queue: string, type: string, slots: number): void;
     recordErrorGroup(isNew: boolean, isRegression: boolean): void;
     recordErrorDuplicate(): void;
+    /** One batch fell back to per-event group resolution; `events` is that batch's size. */
+    recordErrorGroupMergeFallback(events: number): void;
+    /** Configured write-admission permits (reported once at worker construction). */
+    setWritePermits(permits: number): void;
+    /**
+     * Current admission occupancy. Called on every admit, so the peak is tracked
+     * here rather than sampled — a burst that fills and drains between two Prometheus
+     * scrapes would otherwise be invisible, which is exactly the event we most need
+     * to see when diagnosing a latency spike.
+     */
+    setWriteAdmission(inFlight: number, queued: number): void;
     recordErrorLatencies(lookup: number | null, upsert: number | null, transaction: number | null, domain: number | null): void;
+    recordPoolAcquire(pool: string, durationMs: number): void;
+    recordPoolAcquireTimeout(pool: string): void;
+    recordTransaction(op: string, durationMs: number, committed: boolean, commitDurationMs?: number): void;
+    recordDbQuery(op: string, durationMs: number, isSlow?: boolean): void;
+    recordDbQueryError(op: string, reason?: string): void;
+    recordLockWait(table: string, durationMs: number): void;
+    recordDeadlock(table: string): void;
+    recordQueuePoll(queue: string, durationMs: number, messagesFetched: number): void;
+    recordVisibilityTimeoutFailure(queue: string): void;
+    recordStartupPhase(phase: string, durationMs: number): void;
     recordRollupSuccess(stats: RollupRunStats): void;
     recordRollupFailure(durationMs: number): void;
     /** Render the Prometheus text exposition format (v0.0.4). */

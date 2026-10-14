@@ -37,13 +37,24 @@ export class OrganizationRepository extends BaseRepository {
      * (is_sensitive = TRUE) are retained regardless — compliance/forensics keep
      * those even when normal operational logs roll off.
      */
-    async purgeExpiredAuditLogs() {
-        const r = await this.db.query(`DELETE FROM organization_audit_logs a
-       USING organization_settings s
-       WHERE a.org_id = s.org_id
-         AND a.is_sensitive = FALSE
-         AND a.created_at < NOW() - (s.audit_log_retention_days || ' days')::interval`);
-        return r.rowCount ?? 0;
+    async purgeExpiredAuditLogs(batchSize = 5000) {
+        let totalDeleted = 0;
+        while (true) {
+            const r = await this.db.query(`DELETE FROM organization_audit_logs
+         WHERE id IN (
+           SELECT a.id
+           FROM organization_audit_logs a
+           JOIN organization_settings s ON a.org_id = s.org_id
+           WHERE a.is_sensitive = FALSE
+             AND a.created_at < NOW() - (s.audit_log_retention_days || ' days')::interval
+           LIMIT $1
+         )`, [batchSize]);
+            const count = r.rowCount ?? 0;
+            totalDeleted += count;
+            if (count < batchSize)
+                break;
+        }
+        return totalDeleted;
     }
     /**
      * Retrieves the multi-organization context for a given user.
@@ -119,7 +130,16 @@ export class OrganizationRepository extends BaseRepository {
          COALESCE(u.dashboards_used, 0)::text AS dashboards_used
        FROM (SELECT $1::uuid AS organization_id) org
        LEFT JOIN LATERAL (
-         SELECT *
+         SELECT
+           events_used,
+           event_limit,
+           ai_credits_used,
+           ai_credit_limit,
+           projects_used,
+           api_keys_used,
+           connectors_used,
+           alert_rules_used,
+           dashboards_used
          FROM organization_usage_current_period
          WHERE organization_id = org.organization_id
          ORDER BY period_end DESC
@@ -165,10 +185,13 @@ export class OrganizationRepository extends BaseRepository {
         return r.rows[0] ?? null;
     }
     async findUserByEmail(email) {
+        // Normalize at app boundary — lets Postgres use a plain B-Tree index scan
+        // instead of the non-sargable LOWER() that forces sequential scans at scale.
+        const normalized = email.trim().toLowerCase();
         const r = await this.db.query(`SELECT id, email, full_name
        FROM users
-       WHERE lower(email) = lower($1) AND deleted_at IS NULL
-       LIMIT 1`, [email]);
+       WHERE email = $1 AND deleted_at IS NULL
+       LIMIT 1`, [normalized]);
         return r.rows[0] ?? null;
     }
     async expireStalePendingInvitations() {

@@ -59,24 +59,22 @@ export const ACTION_FEATURE_MAP = {
     'ticket.github.create': FEATURE_KEYS.CONNECTORS_ENABLED,
     'ticket.jira.create': FEATURE_KEYS.CONNECTORS_ENABLED,
     'pagerduty.trigger': FEATURE_KEYS.CONNECTORS_ENABLED,
-    'runbook.open': FEATURE_KEYS.INCIDENT_MANAGEMENT_ENABLED,
-    'runbook.step.create': FEATURE_KEYS.INCIDENT_MANAGEMENT_ENABLED,
-    'status_page.update': FEATURE_KEYS.INCIDENT_MANAGEMENT_ENABLED,
     'connector.delivery.retry': FEATURE_KEYS.CONNECTORS_ENABLED,
-    'alert.severity.change': FEATURE_KEYS.ALERTING_ENABLED,
     'alert.silence.create': FEATURE_KEYS.ALERTING_SILENCING,
     'ai.summary.generate': FEATURE_KEYS.AI_INCIDENT_SUMMARY,
     'ai.root_cause.generate': FEATURE_KEYS.AI_ROOT_CAUSE,
     'report.export': FEATURE_KEYS.ANALYTICS_CUSTOM_REPORTS,
     'rollback.recommend': FEATURE_KEYS.RELEASE_GATES,
-    'release.guard.warn': FEATURE_KEYS.RELEASE_GATES,
-    'release.guard.pause': FEATURE_KEYS.RELEASE_GATES,
     'quota.notify': FEATURE_KEYS.BILLING_OPS_COST_ALERTS,
-    'quota.throttle_recommend': FEATURE_KEYS.BILLING_OPS_COST_ALERTS,
-    'retention.archive': FEATURE_KEYS.ENTERPRISE_AUDIT_LOGS,
-    'retention.purge_request': FEATURE_KEYS.ENTERPRISE_AUDIT_LOGS,
     'security.notify': FEATURE_KEYS.ENTERPRISE_AUDIT_LOGS,
     'webhook.call': FEATURE_KEYS.AUTOMATION_WEBHOOKS,
+    // Removed action types previously mapped here: runbook.open,
+    // runbook.step.create, status_page.update (no backing entity);
+    // alert.severity.change (conflicts with the alerting decision engine);
+    // release.guard.warn/pause, quota.throttle_recommend (duplicates / nothing to
+    // act on); retention.archive, retention.purge_request (platform-level and
+    // irreversible-deletion, never tenant-automatable).
+    // See docs/automationv2/24-action-inventory-and-decisions.md
 };
 // ═══════════════════════════════════════════════════════════════════════════════
 // TRIGGER → FEATURE KEY MAPPING (conservative)

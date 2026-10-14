@@ -16,10 +16,10 @@ export declare const CreateAlertingPolicySchema: z.ZodObject<{
     description: z.ZodString;
     category: z.ZodString;
     severity: z.ZodEnum<{
+        critical: "critical";
         error: "error";
         info: "info";
         warning: "warning";
-        critical: "critical";
     }>;
     metricSource: z.ZodString;
     expression: z.ZodString;
@@ -39,10 +39,10 @@ export declare const UpdateAlertingSettingsSchema: z.ZodObject<{
     defaultCooldownSeconds: z.ZodOptional<z.ZodNumber>;
     retentionDays: z.ZodOptional<z.ZodNumber>;
     defaultSeverity: z.ZodOptional<z.ZodEnum<{
+        critical: "critical";
         error: "error";
         info: "info";
         warning: "warning";
-        critical: "critical";
     }>>;
     defaultRoutingKey: z.ZodOptional<z.ZodString>;
     maximumIncidentAgeSeconds: z.ZodOptional<z.ZodNumber>;

@@ -18,7 +18,7 @@ type ApiKeyRow = {
     environment_id: string;
     name: string;
     public_key: string;
-    secret_hash: string;
+    secret_hash?: string;
     status: ApiKeyStatus;
     expires_at: Date | null;
     last_used_at: Date | null;
@@ -55,6 +55,8 @@ export declare class ApiKeyRepository {
     setApiKeyStatus(projectId: string, apiKeyId: string, status: Extract<ApiKeyStatus, "active" | "suspended">, client?: PoolClient): Promise<ProjectApiKey>;
     /** Revoke permanently. Reason/actor are captured by audit and rotation history. */
     revokeApiKey(projectId: string, apiKeyId: string, client?: PoolClient): Promise<ProjectApiKey>;
+    /** Bulk revoke all active keys for a project in a single query (PROJ-Q022). */
+    revokeAllActiveProjectApiKeys(projectId: string, client?: PoolClient): Promise<number>;
     /** Mark the superseded credential as rotated. Grace lives on the rotation row. */
     markApiKeyRotated(projectId: string, apiKeyId: string, client?: PoolClient): Promise<void>;
     recordRotation(input: {

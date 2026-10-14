@@ -1,11 +1,12 @@
+import './dns.js';
 import { Redis } from 'ioredis';
 export declare const redis: Redis;
 /**
  * Connect to Redis — should be called during bootstrap BEFORE app.listen().
  */
-export declare const connectRedis: () => Promise<void>;
+export declare const connectRedis: (maxRetries?: number) => Promise<void>;
 /**
- * Health check — returns true if Redis responds to PING.
+ * Health check — reconnects a previously unavailable optional cache, then PINGs.
  */
 export declare const checkRedis: () => Promise<boolean>;
 /**

@@ -17,8 +17,9 @@ import type { AutomationRepository } from './repository.js';
 import { computeChecksum as computeChecksumFn } from './repository.js';
 import type { AutomationAuditRepository } from './audit.js';
 import type { ActionRunnerRegistry } from './action-runner.js';
+import { readActionWaitSeconds } from './action-runner.js';
 import type { RequestMeta, ActionRiskLevel } from './types.js';
-import { DANGEROUS_ACTIONS, LIMITS } from './types.js';
+import { DANGEROUS_ACTIONS, LIMITS, ACTION_TYPES } from './types.js';
 import { evaluateConditions } from './evaluator.js';
 import { validateWebhookUrl } from './ssrf.js';
 import {
@@ -277,21 +278,50 @@ export class AutomationService {
   // ── Validate actions for dangerous/approval requirements ────────────
   validateActions(actions: Array<{ actionType: string; riskLevel?: string; requiresApproval?: boolean; config?: Record<string, unknown> }>) {
     for (const a of actions) {
+      // Reject unknown or retired action types at creation time, so a workflow can
+      // never be saved referencing an action the runner cannot execute. Without this
+      // a typo (or a removed type from an old export) would only surface as a
+      // failed run much later.
+      if (!(ACTION_TYPES as readonly string[]).includes(a.actionType)) {
+        throw new AutomationValidationError(
+          `Unsupported action type "${a.actionType}". Supported types: ${ACTION_TYPES.join(', ')}`,
+        );
+      }
+
       const risk = (a.riskLevel ?? 'low') as ActionRiskLevel;
       if ((risk === 'high' || risk === 'critical') && !a.requiresApproval) {
         throw new AutomationValidationError(`Action ${a.actionType} with risk ${risk} must require approval`);
       }
-      // HARDENED: webhook.call ALWAYS requires approval under default server policy.
-      // HTTPS alone is never allowlisting. Also validate URL via SSRF validator.
+
+      /**
+       * webhook.call is connector-referenced only.
+       *
+       * Previously this demanded per-run approval and SSRF-checked an inline
+       * `targetUrl`. That combination was both unusable (every webhook needed a
+       * human) and weaker than it looked, because the URL lived in the workflow
+       * definition. Now the destination must be a `webhook` connector the org has
+       * already created, so SSRF validation happens inside the connectors
+       * subsystem on every send and the secret never enters workflow config.
+       */
       if (a.actionType === 'webhook.call') {
-        if (!a.requiresApproval) {
-          throw new AutomationValidationError('webhook.call always requires approval under server policy');
+        const inlineUrl = (a.config?.targetUrl as string) ?? (a.config?.url as string) ?? '';
+        if (inlineUrl) {
+          throw new AutomationValidationError(
+            'webhook.call does not accept an inline URL. Create a webhook connector and ' +
+            'reference it with "connectorId" so the destination is SSRF-validated and its ' +
+            'credentials stay encrypted.',
+          );
         }
-        const url = (a.config?.targetUrl as string) ?? '';
-        if (url && !this.isUrlSafe(url)) {
-          throw new AutomationValidationError('webhook.call URL fails SSRF validation (must be HTTPS, non-private)');
+        const connectorId = a.config?.connectorId;
+        const connectorType = a.config?.connectorType;
+        if (!connectorId && connectorType && connectorType !== 'webhook') {
+          throw new AutomationValidationError(
+            `webhook.call requires a webhook connector; got connectorType "${String(connectorType)}".`,
+          );
         }
-      } else if (DANGEROUS_ACTIONS.has(a.actionType as any) && !a.requiresApproval) {
+      }
+
+      if (DANGEROUS_ACTIONS.has(a.actionType as any) && !a.requiresApproval) {
         throw new AutomationValidationError(`Dangerous action ${a.actionType} must require approval`);
       }
     }
@@ -466,6 +496,7 @@ export class AutomationService {
       requiredFeatureKey: ACTION_FEATURE_MAP[a.actionType as keyof typeof ACTION_FEATURE_MAP] ?? null,
       idempotencyKey: `${idempotencyKey}:step:${a.actionKey}`,
       inputPayload,
+      initialDelaySeconds: readActionWaitSeconds(a.config),
       metadata: {
         riskLevel: a.riskLevel ?? 'low',
         config: a.config ?? {},

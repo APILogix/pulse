@@ -1,7 +1,7 @@
 import { computeConfigHash } from "./canonical.js";
 import { SdkConfigError, SdkConfigErrorCollector } from "./errors.js";
 import { toJsonPointer } from "./editable-allowlist.js";
-import { COMPRESSION_MODES, ENTITLEMENT_KEYS, FEATURE_KEYS, GENERATOR_ID, INSTRUMENTATION_KEYS, KILLSWITCH_KEYS, PII_DETECTION_KEYS, PRIVACY_CAPTURE_KEYS, QUEUE_OVERFLOW_STRATEGIES, REQUIRED_SECTIONS, RETRY_BACKOFF_MODES, ROUTE_INGEST_PATHS, ROUTE_KEYS, SAMPLING_SIGNALS, SCHEMA_VERSION, TENANT_GOVERNANCE_KEYS, TOP_LEVEL_KEYS, TRANSPORT_PRIORITIES, } from "./schema-v1.js";
+import { COMPRESSION_MODES, ENTITLEMENT_KEYS, FEATURE_KEYS, GENERATOR_ID, INSTRUMENTATION_KEYS, KILLSWITCH_KEYS, PERSISTENCE_GOVERNANCE_KEYS, PII_DETECTION_KEYS, PRIVACY_CAPTURE_KEYS, QUEUE_OVERFLOW_STRATEGIES, REQUIRED_SECTIONS, RETRY_BACKOFF_MODES, ROUTE_INGEST_PATHS, ROUTE_KEYS, SAMPLING_SIGNALS, SCHEMA_VERSION, TENANT_GOVERNANCE_KEYS, TOP_LEVEL_KEYS, TRANSPORT_PRIORITIES, } from "./schema-v1.js";
 export const BOUNDS = {
     "limits.maxSpansPerTrace": { min: 1, max: 5000, integer: true },
     "limits.maxSpanAttributes": { min: 1, max: 500, integer: true },
@@ -23,6 +23,8 @@ export const BOUNDS = {
     "tenant.quotaPerWindow": { min: 1, max: 1000000, integer: true },
     "tenant.windowDurationMs": { min: 1000, max: 3600000, integer: true },
     "tenant.criticalReserve": { min: 0, max: 100000, integer: true },
+    "persistence.maxPersistPerMinute": { min: 1, max: 1000000, integer: true },
+    "persistence.budgetExceededLogIntervalMs": { min: 1000, max: 600000, integer: true },
 };
 export const SAMPLING_RATE_BOUND = { min: 0, max: 1, integer: false };
 export const MAX_SAMPLING_ROUTES = 1000;
@@ -226,6 +228,15 @@ export function validateEditableLeaf(segments, value) {
                         checkNumber(pointer, value, bound, out);
                 }
             }
+            else if (rest[0] === "persistenceGovernance") {
+                if (rest[1] === "adaptive")
+                    checkBoolean(pointer, value, out);
+                else {
+                    const bound = BOUNDS[`persistence.${rest[1]}`];
+                    if (bound)
+                        checkNumber(pointer, value, bound, out);
+                }
+            }
             else {
                 const bound = BOUNDS[`limits.${rest[0]}`];
                 if (bound)
@@ -310,7 +321,7 @@ export function validateSchemaV1(config) {
     const limits = objectValue(root.limits, "/limits", out);
     const limitKeys = [
         "maxSpansPerTrace", "maxSpanAttributes", "maxAttributeLength", "maxPayloadSize",
-        "maxQueueSize", "maxMemoryMb", "tenantGovernance",
+        "maxQueueSize", "maxMemoryMb", "tenantGovernance", "persistenceGovernance",
     ];
     checkExactKeys("/limits", limits, limitKeys, out);
     for (const key of limitKeys.slice(0, 5)) {
@@ -326,6 +337,11 @@ export function validateSchemaV1(config) {
     if (typeof tenant.criticalReserve === "number" && typeof tenant.quotaPerWindow === "number" && tenant.criticalReserve > tenant.quotaPerWindow) {
         out.push({ path: "/limits/tenantGovernance/criticalReserve", rule: "cross_field", message: "criticalReserve must be <= quotaPerWindow" });
     }
+    const persistence = objectValue(limits.persistenceGovernance, "/limits/persistenceGovernance", out);
+    checkExactKeys("/limits/persistenceGovernance", persistence, PERSISTENCE_GOVERNANCE_KEYS, out);
+    checkNumber("/limits/persistenceGovernance/maxPersistPerMinute", persistence.maxPersistPerMinute, BOUNDS["persistence.maxPersistPerMinute"], out);
+    checkBoolean("/limits/persistenceGovernance/adaptive", persistence.adaptive, out);
+    checkNumber("/limits/persistenceGovernance/budgetExceededLogIntervalMs", persistence.budgetExceededLogIntervalMs, BOUNDS["persistence.budgetExceededLogIntervalMs"], out);
     const killswitches = objectValue(root.killswitches, "/killswitches", out);
     checkExactKeys("/killswitches", killswitches, KILLSWITCH_KEYS, out);
     for (const key of KILLSWITCH_KEYS)

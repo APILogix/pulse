@@ -20,7 +20,7 @@ import { issueSessionForUser } from './index.js';
 import { AuthError, AuthErrorCodes, type SocialLoginInput } from '../../domain/types.js';
 import { normalizeEmail } from '../../domain/constants.js';
 import { emailToHash } from './shared-helpers.js';
-import { randomUUID } from 'node:crypto';
+import { v7 as uuidv7 } from 'uuid';
 
 function getSocialLoginCallbackUrl(): string {
   return getApiSocialLoginCallbackUrl();
@@ -149,7 +149,7 @@ export async function completeSocialLogin(
 
     const created = await repository.withTransaction(async (client) => {
       const user = await repository.createUser({
-        id: randomUUID(),
+        id: uuidv7(),
         email: normalizedEmail,
         full_name: profile.displayName || normalizedEmail.split('@')[0] || 'User',
         password: null,
@@ -220,7 +220,7 @@ export async function completeSocialLogin(
     userAgent: flow.userAgent || userAgent,
     deviceName: flow.deviceName,
     deviceType: flow.clientDeviceType || 'web',
-    mfaVerified: true,
+    mfaVerified: !user.mfa_enabled,
     rememberMe: flow.rememberMe,
     ssoContext: { loginMethod: `social_${flow.provider}` },
   });

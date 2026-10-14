@@ -171,7 +171,7 @@ export class ProjectPolicyRepository {
          mute_schedule = EXCLUDED.mute_schedule,
          updated_by = EXCLUDED.updated_by,
          updated_at = NOW()
-       RETURNING *`, [
+       RETURNING id, organization_id, subscription_id, threshold, cooldown_seconds, channels, severity, maintenance_windows, evaluation_window_seconds, environment, escalation_policy_id, mute_schedule, created_by, updated_by, created_at, updated_at`, [
             organizationId,
             projectId,
             subscriptionId,

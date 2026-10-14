@@ -38,6 +38,8 @@ function pgCode(e: unknown): string | undefined {
   return typeof e === 'object' && e !== null ? (e as { code?: string }).code : undefined;
 }
 
+export const ALERT_TEMPLATES_COLUMNS = 'id, organization_id, name, template_type, content, variables_schema, default_for_severity, connector_type, is_default, sample_data, created_at, updated_at, deleted_at';
+
 export class TemplatesRepository {
   private readonly db: typeof pool;
 
@@ -77,7 +79,7 @@ export class TemplatesRepository {
       const r = await this.db.query<AlertTemplateRow>(
         `INSERT INTO alert_templates
            (organization_id, name, template_type, content, variables_schema, default_for_severity, connector_type, is_default, sample_data)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING ${ALERT_TEMPLATES_COLUMNS}`,
         [
           input.organizationId, input.name, input.templateType, input.content,
           JSON.stringify(input.variablesSchema), input.defaultForSeverity, input.connectorType,
@@ -93,7 +95,7 @@ export class TemplatesRepository {
 
   async findTemplate(organizationId: string, id: string): Promise<AlertTemplateRow | null> {
     const r = await this.db.query<AlertTemplateRow>(
-      `SELECT * FROM alert_templates WHERE id=$1 AND organization_id=$2 AND deleted_at IS NULL`, [id, organizationId],
+      `SELECT ${ALERT_TEMPLATES_COLUMNS} FROM alert_templates WHERE id=$1 AND organization_id=$2 AND deleted_at IS NULL`, [id, organizationId],
     );
     return r.rows[0] ?? null;
   }
@@ -103,8 +105,7 @@ export class TemplatesRepository {
       `SELECT COUNT(*)::text AS count FROM alert_templates WHERE organization_id=$1 AND deleted_at IS NULL`, [organizationId],
     );
     const r = await this.db.query<AlertTemplateRow>(
-      `SELECT * FROM alert_templates WHERE organization_id=$1 AND deleted_at IS NULL
-       ORDER BY created_at DESC LIMIT $2 OFFSET $3`, [organizationId, limit, offset],
+      `SELECT ${ALERT_TEMPLATES_COLUMNS} FROM alert_templates WHERE organization_id=$1 AND deleted_at IS NULL ORDER BY created_at DESC LIMIT $2 OFFSET $3`, [organizationId, limit, offset],
     );
     return { data: r.rows, total: Number(countRes.rows[0]?.count ?? 0) };
   }

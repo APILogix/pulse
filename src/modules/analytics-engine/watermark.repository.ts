@@ -104,7 +104,7 @@ export class AnalyticsWatermarkRepository {
             VALUES ($1, $2, $3, $4)
        ON CONFLICT (worker_id, organization_id, window_size) DO UPDATE
              SET last_run_at = NOW()
-         RETURNING *`,
+         RETURNING worker_id, organization_id, window_size, watermark_at, last_bucket_at, last_run_at, rows_processed, consecutive_failures, last_error`,
       [workerId, organizationId, windowSize, coldStart],
     );
     return mapRow(result.rows[0]!);
@@ -116,7 +116,8 @@ export class AnalyticsWatermarkRepository {
     windowSize: WindowSize,
   ): Promise<WatermarkRow | null> {
     const result = await this.pool.query<WatermarkDbRow>(
-      `SELECT * FROM analytics_watermarks
+      `SELECT worker_id, organization_id, window_size, watermark_at, last_bucket_at, last_run_at, rows_processed, consecutive_failures, last_error
+         FROM analytics_watermarks
         WHERE worker_id = $1 AND organization_id = $2 AND window_size = $3`,
       [workerId, organizationId, windowSize],
     );

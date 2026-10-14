@@ -17,6 +17,8 @@ export declare const PII_DETECTION_KEYS: readonly ["enabled", "maskEmails", "mas
 export type PiiDetectionKey = (typeof PII_DETECTION_KEYS)[number];
 export declare const TENANT_GOVERNANCE_KEYS: readonly ["enabled", "maxTenantsTracked", "quotaPerWindow", "windowDurationMs", "criticalReserve"];
 export type TenantGovernanceKey = (typeof TENANT_GOVERNANCE_KEYS)[number];
+export declare const PERSISTENCE_GOVERNANCE_KEYS: readonly ["maxPersistPerMinute", "adaptive", "budgetExceededLogIntervalMs"];
+export type PersistenceGovernanceKey = (typeof PERSISTENCE_GOVERNANCE_KEYS)[number];
 export declare const ENTITLEMENT_KEYS: readonly ["customSpans", "customMetrics", "profiling", "logging", "sessionReplay", "crons", "requestCapture", "tracing", "errors", "metrics"];
 export type EntitlementKey = (typeof ENTITLEMENT_KEYS)[number];
 export declare const ROUTE_KEYS: readonly TransportRouteKey[];
@@ -75,6 +77,11 @@ export interface TenantGovernance {
     windowDurationMs: number;
     criticalReserve: number;
 }
+export interface PersistenceGovernance {
+    maxPersistPerMinute: number;
+    adaptive: boolean;
+    budgetExceededLogIntervalMs: number;
+}
 export interface Limits {
     maxSpansPerTrace: number;
     maxSpanAttributes: number;
@@ -83,6 +90,7 @@ export interface Limits {
     maxQueueSize: number;
     maxMemoryMb: MaxMemoryMb;
     tenantGovernance: TenantGovernance;
+    persistenceGovernance: PersistenceGovernance;
 }
 export interface TransportRoute {
     url: string;

@@ -93,6 +93,39 @@ export function resolveGroupingDimensions(input: AlertFingerprintInput): string[
 }
 
 /**
+ * THE canonical alert identity hash. This is the single source of truth for
+ * "what makes two alert occurrences the same alert".
+ *
+ * Every consumer of alert identity MUST derive its key from this function:
+ *   - Redis cooldown key
+ *   - alert_events_v2.fingerprint / dedup_key / correlation_key
+ *   - alert_event_state.alert_key
+ *
+ * Previously two structurally different hashes existed (one here, one in
+ * decision.engine.ts). They agreed only by convention, so a divergence in how a
+ * route/dimension was normalized could make the cooldown gate and the durable
+ * dedup key disagree about alert identity. Keep this the only hashing site.
+ */
+export function alertIdentityHash(parts: {
+  organizationId: string;
+  projectId?: string | null;
+  environment?: string | null;
+  ruleId: string;
+  policyId?: string | null;
+  /** Pre-normalized, sorted dimension key, or 'global' when ungrouped. */
+  dimensionKey: string;
+}): string {
+  const org = (parts.organizationId || 'unknown_org').trim().toLowerCase();
+  const proj = (parts.projectId || 'org').trim();
+  const env = (parts.environment || 'all').trim().toLowerCase();
+  const rule = (parts.ruleId || 'norule').trim();
+  const policy = (parts.policyId || rule).trim();
+  const dimensionKey = parts.dimensionKey || 'global';
+  const material = `${org}:${proj}:${env}:${rule}:${policy}:${dimensionKey}`;
+  return createHash('sha256').update(material).digest('hex');
+}
+
+/**
  * Computes a deterministic alert fingerprint with normalized grouping dimensions.
  */
 export function computeAlertFingerprint(input: AlertFingerprintInput): AlertFingerprintResult {
@@ -182,9 +215,15 @@ export function computeAlertFingerprint(input: AlertFingerprintInput): AlertFing
 
   const dimensionKey = dimensionPairs.length > 0 ? dimensionPairs.join('|') : 'global';
 
-  // Deterministic fingerprint material
-  const material = `${org}:${proj}:${env}:${rule}:${policy}:${dimensionKey}`;
-  const fingerprint = createHash('sha256').update(material).digest('hex');
+  // Delegate to the single canonical hash so identity can never diverge.
+  const fingerprint = alertIdentityHash({
+    organizationId: org,
+    projectId: proj,
+    environment: env,
+    ruleId: rule,
+    policyId: policy,
+    dimensionKey,
+  });
 
   return {
     fingerprint,

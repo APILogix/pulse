@@ -28,6 +28,7 @@ export declare const LIMITS: {
     readonly maxStackFrames: 200;
     readonly maxBreadcrumbs: 100;
     readonly maxTraceSpanCount: 10000;
+    readonly maxTraceSpanDepth: 128;
     readonly maxReplayEvents: 5000;
 };
 export declare const SDK_EVENT_TYPES: readonly ["error", "message", "request", "span", "trace", "metric", "log", "profile", "cron_checkin", "replay"];
@@ -174,29 +175,29 @@ export declare const eventSchema: z.ZodDiscriminatedUnion<[z.ZodObject<{
     loggerName: z.ZodOptional<z.ZodString>;
     logSource: z.ZodOptional<z.ZodEnum<{
         unknown: "unknown";
-        worker: "worker";
+        queue: "queue";
         framework: "framework";
         sdk: "sdk";
         console: "console";
         middleware: "middleware";
         application: "application";
+        worker: "worker";
         cron: "cron";
-        queue: "queue";
     }>>;
     logCategory: z.ZodOptional<z.ZodEnum<{
-        http: "http";
+        authorization: "authorization";
+        authentication: "authentication";
         database: "database";
         unknown: "unknown";
-        authorization: "authorization";
-        security: "security";
-        authentication: "authentication";
         custom: "custom";
+        http: "http";
+        security: "security";
         system: "system";
-        worker: "worker";
+        queue: "queue";
         business: "business";
         application: "application";
+        worker: "worker";
         cron: "cron";
-        queue: "queue";
         cache: "cache";
         runtime: "runtime";
     }>>;
@@ -235,8 +236,8 @@ export declare const eventSchema: z.ZodDiscriminatedUnion<[z.ZodObject<{
     monitorName: z.ZodOptional<z.ZodString>;
     status: z.ZodEnum<{
         error: "error";
-        ok: "ok";
         timeout: "timeout";
+        ok: "ok";
         failed: "failed";
         in_progress: "in_progress";
         missed: "missed";
@@ -285,16 +286,26 @@ export interface NormalizeErr {
     detail: string;
 }
 export type NormalizeResult = NormalizeOk | NormalizeErr;
+export interface NormalizeEventOptions {
+    /** Immutable gateway receipt time used for future-skew clamping. */
+    nowMs?: number;
+}
 /**
  * Validate + normalize a single raw event. Never throws — returns a tagged
  * result so the caller can record a per-event rejection without failing the
  * whole batch (partial-success ingestion).
  */
-export declare function normalizeEvent(raw: unknown): NormalizeResult;
+export declare function normalizeEvent(raw: unknown, options?: NormalizeEventOptions): NormalizeResult;
 /** Normalize a supported SDK timestamp shape into canonical epoch milliseconds. */
-export declare function normalizeTimestampToEpochMs(raw: unknown): number | null;
+export declare function normalizeTimestampToEpochMs(raw: unknown, nowMs?: number): number | null;
 /** Parse raw timestamp input (number, string, Date) to safe epoch milliseconds. */
 export declare function parseSafeEpochMs(raw: unknown): number | null;
-/** Resolve the storage timestamp (ms epoch) for an event, defaulting to now. */
-export declare function resolveTimestamp(ev: NormalizedEvent): number;
+export interface ResolveTimestampOptions {
+    /** Clock used for deterministic future-skew clamping. */
+    nowMs?: number;
+    /** Stable fallback used when the event has no usable occurrence timestamp. */
+    fallbackMs?: number;
+}
+/** Resolve the storage timestamp (ms epoch), using a caller-supplied stable fallback when available. */
+export declare function resolveTimestamp(ev: NormalizedEvent, options?: ResolveTimestampOptions): number;
 //# sourceMappingURL=event-normalizer.d.ts.map

@@ -28,7 +28,9 @@ describe('BootstrapService (/api/v1/me/bootstrap)', () => {
   });
 
   it('returns empty context when user has no organizations', async () => {
-    mockDb.query.mockResolvedValueOnce({ rows: [] });
+    mockDb.query
+      .mockResolvedValueOnce({ rows: [] }) // memberships
+      .mockResolvedValueOnce({ rows: [] }); // owned organization
 
     const context = await bootstrapService.getBootstrapContext({
       id: 'user_1',
@@ -41,6 +43,24 @@ describe('BootstrapService (/api/v1/me/bootstrap)', () => {
     expect(context.projects).toHaveLength(0);
     expect(context.billing).toBeNull();
     expect(context.quotas.projects.limit).toBe(0);
+    expect(context.organizationCreation).toEqual({ allowed: true, ownedOrganization: null });
+  });
+
+  it('blocks organization creation for a user who owns an organization they are not currently in', async () => {
+    // Owns an archived organization that the membership query no longer returns.
+    mockDb.query
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [{ id: 'org_9', name: 'Old Co', slug: 'old-co', status: 'archived' }] });
+
+    const context = await bootstrapService.getBootstrapContext({ id: 'user_1', email: 'user@example.com' });
+
+    expect(context.organizationCreation).toEqual({
+      allowed: false,
+      ownedOrganization: { id: 'org_9', name: 'Old Co', slug: 'old-co', status: 'archived' },
+    });
+    const ownedQuery = mockDb.query.mock.calls[1];
+    expect(ownedQuery[0]).toContain('owner_user_id = $1 AND deleted_at IS NULL');
+    expect(ownedQuery[1]).toEqual(['user_1']);
   });
 
   it('aggregates organization, projects, billing, features, integrations, quotas, and usage correctly', async () => {
@@ -50,6 +70,9 @@ describe('BootstrapService (/api/v1/me/bootstrap)', () => {
           { id: 'org_1', name: 'Acme Corp', slug: 'acme', role: 'owner' },
           { id: 'org_2', name: 'Beta Inc', slug: 'beta', role: 'member' },
         ],
+      })
+      .mockResolvedValueOnce({
+        rows: [{ id: 'org_1', name: 'Acme Corp', slug: 'acme', status: 'active' }],
       })
       .mockResolvedValueOnce({
         rows: [
@@ -117,6 +140,8 @@ describe('BootstrapService (/api/v1/me/bootstrap)', () => {
     );
 
     expect(context.currentOrganizationId).toBe('org_1');
+    expect(context.organizationCreation.allowed).toBe(false);
+    expect(context.organizationCreation.ownedOrganization?.slug).toBe('acme');
     expect(context.organizations).toHaveLength(2);
     expect(context.organizations[0].isCurrent).toBe(true);
     expect(context.projects).toHaveLength(1);

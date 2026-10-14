@@ -41,25 +41,18 @@ export class ProjectUsageRepository {
         let result;
         try {
             result = await db.query(`SELECT
-           metric.counter_type,
-           COALESCE(SUM(metric.value), 0)::text AS total_value,
-           MIN(usage.bucket) AS last_period_start,
-           MAX(usage.bucket) + INTERVAL '1 minute' AS last_period_end,
+           usage.counter_type,
+           COALESCE(SUM(usage.total_value), 0)::text AS total_value,
+           MIN(usage.period_start) AS last_period_start,
+           MAX(COALESCE(usage.period_end, usage.period_start + INTERVAL '1 hour')) AS last_period_end,
            MAX(usage.last_flushed_at) AS last_flushed_at
          FROM project_usage_realtime usage
-         CROSS JOIN LATERAL (VALUES
-           ('total_events', usage.total_events::numeric),
-           ('errors', usage.errors::numeric),
-           ('requests', usage.requests::numeric),
-           ('total_bytes', usage.total_bytes::numeric),
-           ('rate_limit_usage', usage.rate_limit_usage::numeric)
-         ) metric(counter_type, value)
          WHERE usage.project_id = $1
-         GROUP BY metric.counter_type
-         ORDER BY metric.counter_type`, [projectId]);
+         GROUP BY usage.counter_type
+         ORDER BY usage.counter_type`, [projectId]);
         }
         catch (error) {
-            if (error.code !== "42P01")
+            if (!["42P01", "42703"].includes(error.code ?? ""))
                 throw error;
             result = await this.getProjectUsageCountersFromDaily(projectId, client);
         }

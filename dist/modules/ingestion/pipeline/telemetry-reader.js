@@ -9,7 +9,7 @@
  * level (`analytics_error_groups.status`), not per-event, so the per-event
  * `resolved_*` fields are reported as null here.
  */
-import { randomUUID } from 'crypto';
+import { v7 as uuidv7 } from 'uuid';
 // SDK type -> authoritative events_* table.
 const REPLAY_TYPE_TABLES = [
     { type: 'error', table: 'events_errors' },
@@ -160,7 +160,7 @@ export class TelemetryReader {
         const timestampMs = new Date(row.timestamp).getTime();
         const payload = {
             type: 'error',
-            requestId: row.request_id ?? randomUUID(),
+            requestId: row.request_id ?? uuidv7(),
             message: row.message,
             name: row.error_name,
             stack: Array.isArray(row.stack_frames) ? row.stack_frames : [],

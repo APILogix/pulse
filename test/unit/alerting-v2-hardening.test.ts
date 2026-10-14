@@ -469,7 +469,7 @@ describe('Alerting V2 Enterprise Hardening & Production Finalization Test Suite'
 
       expect(status).toBe('queued');
       expect(sendSpy).toHaveBeenCalledWith(
-        expect.stringMatching(/^connector(\.v2\.|-send-)email$/),
+        expect.stringMatching(/^connector(\.v2\.|_v2_|-send-)email$/),
         expect.objectContaining({
           notificationJobId: 'notif-job-1',
           organizationId: 'org-1',

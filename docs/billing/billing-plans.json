@@ -1,0 +1,3705 @@
+{
+  "schema_version": "2.2.0",
+  "catalog_version": 2,
+  "generated_at": "2026-10-11T09:49:54.730Z",
+  "authority_status": "informational_canonical_consolidated",
+  "companion_catalog_files": {
+    "master_plans_catalog": "docs/billing/billing-plans.json",
+    "features_catalog": "docs/billing/billing-features-catalog.json",
+    "entitlement_matrix": "docs/billing/billing-entitlement-matrix.json",
+    "credits_and_metering": "docs/billing/billing-credits-and-metering.json",
+    "validation_report": "docs/billing/billing-validation-report.json",
+    "catalog_audit_report_markdown": "docs/billing/billing-plan-audit.md"
+  },
+  "runtime_source_of_truth": {
+    "primary_database_tables": [
+      "plans",
+      "plan_prices",
+      "billing_features",
+      "plan_feature_entitlements",
+      "organization_subscriptions",
+      "organization_usage_current_period",
+      "usage_counter_staging",
+      "usage_daily_counters",
+      "billing_event_credit_weights",
+      "credit_balances",
+      "credit_ledger",
+      "credit_rules",
+      "ai_model_routes"
+    ],
+    "typescript_catalog_files": [
+      "src/modules/billing/catalog/feature-registry.ts",
+      "src/modules/billing/catalog/plan-matrix.ts",
+      "src/modules/billing/catalog/catalog-validator.ts"
+    ],
+    "sql_seeder_files": [
+      "database/primarydbv2/schema/20_seeders/004_11_billing_catalog_plans_and_prices.sql",
+      "database/primarydbv2/schema/20_seeders/005_11_billing_catalog_features.sql",
+      "database/primarydbv2/schema/20_seeders/006_11_billing_catalog_plan_entitlements.sql",
+      "database/primarydbv2/schema/20_seeders/007_11_billing_event_credit_weights.sql"
+    ]
+  },
+  "default_currency": "USD",
+  "supported_billing_intervals": [
+    "monthly",
+    "annual"
+  ],
+  "annual_discount_policy": "2_months_free_10x_monthly",
+  "plans_count": 5,
+  "features_count": 84,
+  "plans": [
+    {
+      "id": "seed-plan-free",
+      "key": "free",
+      "name": "Free",
+      "tier": "free",
+      "description": "Perfect for personal projects, prototypes, and evaluation with 50,000 monthly shared event credits.",
+      "trial_days": 0,
+      "sort_order": 1,
+      "is_public": true,
+      "is_customizable": false,
+      "next_plan_key": "starter",
+      "badge": null,
+      "metadata": {
+        "highlightedFeatures": [
+          "error_tracking.enabled",
+          "tracing.enabled",
+          "logging.enabled"
+        ],
+        "recommendedFor": "Individual developers and hobby projects",
+        "ctaText": "Get Started Free"
+      },
+      "prices": [
+        {
+          "id": "seed-price-free-monthly",
+          "provider": "system",
+          "interval": "monthly",
+          "currency": "USD",
+          "amountMinor": 0,
+          "isDefault": true,
+          "metadata": {
+            "display": "$0/mo",
+            "recommended": false
+          }
+        },
+        {
+          "id": "seed-price-free-annual",
+          "provider": "system",
+          "interval": "annual",
+          "currency": "USD",
+          "amountMinor": 0,
+          "isDefault": false,
+          "metadata": {
+            "display": "$0/year",
+            "discount": "2 months free"
+          }
+        }
+      ],
+      "monthly_event_credit_pool": 50000,
+      "quotas": {
+        "organization.max_orgs_per_user": {
+          "key": "organization.max_orgs_per_user",
+          "name": "Max Organizations Per User",
+          "value": 1,
+          "unit": "organizations",
+          "scope": "user",
+          "enforcement_type": "hard_limit"
+        },
+        "quota.projects": {
+          "key": "quota.projects",
+          "name": "Projects Quota",
+          "value": 1,
+          "unit": "projects",
+          "scope": "organization",
+          "enforcement_type": "hard_limit"
+        },
+        "quota.members": {
+          "key": "quota.members",
+          "name": "Team Members Quota",
+          "value": 3,
+          "unit": "members",
+          "scope": "organization",
+          "enforcement_type": "hard_limit"
+        },
+        "quota.environments": {
+          "key": "quota.environments",
+          "name": "Environments Quota",
+          "value": 2,
+          "unit": "environments",
+          "scope": "project",
+          "enforcement_type": "hard_limit"
+        },
+        "quota.api_keys": {
+          "key": "quota.api_keys",
+          "name": "API Keys Quota",
+          "value": 2,
+          "unit": "api_keys",
+          "scope": "project",
+          "enforcement_type": "hard_limit"
+        },
+        "quota.monthly_events": {
+          "key": "quota.monthly_events",
+          "name": "Monthly Billable Credits",
+          "value": 50000,
+          "unit": "credits",
+          "scope": "organization",
+          "enforcement_type": "overage"
+        },
+        "quota.requests_per_second": {
+          "key": "quota.requests_per_second",
+          "name": "Rate Limit (RPS)",
+          "value": 50,
+          "unit": "requests/sec",
+          "scope": "organization",
+          "enforcement_type": "throttle"
+        },
+        "quota.sdk_batch_queue_size": {
+          "key": "quota.sdk_batch_queue_size",
+          "name": "SDK Batch Max Queue Size",
+          "value": 100,
+          "unit": "events",
+          "scope": "project",
+          "enforcement_type": "hard_limit"
+        },
+        "quota.sdk_offline_queue_limit": {
+          "key": "quota.sdk_offline_queue_limit",
+          "name": "SDK Offline Queue Limit",
+          "value": 0,
+          "unit": "events",
+          "scope": "project",
+          "enforcement_type": "hard_limit"
+        },
+        "quota.retention_days": {
+          "key": "quota.retention_days",
+          "name": "Default Retention Days",
+          "value": 7,
+          "unit": "days",
+          "scope": "organization",
+          "enforcement_type": "hard_limit"
+        },
+        "quota.alert_rules": {
+          "key": "quota.alert_rules",
+          "name": "Organization Alert Rules Quota",
+          "value": 0,
+          "unit": "rules",
+          "scope": "organization",
+          "enforcement_type": "hard_limit"
+        },
+        "quota.project_alert_rules": {
+          "key": "quota.project_alert_rules",
+          "name": "Project Alert Rules Quota",
+          "value": 0,
+          "unit": "rules",
+          "scope": "project",
+          "enforcement_type": "hard_limit"
+        },
+        "quota.alert_channels": {
+          "key": "quota.alert_channels",
+          "name": "Alert Channels Quota",
+          "value": 0,
+          "unit": "channels",
+          "scope": "organization",
+          "enforcement_type": "hard_limit"
+        },
+        "quota.project_notification_channels": {
+          "key": "quota.project_notification_channels",
+          "name": "Project Notification Channels Quota",
+          "value": 0,
+          "unit": "channels",
+          "scope": "project",
+          "enforcement_type": "hard_limit"
+        },
+        "quota.routing_rules": {
+          "key": "quota.routing_rules",
+          "name": "Routing Rules Quota",
+          "value": 0,
+          "unit": "rules",
+          "scope": "organization",
+          "enforcement_type": "hard_limit"
+        },
+        "quota.project_routing_rules": {
+          "key": "quota.project_routing_rules",
+          "name": "Project Routing Rules Quota",
+          "value": 0,
+          "unit": "rules",
+          "scope": "project",
+          "enforcement_type": "hard_limit"
+        },
+        "quota.daily_alerts": {
+          "key": "quota.daily_alerts",
+          "name": "Daily Alert Notifications",
+          "value": 0,
+          "unit": "notifications",
+          "scope": "organization",
+          "enforcement_type": "hard_limit"
+        },
+        "quota.monthly_alerts": {
+          "key": "quota.monthly_alerts",
+          "name": "Monthly Alert Notifications",
+          "value": 100,
+          "unit": "notifications",
+          "scope": "organization",
+          "enforcement_type": "overage"
+        },
+        "quota.connector_sends": {
+          "key": "quota.connector_sends",
+          "name": "Monthly Connector Sends",
+          "value": 100,
+          "unit": "sends",
+          "scope": "organization",
+          "enforcement_type": "overage"
+        },
+        "quota.automation_rules": {
+          "key": "quota.automation_rules",
+          "name": "Automation Rules Quota",
+          "value": 0,
+          "unit": "rules",
+          "scope": "organization",
+          "enforcement_type": "hard_limit"
+        },
+        "quota.dashboards": {
+          "key": "quota.dashboards",
+          "name": "Dashboards Quota",
+          "value": 1,
+          "unit": "dashboards",
+          "scope": "organization",
+          "enforcement_type": "hard_limit"
+        },
+        "quota.ai_credits": {
+          "key": "quota.ai_credits",
+          "name": "Monthly AI Credits",
+          "value": 0,
+          "unit": "credits",
+          "scope": "organization",
+          "enforcement_type": "hard_limit"
+        },
+        "quota.connectors": {
+          "key": "quota.connectors",
+          "name": "Connector Instances Quota",
+          "value": 2,
+          "unit": "connectors",
+          "scope": "organization",
+          "enforcement_type": "hard_limit"
+        },
+        "quota.service_accounts": {
+          "key": "quota.service_accounts",
+          "name": "Service Accounts Quota",
+          "value": 0,
+          "unit": "accounts",
+          "scope": "organization",
+          "enforcement_type": "hard_limit"
+        },
+        "quota.custom_roles": {
+          "key": "quota.custom_roles",
+          "name": "Custom Roles Quota",
+          "value": 0,
+          "unit": "roles",
+          "scope": "organization",
+          "enforcement_type": "hard_limit"
+        }
+      },
+      "features": {
+        "organization.enabled": {
+          "key": "organization.enabled",
+          "name": "Organization Management",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "projects.enabled": {
+          "key": "projects.enabled",
+          "name": "Projects Platform",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "sdk.enabled": {
+          "key": "sdk.enabled",
+          "name": "SDK Ingestion",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "sdk.remote_config": {
+          "key": "sdk.remote_config",
+          "name": "SDK Remote Config",
+          "value": true,
+          "unit": "boolean",
+          "scope": "project",
+          "enforcement_type": "none"
+        },
+        "sdk.retry": {
+          "key": "sdk.retry",
+          "name": "SDK Exponential Retry",
+          "value": true,
+          "unit": "boolean",
+          "scope": "project",
+          "enforcement_type": "none"
+        },
+        "sdk.batching": {
+          "key": "sdk.batching",
+          "name": "SDK Batching",
+          "value": true,
+          "unit": "boolean",
+          "scope": "project",
+          "enforcement_type": "none"
+        },
+        "sdk.offline_queue": {
+          "key": "sdk.offline_queue",
+          "name": "SDK Offline Queue",
+          "value": false,
+          "unit": "boolean",
+          "scope": "project",
+          "enforcement_type": "none"
+        },
+        "sdk.dynamic_sampling": {
+          "key": "sdk.dynamic_sampling",
+          "name": "SDK Dynamic Sampling",
+          "value": false,
+          "unit": "boolean",
+          "scope": "project",
+          "enforcement_type": "none"
+        },
+        "privacy.data_scrubbing": {
+          "key": "privacy.data_scrubbing",
+          "name": "PII Data Scrubbing",
+          "value": false,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "privacy.capture_headers": {
+          "key": "privacy.capture_headers",
+          "name": "Capture HTTP Headers",
+          "value": false,
+          "unit": "boolean",
+          "scope": "project",
+          "enforcement_type": "none"
+        },
+        "privacy.capture_body": {
+          "key": "privacy.capture_body",
+          "name": "Capture HTTP Body",
+          "value": false,
+          "unit": "boolean",
+          "scope": "project",
+          "enforcement_type": "none"
+        },
+        "privacy.capture_ip": {
+          "key": "privacy.capture_ip",
+          "name": "Capture Client IP",
+          "value": false,
+          "unit": "boolean",
+          "scope": "project",
+          "enforcement_type": "none"
+        },
+        "error_tracking.enabled": {
+          "key": "error_tracking.enabled",
+          "name": "Error Tracking",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "tracing.enabled": {
+          "key": "tracing.enabled",
+          "name": "Distributed Tracing",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "logging.enabled": {
+          "key": "logging.enabled",
+          "name": "Structured Logging",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "metrics.enabled": {
+          "key": "metrics.enabled",
+          "name": "Custom Metrics",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "profiling.enabled": {
+          "key": "profiling.enabled",
+          "name": "Continuous Profiling",
+          "value": false,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "replay.enabled": {
+          "key": "replay.enabled",
+          "name": "Session Replay",
+          "value": false,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "uptime.enabled": {
+          "key": "uptime.enabled",
+          "name": "Uptime & Cron Monitoring",
+          "value": false,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "cron_monitoring.enabled": {
+          "key": "cron_monitoring.enabled",
+          "name": "Cron Job Monitoring",
+          "value": false,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "alerting.enabled": {
+          "key": "alerting.enabled",
+          "name": "Alerting Platform",
+          "value": false,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "alerting.rules": {
+          "key": "alerting.rules",
+          "name": "Alert Rules Feature",
+          "value": false,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "alerting.routing.enabled": {
+          "key": "alerting.routing.enabled",
+          "name": "Advanced Alert Routing",
+          "value": false,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "alerting.composite": {
+          "key": "alerting.composite",
+          "name": "Composite Alerts",
+          "value": false,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "alerting.escalation_policies": {
+          "key": "alerting.escalation_policies",
+          "name": "Escalation Policies",
+          "value": false,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "alerting.on_call": {
+          "key": "alerting.on_call",
+          "name": "On-Call Schedules",
+          "value": false,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "alerting.incident_timeline": {
+          "key": "alerting.incident_timeline",
+          "name": "Incident Timeline",
+          "value": false,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "alerting.managed_email_fallback": {
+          "key": "alerting.managed_email_fallback",
+          "name": "Managed Email Fallback",
+          "value": false,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "alerting.ai_alert": {
+          "key": "alerting.ai_alert",
+          "name": "AI Alert Insights",
+          "value": false,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "automation.enabled": {
+          "key": "automation.enabled",
+          "name": "Automation Platform",
+          "value": false,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "dashboards.enabled": {
+          "key": "dashboards.enabled",
+          "name": "Dashboards Platform",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "dashboards.custom_dashboards": {
+          "key": "dashboards.custom_dashboards",
+          "name": "Custom Dashboards",
+          "value": false,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "analytics.explorer": {
+          "key": "analytics.explorer",
+          "name": "Analytics Explorer",
+          "value": false,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "analytics.query_builder": {
+          "key": "analytics.query_builder",
+          "name": "Analytics Query Builder",
+          "value": false,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "ai.enabled": {
+          "key": "ai.enabled",
+          "name": "AI Insights Platform",
+          "value": false,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "ai.summaries": {
+          "key": "ai.summaries",
+          "name": "AI Incident & Log Summaries",
+          "value": false,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "ai.root_cause_analysis": {
+          "key": "ai.root_cause_analysis",
+          "name": "AI Root Cause Analysis",
+          "value": false,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "ai.anomaly_detection": {
+          "key": "ai.anomaly_detection",
+          "name": "AI Anomaly Detection",
+          "value": false,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "ai.forecasting": {
+          "key": "ai.forecasting",
+          "name": "AI Metric Forecasting",
+          "value": false,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "ai.incident_copilot": {
+          "key": "ai.incident_copilot",
+          "name": "AI Incident Copilot",
+          "value": false,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "integrations.enabled": {
+          "key": "integrations.enabled",
+          "name": "Integrations Platform",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "integrations.rest_api": {
+          "key": "integrations.rest_api",
+          "name": "REST API Access",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "security.enabled": {
+          "key": "security.enabled",
+          "name": "Enterprise Security",
+          "value": false,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "security.audit_logs": {
+          "key": "security.audit_logs",
+          "name": "Audit Logs",
+          "value": false,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "security.sso": {
+          "key": "security.sso",
+          "name": "SAML 2.0 & OIDC SSO",
+          "value": false,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "security.scim": {
+          "key": "security.scim",
+          "name": "SCIM 2.0 User Provisioning",
+          "value": false,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "security.custom_roles": {
+          "key": "security.custom_roles",
+          "name": "Custom RBAC Roles",
+          "value": false,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "support.dedicated": {
+          "key": "support.dedicated",
+          "name": "Dedicated Support",
+          "value": false,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "support.sla": {
+          "key": "support.sla",
+          "name": "Support SLA",
+          "value": "none",
+          "unit": "string",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "deployment.custom": {
+          "key": "deployment.custom",
+          "name": "Custom Deployment",
+          "value": false,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "compliance.hipaa": {
+          "key": "compliance.hipaa",
+          "name": "HIPAA Compliance",
+          "value": false,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "compliance.gdpr_dpa": {
+          "key": "compliance.gdpr_dpa",
+          "name": "GDPR Data Processing Agreement",
+          "value": false,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        }
+      },
+      "integrations": {
+        "integrations.email": {
+          "key": "integrations.email",
+          "name": "Email Connector",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "integrations.webhook": {
+          "key": "integrations.webhook",
+          "name": "Webhook Connector",
+          "value": false,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "integrations.slack": {
+          "key": "integrations.slack",
+          "name": "Slack Connector",
+          "value": false,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "integrations.discord": {
+          "key": "integrations.discord",
+          "name": "Discord Connector",
+          "value": false,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "integrations.microsoft_teams": {
+          "key": "integrations.microsoft_teams",
+          "name": "Microsoft Teams Connector",
+          "value": false,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "integrations.pagerduty": {
+          "key": "integrations.pagerduty",
+          "name": "PagerDuty Connector",
+          "value": false,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "integrations.sms": {
+          "key": "integrations.sms",
+          "name": "SMS Connector",
+          "value": false,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        }
+      }
+    },
+    {
+      "id": "seed-plan-starter",
+      "key": "starter",
+      "name": "Starter",
+      "tier": "starter",
+      "description": "Production-ready observability for small teams with 250,000 monthly shared event credits.",
+      "trial_days": 14,
+      "sort_order": 2,
+      "is_public": true,
+      "is_customizable": false,
+      "next_plan_key": "growth",
+      "badge": "Popular",
+      "metadata": {
+        "highlightedFeatures": [
+          "error_tracking.enabled",
+          "tracing.enabled",
+          "logging.enabled",
+          "metrics.enabled",
+          "alerting.enabled"
+        ],
+        "recommendedFor": "Small engineering teams and startups",
+        "ctaText": "Start 14-Day Free Trial"
+      },
+      "prices": [
+        {
+          "id": "seed-price-starter-monthly",
+          "provider": "stripe",
+          "interval": "monthly",
+          "currency": "USD",
+          "amountMinor": 1500,
+          "isDefault": true,
+          "metadata": {
+            "display": "$15/mo",
+            "recommended": false
+          }
+        },
+        {
+          "id": "seed-price-starter-annual",
+          "provider": "stripe",
+          "interval": "annual",
+          "currency": "USD",
+          "amountMinor": 15000,
+          "isDefault": false,
+          "metadata": {
+            "display": "$150/year",
+            "discount": "2 months free"
+          }
+        }
+      ],
+      "monthly_event_credit_pool": 250000,
+      "quotas": {
+        "organization.max_orgs_per_user": {
+          "key": "organization.max_orgs_per_user",
+          "name": "Max Organizations Per User",
+          "value": 1,
+          "unit": "organizations",
+          "scope": "user",
+          "enforcement_type": "hard_limit"
+        },
+        "quota.projects": {
+          "key": "quota.projects",
+          "name": "Projects Quota",
+          "value": 5,
+          "unit": "projects",
+          "scope": "organization",
+          "enforcement_type": "hard_limit"
+        },
+        "quota.members": {
+          "key": "quota.members",
+          "name": "Team Members Quota",
+          "value": 10,
+          "unit": "members",
+          "scope": "organization",
+          "enforcement_type": "hard_limit"
+        },
+        "quota.environments": {
+          "key": "quota.environments",
+          "name": "Environments Quota",
+          "value": 5,
+          "unit": "environments",
+          "scope": "project",
+          "enforcement_type": "hard_limit"
+        },
+        "quota.api_keys": {
+          "key": "quota.api_keys",
+          "name": "API Keys Quota",
+          "value": 10,
+          "unit": "api_keys",
+          "scope": "project",
+          "enforcement_type": "hard_limit"
+        },
+        "quota.monthly_events": {
+          "key": "quota.monthly_events",
+          "name": "Monthly Billable Credits",
+          "value": 250000,
+          "unit": "credits",
+          "scope": "organization",
+          "enforcement_type": "overage",
+          "overage_rate_cents": 50,
+          "overage_unit": 1000,
+          "grace_percent": 10
+        },
+        "quota.requests_per_second": {
+          "key": "quota.requests_per_second",
+          "name": "Rate Limit (RPS)",
+          "value": 250,
+          "unit": "requests/sec",
+          "scope": "organization",
+          "enforcement_type": "throttle"
+        },
+        "quota.sdk_batch_queue_size": {
+          "key": "quota.sdk_batch_queue_size",
+          "name": "SDK Batch Max Queue Size",
+          "value": 1000,
+          "unit": "events",
+          "scope": "project",
+          "enforcement_type": "hard_limit"
+        },
+        "quota.sdk_offline_queue_limit": {
+          "key": "quota.sdk_offline_queue_limit",
+          "name": "SDK Offline Queue Limit",
+          "value": 0,
+          "unit": "events",
+          "scope": "project",
+          "enforcement_type": "hard_limit"
+        },
+        "quota.retention_days": {
+          "key": "quota.retention_days",
+          "name": "Default Retention Days",
+          "value": 30,
+          "unit": "days",
+          "scope": "organization",
+          "enforcement_type": "hard_limit"
+        },
+        "quota.alert_rules": {
+          "key": "quota.alert_rules",
+          "name": "Organization Alert Rules Quota",
+          "value": 10,
+          "unit": "rules",
+          "scope": "organization",
+          "enforcement_type": "hard_limit"
+        },
+        "quota.project_alert_rules": {
+          "key": "quota.project_alert_rules",
+          "name": "Project Alert Rules Quota",
+          "value": 5,
+          "unit": "rules",
+          "scope": "project",
+          "enforcement_type": "hard_limit"
+        },
+        "quota.alert_channels": {
+          "key": "quota.alert_channels",
+          "name": "Alert Channels Quota",
+          "value": 10,
+          "unit": "channels",
+          "scope": "organization",
+          "enforcement_type": "hard_limit"
+        },
+        "quota.project_notification_channels": {
+          "key": "quota.project_notification_channels",
+          "name": "Project Notification Channels Quota",
+          "value": 3,
+          "unit": "channels",
+          "scope": "project",
+          "enforcement_type": "hard_limit"
+        },
+        "quota.routing_rules": {
+          "key": "quota.routing_rules",
+          "name": "Routing Rules Quota",
+          "value": 2,
+          "unit": "rules",
+          "scope": "organization",
+          "enforcement_type": "hard_limit"
+        },
+        "quota.project_routing_rules": {
+          "key": "quota.project_routing_rules",
+          "name": "Project Routing Rules Quota",
+          "value": 1,
+          "unit": "rules",
+          "scope": "project",
+          "enforcement_type": "hard_limit"
+        },
+        "quota.daily_alerts": {
+          "key": "quota.daily_alerts",
+          "name": "Daily Alert Notifications",
+          "value": 0,
+          "unit": "notifications",
+          "scope": "organization",
+          "enforcement_type": "hard_limit"
+        },
+        "quota.monthly_alerts": {
+          "key": "quota.monthly_alerts",
+          "name": "Monthly Alert Notifications",
+          "value": 1000,
+          "unit": "notifications",
+          "scope": "organization",
+          "enforcement_type": "overage"
+        },
+        "quota.connector_sends": {
+          "key": "quota.connector_sends",
+          "name": "Monthly Connector Sends",
+          "value": 1000,
+          "unit": "sends",
+          "scope": "organization",
+          "enforcement_type": "overage"
+        },
+        "quota.automation_rules": {
+          "key": "quota.automation_rules",
+          "name": "Automation Rules Quota",
+          "value": 5,
+          "unit": "rules",
+          "scope": "organization",
+          "enforcement_type": "hard_limit"
+        },
+        "quota.dashboards": {
+          "key": "quota.dashboards",
+          "name": "Dashboards Quota",
+          "value": 3,
+          "unit": "dashboards",
+          "scope": "organization",
+          "enforcement_type": "hard_limit"
+        },
+        "quota.ai_credits": {
+          "key": "quota.ai_credits",
+          "name": "Monthly AI Credits",
+          "value": 100,
+          "unit": "credits",
+          "scope": "organization",
+          "enforcement_type": "hard_limit"
+        },
+        "quota.connectors": {
+          "key": "quota.connectors",
+          "name": "Connector Instances Quota",
+          "value": 10,
+          "unit": "connectors",
+          "scope": "organization",
+          "enforcement_type": "hard_limit"
+        },
+        "quota.service_accounts": {
+          "key": "quota.service_accounts",
+          "name": "Service Accounts Quota",
+          "value": 2,
+          "unit": "accounts",
+          "scope": "organization",
+          "enforcement_type": "hard_limit"
+        },
+        "quota.custom_roles": {
+          "key": "quota.custom_roles",
+          "name": "Custom Roles Quota",
+          "value": 0,
+          "unit": "roles",
+          "scope": "organization",
+          "enforcement_type": "hard_limit"
+        }
+      },
+      "features": {
+        "organization.enabled": {
+          "key": "organization.enabled",
+          "name": "Organization Management",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "projects.enabled": {
+          "key": "projects.enabled",
+          "name": "Projects Platform",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "sdk.enabled": {
+          "key": "sdk.enabled",
+          "name": "SDK Ingestion",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "sdk.remote_config": {
+          "key": "sdk.remote_config",
+          "name": "SDK Remote Config",
+          "value": true,
+          "unit": "boolean",
+          "scope": "project",
+          "enforcement_type": "none"
+        },
+        "sdk.retry": {
+          "key": "sdk.retry",
+          "name": "SDK Exponential Retry",
+          "value": true,
+          "unit": "boolean",
+          "scope": "project",
+          "enforcement_type": "none"
+        },
+        "sdk.batching": {
+          "key": "sdk.batching",
+          "name": "SDK Batching",
+          "value": true,
+          "unit": "boolean",
+          "scope": "project",
+          "enforcement_type": "none"
+        },
+        "sdk.offline_queue": {
+          "key": "sdk.offline_queue",
+          "name": "SDK Offline Queue",
+          "value": false,
+          "unit": "boolean",
+          "scope": "project",
+          "enforcement_type": "none"
+        },
+        "sdk.dynamic_sampling": {
+          "key": "sdk.dynamic_sampling",
+          "name": "SDK Dynamic Sampling",
+          "value": false,
+          "unit": "boolean",
+          "scope": "project",
+          "enforcement_type": "none"
+        },
+        "privacy.data_scrubbing": {
+          "key": "privacy.data_scrubbing",
+          "name": "PII Data Scrubbing",
+          "value": false,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "privacy.capture_headers": {
+          "key": "privacy.capture_headers",
+          "name": "Capture HTTP Headers",
+          "value": false,
+          "unit": "boolean",
+          "scope": "project",
+          "enforcement_type": "none"
+        },
+        "privacy.capture_body": {
+          "key": "privacy.capture_body",
+          "name": "Capture HTTP Body",
+          "value": false,
+          "unit": "boolean",
+          "scope": "project",
+          "enforcement_type": "none"
+        },
+        "privacy.capture_ip": {
+          "key": "privacy.capture_ip",
+          "name": "Capture Client IP",
+          "value": false,
+          "unit": "boolean",
+          "scope": "project",
+          "enforcement_type": "none"
+        },
+        "error_tracking.enabled": {
+          "key": "error_tracking.enabled",
+          "name": "Error Tracking",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "tracing.enabled": {
+          "key": "tracing.enabled",
+          "name": "Distributed Tracing",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "logging.enabled": {
+          "key": "logging.enabled",
+          "name": "Structured Logging",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "metrics.enabled": {
+          "key": "metrics.enabled",
+          "name": "Custom Metrics",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "profiling.enabled": {
+          "key": "profiling.enabled",
+          "name": "Continuous Profiling",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "replay.enabled": {
+          "key": "replay.enabled",
+          "name": "Session Replay",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "uptime.enabled": {
+          "key": "uptime.enabled",
+          "name": "Uptime & Cron Monitoring",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "cron_monitoring.enabled": {
+          "key": "cron_monitoring.enabled",
+          "name": "Cron Job Monitoring",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "alerting.enabled": {
+          "key": "alerting.enabled",
+          "name": "Alerting Platform",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "alerting.rules": {
+          "key": "alerting.rules",
+          "name": "Alert Rules Feature",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "alerting.routing.enabled": {
+          "key": "alerting.routing.enabled",
+          "name": "Advanced Alert Routing",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "alerting.composite": {
+          "key": "alerting.composite",
+          "name": "Composite Alerts",
+          "value": false,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "alerting.escalation_policies": {
+          "key": "alerting.escalation_policies",
+          "name": "Escalation Policies",
+          "value": false,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "alerting.on_call": {
+          "key": "alerting.on_call",
+          "name": "On-Call Schedules",
+          "value": false,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "alerting.incident_timeline": {
+          "key": "alerting.incident_timeline",
+          "name": "Incident Timeline",
+          "value": false,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "alerting.managed_email_fallback": {
+          "key": "alerting.managed_email_fallback",
+          "name": "Managed Email Fallback",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "alerting.ai_alert": {
+          "key": "alerting.ai_alert",
+          "name": "AI Alert Insights",
+          "value": false,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "automation.enabled": {
+          "key": "automation.enabled",
+          "name": "Automation Platform",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "dashboards.enabled": {
+          "key": "dashboards.enabled",
+          "name": "Dashboards Platform",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "dashboards.custom_dashboards": {
+          "key": "dashboards.custom_dashboards",
+          "name": "Custom Dashboards",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "analytics.explorer": {
+          "key": "analytics.explorer",
+          "name": "Analytics Explorer",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "analytics.query_builder": {
+          "key": "analytics.query_builder",
+          "name": "Analytics Query Builder",
+          "value": false,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "ai.enabled": {
+          "key": "ai.enabled",
+          "name": "AI Insights Platform",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "ai.summaries": {
+          "key": "ai.summaries",
+          "name": "AI Incident & Log Summaries",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "ai.root_cause_analysis": {
+          "key": "ai.root_cause_analysis",
+          "name": "AI Root Cause Analysis",
+          "value": false,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "ai.anomaly_detection": {
+          "key": "ai.anomaly_detection",
+          "name": "AI Anomaly Detection",
+          "value": false,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "ai.forecasting": {
+          "key": "ai.forecasting",
+          "name": "AI Metric Forecasting",
+          "value": false,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "ai.incident_copilot": {
+          "key": "ai.incident_copilot",
+          "name": "AI Incident Copilot",
+          "value": false,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "integrations.enabled": {
+          "key": "integrations.enabled",
+          "name": "Integrations Platform",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "integrations.rest_api": {
+          "key": "integrations.rest_api",
+          "name": "REST API Access",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "security.enabled": {
+          "key": "security.enabled",
+          "name": "Enterprise Security",
+          "value": false,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "security.audit_logs": {
+          "key": "security.audit_logs",
+          "name": "Audit Logs",
+          "value": false,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "security.sso": {
+          "key": "security.sso",
+          "name": "SAML 2.0 & OIDC SSO",
+          "value": false,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "security.scim": {
+          "key": "security.scim",
+          "name": "SCIM 2.0 User Provisioning",
+          "value": false,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "security.custom_roles": {
+          "key": "security.custom_roles",
+          "name": "Custom RBAC Roles",
+          "value": false,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "support.dedicated": {
+          "key": "support.dedicated",
+          "name": "Dedicated Support",
+          "value": false,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "support.sla": {
+          "key": "support.sla",
+          "name": "Support SLA",
+          "value": "none",
+          "unit": "string",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "deployment.custom": {
+          "key": "deployment.custom",
+          "name": "Custom Deployment",
+          "value": false,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "compliance.hipaa": {
+          "key": "compliance.hipaa",
+          "name": "HIPAA Compliance",
+          "value": false,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "compliance.gdpr_dpa": {
+          "key": "compliance.gdpr_dpa",
+          "name": "GDPR Data Processing Agreement",
+          "value": false,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        }
+      },
+      "integrations": {
+        "integrations.email": {
+          "key": "integrations.email",
+          "name": "Email Connector",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "integrations.webhook": {
+          "key": "integrations.webhook",
+          "name": "Webhook Connector",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "integrations.slack": {
+          "key": "integrations.slack",
+          "name": "Slack Connector",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "integrations.discord": {
+          "key": "integrations.discord",
+          "name": "Discord Connector",
+          "value": false,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "integrations.microsoft_teams": {
+          "key": "integrations.microsoft_teams",
+          "name": "Microsoft Teams Connector",
+          "value": false,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "integrations.pagerduty": {
+          "key": "integrations.pagerduty",
+          "name": "PagerDuty Connector",
+          "value": false,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "integrations.sms": {
+          "key": "integrations.sms",
+          "name": "SMS Connector",
+          "value": false,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        }
+      }
+    },
+    {
+      "id": "seed-plan-growth",
+      "key": "growth",
+      "name": "Growth",
+      "tier": "growth",
+      "description": "Scaling teams requiring advanced observability, routing, and AI capabilities with 1,500,000 monthly shared event credits.",
+      "trial_days": 14,
+      "sort_order": 3,
+      "is_public": true,
+      "is_customizable": false,
+      "next_plan_key": "business",
+      "badge": "Recommended",
+      "metadata": {
+        "highlightedFeatures": [
+          "profiling.enabled",
+          "replay.enabled",
+          "ai.enabled",
+          "alerting.routing.enabled"
+        ],
+        "recommendedFor": "Growing engineering organizations",
+        "ctaText": "Start 14-Day Free Trial"
+      },
+      "prices": [
+        {
+          "id": "seed-price-growth-monthly",
+          "provider": "stripe",
+          "interval": "monthly",
+          "currency": "USD",
+          "amountMinor": 4900,
+          "isDefault": true,
+          "metadata": {
+            "display": "$49/mo",
+            "recommended": true
+          }
+        },
+        {
+          "id": "seed-price-growth-annual",
+          "provider": "stripe",
+          "interval": "annual",
+          "currency": "USD",
+          "amountMinor": 49000,
+          "isDefault": false,
+          "metadata": {
+            "display": "$490/year",
+            "discount": "2 months free"
+          }
+        }
+      ],
+      "monthly_event_credit_pool": 1500000,
+      "quotas": {
+        "organization.max_orgs_per_user": {
+          "key": "organization.max_orgs_per_user",
+          "name": "Max Organizations Per User",
+          "value": 1,
+          "unit": "organizations",
+          "scope": "user",
+          "enforcement_type": "hard_limit"
+        },
+        "quota.projects": {
+          "key": "quota.projects",
+          "name": "Projects Quota",
+          "value": 25,
+          "unit": "projects",
+          "scope": "organization",
+          "enforcement_type": "hard_limit"
+        },
+        "quota.members": {
+          "key": "quota.members",
+          "name": "Team Members Quota",
+          "value": 50,
+          "unit": "members",
+          "scope": "organization",
+          "enforcement_type": "hard_limit"
+        },
+        "quota.environments": {
+          "key": "quota.environments",
+          "name": "Environments Quota",
+          "value": 10,
+          "unit": "environments",
+          "scope": "project",
+          "enforcement_type": "hard_limit"
+        },
+        "quota.api_keys": {
+          "key": "quota.api_keys",
+          "name": "API Keys Quota",
+          "value": 50,
+          "unit": "api_keys",
+          "scope": "project",
+          "enforcement_type": "hard_limit"
+        },
+        "quota.monthly_events": {
+          "key": "quota.monthly_events",
+          "name": "Monthly Billable Credits",
+          "value": 1500000,
+          "unit": "credits",
+          "scope": "organization",
+          "enforcement_type": "overage",
+          "overage_rate_cents": 40,
+          "overage_unit": 1000,
+          "grace_percent": 10
+        },
+        "quota.requests_per_second": {
+          "key": "quota.requests_per_second",
+          "name": "Rate Limit (RPS)",
+          "value": 1000,
+          "unit": "requests/sec",
+          "scope": "organization",
+          "enforcement_type": "throttle"
+        },
+        "quota.sdk_batch_queue_size": {
+          "key": "quota.sdk_batch_queue_size",
+          "name": "SDK Batch Max Queue Size",
+          "value": 10000,
+          "unit": "events",
+          "scope": "project",
+          "enforcement_type": "hard_limit"
+        },
+        "quota.sdk_offline_queue_limit": {
+          "key": "quota.sdk_offline_queue_limit",
+          "name": "SDK Offline Queue Limit",
+          "value": 5000,
+          "unit": "events",
+          "scope": "project",
+          "enforcement_type": "hard_limit"
+        },
+        "quota.retention_days": {
+          "key": "quota.retention_days",
+          "name": "Default Retention Days",
+          "value": 90,
+          "unit": "days",
+          "scope": "organization",
+          "enforcement_type": "hard_limit"
+        },
+        "quota.alert_rules": {
+          "key": "quota.alert_rules",
+          "name": "Organization Alert Rules Quota",
+          "value": 50,
+          "unit": "rules",
+          "scope": "organization",
+          "enforcement_type": "hard_limit"
+        },
+        "quota.project_alert_rules": {
+          "key": "quota.project_alert_rules",
+          "name": "Project Alert Rules Quota",
+          "value": 25,
+          "unit": "rules",
+          "scope": "project",
+          "enforcement_type": "hard_limit"
+        },
+        "quota.alert_channels": {
+          "key": "quota.alert_channels",
+          "name": "Alert Channels Quota",
+          "value": 50,
+          "unit": "channels",
+          "scope": "organization",
+          "enforcement_type": "hard_limit"
+        },
+        "quota.project_notification_channels": {
+          "key": "quota.project_notification_channels",
+          "name": "Project Notification Channels Quota",
+          "value": 10,
+          "unit": "channels",
+          "scope": "project",
+          "enforcement_type": "hard_limit"
+        },
+        "quota.routing_rules": {
+          "key": "quota.routing_rules",
+          "name": "Routing Rules Quota",
+          "value": 10,
+          "unit": "rules",
+          "scope": "organization",
+          "enforcement_type": "hard_limit"
+        },
+        "quota.project_routing_rules": {
+          "key": "quota.project_routing_rules",
+          "name": "Project Routing Rules Quota",
+          "value": 5,
+          "unit": "rules",
+          "scope": "project",
+          "enforcement_type": "hard_limit"
+        },
+        "quota.daily_alerts": {
+          "key": "quota.daily_alerts",
+          "name": "Daily Alert Notifications",
+          "value": 0,
+          "unit": "notifications",
+          "scope": "organization",
+          "enforcement_type": "hard_limit"
+        },
+        "quota.monthly_alerts": {
+          "key": "quota.monthly_alerts",
+          "name": "Monthly Alert Notifications",
+          "value": 10000,
+          "unit": "notifications",
+          "scope": "organization",
+          "enforcement_type": "overage"
+        },
+        "quota.connector_sends": {
+          "key": "quota.connector_sends",
+          "name": "Monthly Connector Sends",
+          "value": 10000,
+          "unit": "sends",
+          "scope": "organization",
+          "enforcement_type": "overage"
+        },
+        "quota.automation_rules": {
+          "key": "quota.automation_rules",
+          "name": "Automation Rules Quota",
+          "value": 25,
+          "unit": "rules",
+          "scope": "organization",
+          "enforcement_type": "hard_limit"
+        },
+        "quota.dashboards": {
+          "key": "quota.dashboards",
+          "name": "Dashboards Quota",
+          "value": 10,
+          "unit": "dashboards",
+          "scope": "organization",
+          "enforcement_type": "hard_limit"
+        },
+        "quota.ai_credits": {
+          "key": "quota.ai_credits",
+          "name": "Monthly AI Credits",
+          "value": 1000,
+          "unit": "credits",
+          "scope": "organization",
+          "enforcement_type": "hard_limit"
+        },
+        "quota.connectors": {
+          "key": "quota.connectors",
+          "name": "Connector Instances Quota",
+          "value": 50,
+          "unit": "connectors",
+          "scope": "organization",
+          "enforcement_type": "hard_limit"
+        },
+        "quota.service_accounts": {
+          "key": "quota.service_accounts",
+          "name": "Service Accounts Quota",
+          "value": 10,
+          "unit": "accounts",
+          "scope": "organization",
+          "enforcement_type": "hard_limit"
+        },
+        "quota.custom_roles": {
+          "key": "quota.custom_roles",
+          "name": "Custom Roles Quota",
+          "value": 25,
+          "unit": "roles",
+          "scope": "organization",
+          "enforcement_type": "hard_limit"
+        }
+      },
+      "features": {
+        "organization.enabled": {
+          "key": "organization.enabled",
+          "name": "Organization Management",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "projects.enabled": {
+          "key": "projects.enabled",
+          "name": "Projects Platform",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "sdk.enabled": {
+          "key": "sdk.enabled",
+          "name": "SDK Ingestion",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "sdk.remote_config": {
+          "key": "sdk.remote_config",
+          "name": "SDK Remote Config",
+          "value": true,
+          "unit": "boolean",
+          "scope": "project",
+          "enforcement_type": "none"
+        },
+        "sdk.retry": {
+          "key": "sdk.retry",
+          "name": "SDK Exponential Retry",
+          "value": true,
+          "unit": "boolean",
+          "scope": "project",
+          "enforcement_type": "none"
+        },
+        "sdk.batching": {
+          "key": "sdk.batching",
+          "name": "SDK Batching",
+          "value": true,
+          "unit": "boolean",
+          "scope": "project",
+          "enforcement_type": "none"
+        },
+        "sdk.offline_queue": {
+          "key": "sdk.offline_queue",
+          "name": "SDK Offline Queue",
+          "value": true,
+          "unit": "boolean",
+          "scope": "project",
+          "enforcement_type": "none"
+        },
+        "sdk.dynamic_sampling": {
+          "key": "sdk.dynamic_sampling",
+          "name": "SDK Dynamic Sampling",
+          "value": true,
+          "unit": "boolean",
+          "scope": "project",
+          "enforcement_type": "none"
+        },
+        "privacy.data_scrubbing": {
+          "key": "privacy.data_scrubbing",
+          "name": "PII Data Scrubbing",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "privacy.capture_headers": {
+          "key": "privacy.capture_headers",
+          "name": "Capture HTTP Headers",
+          "value": false,
+          "unit": "boolean",
+          "scope": "project",
+          "enforcement_type": "none"
+        },
+        "privacy.capture_body": {
+          "key": "privacy.capture_body",
+          "name": "Capture HTTP Body",
+          "value": false,
+          "unit": "boolean",
+          "scope": "project",
+          "enforcement_type": "none"
+        },
+        "privacy.capture_ip": {
+          "key": "privacy.capture_ip",
+          "name": "Capture Client IP",
+          "value": false,
+          "unit": "boolean",
+          "scope": "project",
+          "enforcement_type": "none"
+        },
+        "error_tracking.enabled": {
+          "key": "error_tracking.enabled",
+          "name": "Error Tracking",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "tracing.enabled": {
+          "key": "tracing.enabled",
+          "name": "Distributed Tracing",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "logging.enabled": {
+          "key": "logging.enabled",
+          "name": "Structured Logging",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "metrics.enabled": {
+          "key": "metrics.enabled",
+          "name": "Custom Metrics",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "profiling.enabled": {
+          "key": "profiling.enabled",
+          "name": "Continuous Profiling",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "replay.enabled": {
+          "key": "replay.enabled",
+          "name": "Session Replay",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "uptime.enabled": {
+          "key": "uptime.enabled",
+          "name": "Uptime & Cron Monitoring",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "cron_monitoring.enabled": {
+          "key": "cron_monitoring.enabled",
+          "name": "Cron Job Monitoring",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "alerting.enabled": {
+          "key": "alerting.enabled",
+          "name": "Alerting Platform",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "alerting.rules": {
+          "key": "alerting.rules",
+          "name": "Alert Rules Feature",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "alerting.routing.enabled": {
+          "key": "alerting.routing.enabled",
+          "name": "Advanced Alert Routing",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "alerting.composite": {
+          "key": "alerting.composite",
+          "name": "Composite Alerts",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "alerting.escalation_policies": {
+          "key": "alerting.escalation_policies",
+          "name": "Escalation Policies",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "alerting.on_call": {
+          "key": "alerting.on_call",
+          "name": "On-Call Schedules",
+          "value": false,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "alerting.incident_timeline": {
+          "key": "alerting.incident_timeline",
+          "name": "Incident Timeline",
+          "value": false,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "alerting.managed_email_fallback": {
+          "key": "alerting.managed_email_fallback",
+          "name": "Managed Email Fallback",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "alerting.ai_alert": {
+          "key": "alerting.ai_alert",
+          "name": "AI Alert Insights",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "automation.enabled": {
+          "key": "automation.enabled",
+          "name": "Automation Platform",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "dashboards.enabled": {
+          "key": "dashboards.enabled",
+          "name": "Dashboards Platform",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "dashboards.custom_dashboards": {
+          "key": "dashboards.custom_dashboards",
+          "name": "Custom Dashboards",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "analytics.explorer": {
+          "key": "analytics.explorer",
+          "name": "Analytics Explorer",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "analytics.query_builder": {
+          "key": "analytics.query_builder",
+          "name": "Analytics Query Builder",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "ai.enabled": {
+          "key": "ai.enabled",
+          "name": "AI Insights Platform",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "ai.summaries": {
+          "key": "ai.summaries",
+          "name": "AI Incident & Log Summaries",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "ai.root_cause_analysis": {
+          "key": "ai.root_cause_analysis",
+          "name": "AI Root Cause Analysis",
+          "value": false,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "ai.anomaly_detection": {
+          "key": "ai.anomaly_detection",
+          "name": "AI Anomaly Detection",
+          "value": false,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "ai.forecasting": {
+          "key": "ai.forecasting",
+          "name": "AI Metric Forecasting",
+          "value": false,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "ai.incident_copilot": {
+          "key": "ai.incident_copilot",
+          "name": "AI Incident Copilot",
+          "value": false,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "integrations.enabled": {
+          "key": "integrations.enabled",
+          "name": "Integrations Platform",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "integrations.rest_api": {
+          "key": "integrations.rest_api",
+          "name": "REST API Access",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "security.enabled": {
+          "key": "security.enabled",
+          "name": "Enterprise Security",
+          "value": false,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "security.audit_logs": {
+          "key": "security.audit_logs",
+          "name": "Audit Logs",
+          "value": false,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "security.sso": {
+          "key": "security.sso",
+          "name": "SAML 2.0 & OIDC SSO",
+          "value": false,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "security.scim": {
+          "key": "security.scim",
+          "name": "SCIM 2.0 User Provisioning",
+          "value": false,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "security.custom_roles": {
+          "key": "security.custom_roles",
+          "name": "Custom RBAC Roles",
+          "value": false,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "support.dedicated": {
+          "key": "support.dedicated",
+          "name": "Dedicated Support",
+          "value": false,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "support.sla": {
+          "key": "support.sla",
+          "name": "Support SLA",
+          "value": "none",
+          "unit": "string",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "deployment.custom": {
+          "key": "deployment.custom",
+          "name": "Custom Deployment",
+          "value": false,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "compliance.hipaa": {
+          "key": "compliance.hipaa",
+          "name": "HIPAA Compliance",
+          "value": false,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "compliance.gdpr_dpa": {
+          "key": "compliance.gdpr_dpa",
+          "name": "GDPR Data Processing Agreement",
+          "value": false,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        }
+      },
+      "integrations": {
+        "integrations.email": {
+          "key": "integrations.email",
+          "name": "Email Connector",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "integrations.webhook": {
+          "key": "integrations.webhook",
+          "name": "Webhook Connector",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "integrations.slack": {
+          "key": "integrations.slack",
+          "name": "Slack Connector",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "integrations.discord": {
+          "key": "integrations.discord",
+          "name": "Discord Connector",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "integrations.microsoft_teams": {
+          "key": "integrations.microsoft_teams",
+          "name": "Microsoft Teams Connector",
+          "value": false,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "integrations.pagerduty": {
+          "key": "integrations.pagerduty",
+          "name": "PagerDuty Connector",
+          "value": false,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "integrations.sms": {
+          "key": "integrations.sms",
+          "name": "SMS Connector",
+          "value": false,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        }
+      }
+    },
+    {
+      "id": "seed-plan-business",
+      "key": "business",
+      "name": "Business",
+      "tier": "business",
+      "description": "Enterprise-ready monitoring with governance, security, and automation with 10,000,000 monthly shared event credits.",
+      "trial_days": 14,
+      "sort_order": 4,
+      "is_public": true,
+      "is_customizable": false,
+      "next_plan_key": "enterprise",
+      "badge": "Best Value",
+      "metadata": {
+        "highlightedFeatures": [
+          "security.audit_logs",
+          "security.custom_roles",
+          "automation.enabled",
+          "dashboards.custom_dashboards"
+        ],
+        "recommendedFor": "Scale-ups with compliance & security needs",
+        "ctaText": "Upgrade to Business"
+      },
+      "prices": [
+        {
+          "id": "seed-price-business-monthly",
+          "provider": "stripe",
+          "interval": "monthly",
+          "currency": "USD",
+          "amountMinor": 14900,
+          "isDefault": true,
+          "metadata": {
+            "display": "$149/mo",
+            "recommended": false
+          }
+        },
+        {
+          "id": "seed-price-business-annual",
+          "provider": "stripe",
+          "interval": "annual",
+          "currency": "USD",
+          "amountMinor": 149000,
+          "isDefault": false,
+          "metadata": {
+            "display": "$1490/year",
+            "discount": "2 months free"
+          }
+        }
+      ],
+      "monthly_event_credit_pool": 10000000,
+      "quotas": {
+        "organization.max_orgs_per_user": {
+          "key": "organization.max_orgs_per_user",
+          "name": "Max Organizations Per User",
+          "value": 1,
+          "unit": "organizations",
+          "scope": "user",
+          "enforcement_type": "hard_limit"
+        },
+        "quota.projects": {
+          "key": "quota.projects",
+          "name": "Projects Quota",
+          "value": 100,
+          "unit": "projects",
+          "scope": "organization",
+          "enforcement_type": "hard_limit"
+        },
+        "quota.members": {
+          "key": "quota.members",
+          "name": "Team Members Quota",
+          "value": 250,
+          "unit": "members",
+          "scope": "organization",
+          "enforcement_type": "hard_limit"
+        },
+        "quota.environments": {
+          "key": "quota.environments",
+          "name": "Environments Quota",
+          "value": 25,
+          "unit": "environments",
+          "scope": "project",
+          "enforcement_type": "hard_limit"
+        },
+        "quota.api_keys": {
+          "key": "quota.api_keys",
+          "name": "API Keys Quota",
+          "value": 250,
+          "unit": "api_keys",
+          "scope": "project",
+          "enforcement_type": "hard_limit"
+        },
+        "quota.monthly_events": {
+          "key": "quota.monthly_events",
+          "name": "Monthly Billable Credits",
+          "value": 10000000,
+          "unit": "credits",
+          "scope": "organization",
+          "enforcement_type": "overage",
+          "overage_rate_cents": 30,
+          "overage_unit": 1000,
+          "grace_percent": 10
+        },
+        "quota.requests_per_second": {
+          "key": "quota.requests_per_second",
+          "name": "Rate Limit (RPS)",
+          "value": 5000,
+          "unit": "requests/sec",
+          "scope": "organization",
+          "enforcement_type": "throttle"
+        },
+        "quota.sdk_batch_queue_size": {
+          "key": "quota.sdk_batch_queue_size",
+          "name": "SDK Batch Max Queue Size",
+          "value": 50000,
+          "unit": "events",
+          "scope": "project",
+          "enforcement_type": "hard_limit"
+        },
+        "quota.sdk_offline_queue_limit": {
+          "key": "quota.sdk_offline_queue_limit",
+          "name": "SDK Offline Queue Limit",
+          "value": 25000,
+          "unit": "events",
+          "scope": "project",
+          "enforcement_type": "hard_limit"
+        },
+        "quota.retention_days": {
+          "key": "quota.retention_days",
+          "name": "Default Retention Days",
+          "value": 180,
+          "unit": "days",
+          "scope": "organization",
+          "enforcement_type": "hard_limit"
+        },
+        "quota.alert_rules": {
+          "key": "quota.alert_rules",
+          "name": "Organization Alert Rules Quota",
+          "value": 250,
+          "unit": "rules",
+          "scope": "organization",
+          "enforcement_type": "hard_limit"
+        },
+        "quota.project_alert_rules": {
+          "key": "quota.project_alert_rules",
+          "name": "Project Alert Rules Quota",
+          "value": 100,
+          "unit": "rules",
+          "scope": "project",
+          "enforcement_type": "hard_limit"
+        },
+        "quota.alert_channels": {
+          "key": "quota.alert_channels",
+          "name": "Alert Channels Quota",
+          "value": 250,
+          "unit": "channels",
+          "scope": "organization",
+          "enforcement_type": "hard_limit"
+        },
+        "quota.project_notification_channels": {
+          "key": "quota.project_notification_channels",
+          "name": "Project Notification Channels Quota",
+          "value": 50,
+          "unit": "channels",
+          "scope": "project",
+          "enforcement_type": "hard_limit"
+        },
+        "quota.routing_rules": {
+          "key": "quota.routing_rules",
+          "name": "Routing Rules Quota",
+          "value": 50,
+          "unit": "rules",
+          "scope": "organization",
+          "enforcement_type": "hard_limit"
+        },
+        "quota.project_routing_rules": {
+          "key": "quota.project_routing_rules",
+          "name": "Project Routing Rules Quota",
+          "value": 25,
+          "unit": "rules",
+          "scope": "project",
+          "enforcement_type": "hard_limit"
+        },
+        "quota.daily_alerts": {
+          "key": "quota.daily_alerts",
+          "name": "Daily Alert Notifications",
+          "value": 0,
+          "unit": "notifications",
+          "scope": "organization",
+          "enforcement_type": "hard_limit"
+        },
+        "quota.monthly_alerts": {
+          "key": "quota.monthly_alerts",
+          "name": "Monthly Alert Notifications",
+          "value": 100000,
+          "unit": "notifications",
+          "scope": "organization",
+          "enforcement_type": "overage"
+        },
+        "quota.connector_sends": {
+          "key": "quota.connector_sends",
+          "name": "Monthly Connector Sends",
+          "value": 100000,
+          "unit": "sends",
+          "scope": "organization",
+          "enforcement_type": "overage"
+        },
+        "quota.automation_rules": {
+          "key": "quota.automation_rules",
+          "name": "Automation Rules Quota",
+          "value": 100,
+          "unit": "rules",
+          "scope": "organization",
+          "enforcement_type": "hard_limit"
+        },
+        "quota.dashboards": {
+          "key": "quota.dashboards",
+          "name": "Dashboards Quota",
+          "value": 25,
+          "unit": "dashboards",
+          "scope": "organization",
+          "enforcement_type": "hard_limit"
+        },
+        "quota.ai_credits": {
+          "key": "quota.ai_credits",
+          "name": "Monthly AI Credits",
+          "value": 5000,
+          "unit": "credits",
+          "scope": "organization",
+          "enforcement_type": "hard_limit"
+        },
+        "quota.connectors": {
+          "key": "quota.connectors",
+          "name": "Connector Instances Quota",
+          "value": 250,
+          "unit": "connectors",
+          "scope": "organization",
+          "enforcement_type": "hard_limit"
+        },
+        "quota.service_accounts": {
+          "key": "quota.service_accounts",
+          "name": "Service Accounts Quota",
+          "value": 100,
+          "unit": "accounts",
+          "scope": "organization",
+          "enforcement_type": "hard_limit"
+        },
+        "quota.custom_roles": {
+          "key": "quota.custom_roles",
+          "name": "Custom Roles Quota",
+          "value": 100,
+          "unit": "roles",
+          "scope": "organization",
+          "enforcement_type": "hard_limit"
+        }
+      },
+      "features": {
+        "organization.enabled": {
+          "key": "organization.enabled",
+          "name": "Organization Management",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "projects.enabled": {
+          "key": "projects.enabled",
+          "name": "Projects Platform",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "sdk.enabled": {
+          "key": "sdk.enabled",
+          "name": "SDK Ingestion",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "sdk.remote_config": {
+          "key": "sdk.remote_config",
+          "name": "SDK Remote Config",
+          "value": true,
+          "unit": "boolean",
+          "scope": "project",
+          "enforcement_type": "none"
+        },
+        "sdk.retry": {
+          "key": "sdk.retry",
+          "name": "SDK Exponential Retry",
+          "value": true,
+          "unit": "boolean",
+          "scope": "project",
+          "enforcement_type": "none"
+        },
+        "sdk.batching": {
+          "key": "sdk.batching",
+          "name": "SDK Batching",
+          "value": true,
+          "unit": "boolean",
+          "scope": "project",
+          "enforcement_type": "none"
+        },
+        "sdk.offline_queue": {
+          "key": "sdk.offline_queue",
+          "name": "SDK Offline Queue",
+          "value": true,
+          "unit": "boolean",
+          "scope": "project",
+          "enforcement_type": "none"
+        },
+        "sdk.dynamic_sampling": {
+          "key": "sdk.dynamic_sampling",
+          "name": "SDK Dynamic Sampling",
+          "value": true,
+          "unit": "boolean",
+          "scope": "project",
+          "enforcement_type": "none"
+        },
+        "privacy.data_scrubbing": {
+          "key": "privacy.data_scrubbing",
+          "name": "PII Data Scrubbing",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "privacy.capture_headers": {
+          "key": "privacy.capture_headers",
+          "name": "Capture HTTP Headers",
+          "value": true,
+          "unit": "boolean",
+          "scope": "project",
+          "enforcement_type": "none"
+        },
+        "privacy.capture_body": {
+          "key": "privacy.capture_body",
+          "name": "Capture HTTP Body",
+          "value": true,
+          "unit": "boolean",
+          "scope": "project",
+          "enforcement_type": "none"
+        },
+        "privacy.capture_ip": {
+          "key": "privacy.capture_ip",
+          "name": "Capture Client IP",
+          "value": false,
+          "unit": "boolean",
+          "scope": "project",
+          "enforcement_type": "none"
+        },
+        "error_tracking.enabled": {
+          "key": "error_tracking.enabled",
+          "name": "Error Tracking",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "tracing.enabled": {
+          "key": "tracing.enabled",
+          "name": "Distributed Tracing",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "logging.enabled": {
+          "key": "logging.enabled",
+          "name": "Structured Logging",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "metrics.enabled": {
+          "key": "metrics.enabled",
+          "name": "Custom Metrics",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "profiling.enabled": {
+          "key": "profiling.enabled",
+          "name": "Continuous Profiling",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "replay.enabled": {
+          "key": "replay.enabled",
+          "name": "Session Replay",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "uptime.enabled": {
+          "key": "uptime.enabled",
+          "name": "Uptime & Cron Monitoring",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "cron_monitoring.enabled": {
+          "key": "cron_monitoring.enabled",
+          "name": "Cron Job Monitoring",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "alerting.enabled": {
+          "key": "alerting.enabled",
+          "name": "Alerting Platform",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "alerting.rules": {
+          "key": "alerting.rules",
+          "name": "Alert Rules Feature",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "alerting.routing.enabled": {
+          "key": "alerting.routing.enabled",
+          "name": "Advanced Alert Routing",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "alerting.composite": {
+          "key": "alerting.composite",
+          "name": "Composite Alerts",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "alerting.escalation_policies": {
+          "key": "alerting.escalation_policies",
+          "name": "Escalation Policies",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "alerting.on_call": {
+          "key": "alerting.on_call",
+          "name": "On-Call Schedules",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "alerting.incident_timeline": {
+          "key": "alerting.incident_timeline",
+          "name": "Incident Timeline",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "alerting.managed_email_fallback": {
+          "key": "alerting.managed_email_fallback",
+          "name": "Managed Email Fallback",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "alerting.ai_alert": {
+          "key": "alerting.ai_alert",
+          "name": "AI Alert Insights",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "automation.enabled": {
+          "key": "automation.enabled",
+          "name": "Automation Platform",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "dashboards.enabled": {
+          "key": "dashboards.enabled",
+          "name": "Dashboards Platform",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "dashboards.custom_dashboards": {
+          "key": "dashboards.custom_dashboards",
+          "name": "Custom Dashboards",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "analytics.explorer": {
+          "key": "analytics.explorer",
+          "name": "Analytics Explorer",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "analytics.query_builder": {
+          "key": "analytics.query_builder",
+          "name": "Analytics Query Builder",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "ai.enabled": {
+          "key": "ai.enabled",
+          "name": "AI Insights Platform",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "ai.summaries": {
+          "key": "ai.summaries",
+          "name": "AI Incident & Log Summaries",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "ai.root_cause_analysis": {
+          "key": "ai.root_cause_analysis",
+          "name": "AI Root Cause Analysis",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "ai.anomaly_detection": {
+          "key": "ai.anomaly_detection",
+          "name": "AI Anomaly Detection",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "ai.forecasting": {
+          "key": "ai.forecasting",
+          "name": "AI Metric Forecasting",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "ai.incident_copilot": {
+          "key": "ai.incident_copilot",
+          "name": "AI Incident Copilot",
+          "value": false,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "integrations.enabled": {
+          "key": "integrations.enabled",
+          "name": "Integrations Platform",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "integrations.rest_api": {
+          "key": "integrations.rest_api",
+          "name": "REST API Access",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "security.enabled": {
+          "key": "security.enabled",
+          "name": "Enterprise Security",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "security.audit_logs": {
+          "key": "security.audit_logs",
+          "name": "Audit Logs",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "security.sso": {
+          "key": "security.sso",
+          "name": "SAML 2.0 & OIDC SSO",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "security.scim": {
+          "key": "security.scim",
+          "name": "SCIM 2.0 User Provisioning",
+          "value": false,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "security.custom_roles": {
+          "key": "security.custom_roles",
+          "name": "Custom RBAC Roles",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "support.dedicated": {
+          "key": "support.dedicated",
+          "name": "Dedicated Support",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "support.sla": {
+          "key": "support.sla",
+          "name": "Support SLA",
+          "value": "99.9%",
+          "unit": "string",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "deployment.custom": {
+          "key": "deployment.custom",
+          "name": "Custom Deployment",
+          "value": false,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "compliance.hipaa": {
+          "key": "compliance.hipaa",
+          "name": "HIPAA Compliance",
+          "value": false,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "compliance.gdpr_dpa": {
+          "key": "compliance.gdpr_dpa",
+          "name": "GDPR Data Processing Agreement",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        }
+      },
+      "integrations": {
+        "integrations.email": {
+          "key": "integrations.email",
+          "name": "Email Connector",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "integrations.webhook": {
+          "key": "integrations.webhook",
+          "name": "Webhook Connector",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "integrations.slack": {
+          "key": "integrations.slack",
+          "name": "Slack Connector",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "integrations.discord": {
+          "key": "integrations.discord",
+          "name": "Discord Connector",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "integrations.microsoft_teams": {
+          "key": "integrations.microsoft_teams",
+          "name": "Microsoft Teams Connector",
+          "value": false,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "integrations.pagerduty": {
+          "key": "integrations.pagerduty",
+          "name": "PagerDuty Connector",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "integrations.sms": {
+          "key": "integrations.sms",
+          "name": "SMS Connector",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        }
+      }
+    },
+    {
+      "id": "seed-plan-enterprise",
+      "key": "enterprise",
+      "name": "Enterprise",
+      "tier": "enterprise",
+      "description": "Custom enterprise deployment with 50,000,000 baseline monthly shared event credits, SSO/SCIM, and dedicated support.",
+      "trial_days": 30,
+      "sort_order": 5,
+      "is_public": false,
+      "is_customizable": true,
+      "next_plan_key": null,
+      "badge": null,
+      "metadata": {
+        "highlightedFeatures": [
+          "security.sso",
+          "security.scim",
+          "support.dedicated",
+          "support.sla",
+          "deployment.custom"
+        ],
+        "recommendedFor": "Large enterprises requiring custom scale & SLAs",
+        "ctaText": "Contact Enterprise Sales"
+      },
+      "prices": [
+        {
+          "id": "seed-price-enterprise-monthly",
+          "provider": "system",
+          "interval": "monthly",
+          "currency": "USD",
+          "amountMinor": 0,
+          "isDefault": true,
+          "metadata": {
+            "display": "Contact Sales",
+            "contactSales": true
+          }
+        },
+        {
+          "id": "seed-price-enterprise-annual",
+          "provider": "system",
+          "interval": "annual",
+          "currency": "USD",
+          "amountMinor": 0,
+          "isDefault": false,
+          "metadata": {
+            "display": "Contact Sales",
+            "contactSales": true
+          }
+        }
+      ],
+      "monthly_event_credit_pool": 50000000,
+      "quotas": {
+        "organization.max_orgs_per_user": {
+          "key": "organization.max_orgs_per_user",
+          "name": "Max Organizations Per User",
+          "value": 1,
+          "unit": "organizations",
+          "scope": "user",
+          "enforcement_type": "hard_limit"
+        },
+        "quota.projects": {
+          "key": "quota.projects",
+          "name": "Projects Quota",
+          "value": 1000,
+          "unit": "projects",
+          "scope": "organization",
+          "enforcement_type": "hard_limit"
+        },
+        "quota.members": {
+          "key": "quota.members",
+          "name": "Team Members Quota",
+          "value": 10000,
+          "unit": "members",
+          "scope": "organization",
+          "enforcement_type": "hard_limit"
+        },
+        "quota.environments": {
+          "key": "quota.environments",
+          "name": "Environments Quota",
+          "value": 100,
+          "unit": "environments",
+          "scope": "project",
+          "enforcement_type": "hard_limit"
+        },
+        "quota.api_keys": {
+          "key": "quota.api_keys",
+          "name": "API Keys Quota",
+          "value": 1000,
+          "unit": "api_keys",
+          "scope": "project",
+          "enforcement_type": "hard_limit"
+        },
+        "quota.monthly_events": {
+          "key": "quota.monthly_events",
+          "name": "Monthly Billable Credits",
+          "value": 50000000,
+          "unit": "credits",
+          "scope": "organization",
+          "enforcement_type": "overage",
+          "overage_rate_cents": 20,
+          "overage_unit": 1000,
+          "grace_percent": 15
+        },
+        "quota.requests_per_second": {
+          "key": "quota.requests_per_second",
+          "name": "Rate Limit (RPS)",
+          "value": 50000,
+          "unit": "requests/sec",
+          "scope": "organization",
+          "enforcement_type": "throttle"
+        },
+        "quota.sdk_batch_queue_size": {
+          "key": "quota.sdk_batch_queue_size",
+          "name": "SDK Batch Max Queue Size",
+          "value": 100000,
+          "unit": "events",
+          "scope": "project",
+          "enforcement_type": "hard_limit"
+        },
+        "quota.sdk_offline_queue_limit": {
+          "key": "quota.sdk_offline_queue_limit",
+          "name": "SDK Offline Queue Limit",
+          "value": 100000,
+          "unit": "events",
+          "scope": "project",
+          "enforcement_type": "hard_limit"
+        },
+        "quota.retention_days": {
+          "key": "quota.retention_days",
+          "name": "Default Retention Days",
+          "value": 365,
+          "unit": "days",
+          "scope": "organization",
+          "enforcement_type": "hard_limit"
+        },
+        "quota.alert_rules": {
+          "key": "quota.alert_rules",
+          "name": "Organization Alert Rules Quota",
+          "value": 1000,
+          "unit": "rules",
+          "scope": "organization",
+          "enforcement_type": "hard_limit"
+        },
+        "quota.project_alert_rules": {
+          "key": "quota.project_alert_rules",
+          "name": "Project Alert Rules Quota",
+          "value": 500,
+          "unit": "rules",
+          "scope": "project",
+          "enforcement_type": "hard_limit"
+        },
+        "quota.alert_channels": {
+          "key": "quota.alert_channels",
+          "name": "Alert Channels Quota",
+          "value": 1000,
+          "unit": "channels",
+          "scope": "organization",
+          "enforcement_type": "hard_limit"
+        },
+        "quota.project_notification_channels": {
+          "key": "quota.project_notification_channels",
+          "name": "Project Notification Channels Quota",
+          "value": 250,
+          "unit": "channels",
+          "scope": "project",
+          "enforcement_type": "hard_limit"
+        },
+        "quota.routing_rules": {
+          "key": "quota.routing_rules",
+          "name": "Routing Rules Quota",
+          "value": 200,
+          "unit": "rules",
+          "scope": "organization",
+          "enforcement_type": "hard_limit"
+        },
+        "quota.project_routing_rules": {
+          "key": "quota.project_routing_rules",
+          "name": "Project Routing Rules Quota",
+          "value": 100,
+          "unit": "rules",
+          "scope": "project",
+          "enforcement_type": "hard_limit"
+        },
+        "quota.daily_alerts": {
+          "key": "quota.daily_alerts",
+          "name": "Daily Alert Notifications",
+          "value": 0,
+          "unit": "notifications",
+          "scope": "organization",
+          "enforcement_type": "hard_limit"
+        },
+        "quota.monthly_alerts": {
+          "key": "quota.monthly_alerts",
+          "name": "Monthly Alert Notifications",
+          "value": 1000000,
+          "unit": "notifications",
+          "scope": "organization",
+          "enforcement_type": "overage"
+        },
+        "quota.connector_sends": {
+          "key": "quota.connector_sends",
+          "name": "Monthly Connector Sends",
+          "value": 1000000,
+          "unit": "sends",
+          "scope": "organization",
+          "enforcement_type": "overage"
+        },
+        "quota.automation_rules": {
+          "key": "quota.automation_rules",
+          "name": "Automation Rules Quota",
+          "value": 1000,
+          "unit": "rules",
+          "scope": "organization",
+          "enforcement_type": "hard_limit"
+        },
+        "quota.dashboards": {
+          "key": "quota.dashboards",
+          "name": "Dashboards Quota",
+          "value": 1000,
+          "unit": "dashboards",
+          "scope": "organization",
+          "enforcement_type": "hard_limit"
+        },
+        "quota.ai_credits": {
+          "key": "quota.ai_credits",
+          "name": "Monthly AI Credits",
+          "value": 50000,
+          "unit": "credits",
+          "scope": "organization",
+          "enforcement_type": "hard_limit"
+        },
+        "quota.connectors": {
+          "key": "quota.connectors",
+          "name": "Connector Instances Quota",
+          "value": 1000,
+          "unit": "connectors",
+          "scope": "organization",
+          "enforcement_type": "hard_limit"
+        },
+        "quota.service_accounts": {
+          "key": "quota.service_accounts",
+          "name": "Service Accounts Quota",
+          "value": 1000,
+          "unit": "accounts",
+          "scope": "organization",
+          "enforcement_type": "hard_limit"
+        },
+        "quota.custom_roles": {
+          "key": "quota.custom_roles",
+          "name": "Custom Roles Quota",
+          "value": 1000,
+          "unit": "roles",
+          "scope": "organization",
+          "enforcement_type": "hard_limit"
+        }
+      },
+      "features": {
+        "organization.enabled": {
+          "key": "organization.enabled",
+          "name": "Organization Management",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "projects.enabled": {
+          "key": "projects.enabled",
+          "name": "Projects Platform",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "sdk.enabled": {
+          "key": "sdk.enabled",
+          "name": "SDK Ingestion",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "sdk.remote_config": {
+          "key": "sdk.remote_config",
+          "name": "SDK Remote Config",
+          "value": true,
+          "unit": "boolean",
+          "scope": "project",
+          "enforcement_type": "none"
+        },
+        "sdk.retry": {
+          "key": "sdk.retry",
+          "name": "SDK Exponential Retry",
+          "value": true,
+          "unit": "boolean",
+          "scope": "project",
+          "enforcement_type": "none"
+        },
+        "sdk.batching": {
+          "key": "sdk.batching",
+          "name": "SDK Batching",
+          "value": true,
+          "unit": "boolean",
+          "scope": "project",
+          "enforcement_type": "none"
+        },
+        "sdk.offline_queue": {
+          "key": "sdk.offline_queue",
+          "name": "SDK Offline Queue",
+          "value": true,
+          "unit": "boolean",
+          "scope": "project",
+          "enforcement_type": "none"
+        },
+        "sdk.dynamic_sampling": {
+          "key": "sdk.dynamic_sampling",
+          "name": "SDK Dynamic Sampling",
+          "value": true,
+          "unit": "boolean",
+          "scope": "project",
+          "enforcement_type": "none"
+        },
+        "privacy.data_scrubbing": {
+          "key": "privacy.data_scrubbing",
+          "name": "PII Data Scrubbing",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "privacy.capture_headers": {
+          "key": "privacy.capture_headers",
+          "name": "Capture HTTP Headers",
+          "value": true,
+          "unit": "boolean",
+          "scope": "project",
+          "enforcement_type": "none"
+        },
+        "privacy.capture_body": {
+          "key": "privacy.capture_body",
+          "name": "Capture HTTP Body",
+          "value": true,
+          "unit": "boolean",
+          "scope": "project",
+          "enforcement_type": "none"
+        },
+        "privacy.capture_ip": {
+          "key": "privacy.capture_ip",
+          "name": "Capture Client IP",
+          "value": true,
+          "unit": "boolean",
+          "scope": "project",
+          "enforcement_type": "none"
+        },
+        "error_tracking.enabled": {
+          "key": "error_tracking.enabled",
+          "name": "Error Tracking",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "tracing.enabled": {
+          "key": "tracing.enabled",
+          "name": "Distributed Tracing",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "logging.enabled": {
+          "key": "logging.enabled",
+          "name": "Structured Logging",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "metrics.enabled": {
+          "key": "metrics.enabled",
+          "name": "Custom Metrics",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "profiling.enabled": {
+          "key": "profiling.enabled",
+          "name": "Continuous Profiling",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "replay.enabled": {
+          "key": "replay.enabled",
+          "name": "Session Replay",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "uptime.enabled": {
+          "key": "uptime.enabled",
+          "name": "Uptime & Cron Monitoring",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "cron_monitoring.enabled": {
+          "key": "cron_monitoring.enabled",
+          "name": "Cron Job Monitoring",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "alerting.enabled": {
+          "key": "alerting.enabled",
+          "name": "Alerting Platform",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "alerting.rules": {
+          "key": "alerting.rules",
+          "name": "Alert Rules Feature",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "alerting.routing.enabled": {
+          "key": "alerting.routing.enabled",
+          "name": "Advanced Alert Routing",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "alerting.composite": {
+          "key": "alerting.composite",
+          "name": "Composite Alerts",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "alerting.escalation_policies": {
+          "key": "alerting.escalation_policies",
+          "name": "Escalation Policies",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "alerting.on_call": {
+          "key": "alerting.on_call",
+          "name": "On-Call Schedules",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "alerting.incident_timeline": {
+          "key": "alerting.incident_timeline",
+          "name": "Incident Timeline",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "alerting.managed_email_fallback": {
+          "key": "alerting.managed_email_fallback",
+          "name": "Managed Email Fallback",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "alerting.ai_alert": {
+          "key": "alerting.ai_alert",
+          "name": "AI Alert Insights",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "automation.enabled": {
+          "key": "automation.enabled",
+          "name": "Automation Platform",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "dashboards.enabled": {
+          "key": "dashboards.enabled",
+          "name": "Dashboards Platform",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "dashboards.custom_dashboards": {
+          "key": "dashboards.custom_dashboards",
+          "name": "Custom Dashboards",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "analytics.explorer": {
+          "key": "analytics.explorer",
+          "name": "Analytics Explorer",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "analytics.query_builder": {
+          "key": "analytics.query_builder",
+          "name": "Analytics Query Builder",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "ai.enabled": {
+          "key": "ai.enabled",
+          "name": "AI Insights Platform",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "ai.summaries": {
+          "key": "ai.summaries",
+          "name": "AI Incident & Log Summaries",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "ai.root_cause_analysis": {
+          "key": "ai.root_cause_analysis",
+          "name": "AI Root Cause Analysis",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "ai.anomaly_detection": {
+          "key": "ai.anomaly_detection",
+          "name": "AI Anomaly Detection",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "ai.forecasting": {
+          "key": "ai.forecasting",
+          "name": "AI Metric Forecasting",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "ai.incident_copilot": {
+          "key": "ai.incident_copilot",
+          "name": "AI Incident Copilot",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "integrations.enabled": {
+          "key": "integrations.enabled",
+          "name": "Integrations Platform",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "integrations.rest_api": {
+          "key": "integrations.rest_api",
+          "name": "REST API Access",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "security.enabled": {
+          "key": "security.enabled",
+          "name": "Enterprise Security",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "security.audit_logs": {
+          "key": "security.audit_logs",
+          "name": "Audit Logs",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "security.sso": {
+          "key": "security.sso",
+          "name": "SAML 2.0 & OIDC SSO",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "security.scim": {
+          "key": "security.scim",
+          "name": "SCIM 2.0 User Provisioning",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "security.custom_roles": {
+          "key": "security.custom_roles",
+          "name": "Custom RBAC Roles",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "support.dedicated": {
+          "key": "support.dedicated",
+          "name": "Dedicated Support",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "support.sla": {
+          "key": "support.sla",
+          "name": "Support SLA",
+          "value": "99.99%",
+          "unit": "string",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "deployment.custom": {
+          "key": "deployment.custom",
+          "name": "Custom Deployment",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "compliance.hipaa": {
+          "key": "compliance.hipaa",
+          "name": "HIPAA Compliance",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "compliance.gdpr_dpa": {
+          "key": "compliance.gdpr_dpa",
+          "name": "GDPR Data Processing Agreement",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        }
+      },
+      "integrations": {
+        "integrations.email": {
+          "key": "integrations.email",
+          "name": "Email Connector",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "integrations.webhook": {
+          "key": "integrations.webhook",
+          "name": "Webhook Connector",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "integrations.slack": {
+          "key": "integrations.slack",
+          "name": "Slack Connector",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "integrations.discord": {
+          "key": "integrations.discord",
+          "name": "Discord Connector",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "integrations.microsoft_teams": {
+          "key": "integrations.microsoft_teams",
+          "name": "Microsoft Teams Connector",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "integrations.pagerduty": {
+          "key": "integrations.pagerduty",
+          "name": "PagerDuty Connector",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        },
+        "integrations.sms": {
+          "key": "integrations.sms",
+          "name": "SMS Connector",
+          "value": true,
+          "unit": "boolean",
+          "scope": "organization",
+          "enforcement_type": "none"
+        }
+      }
+    }
+  ]
+}

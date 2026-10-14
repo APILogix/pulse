@@ -30,6 +30,29 @@ function positiveInteger(value, fallback) {
 // small host before it receives traffic.
 const apiInstances = Math.min(cpuCount, positiveInteger(process.env.API_INSTANCES, 1));
 
+function startupBackoffBudget(attempts, baseDelayMs, maxDelayMs) {
+  let total = 0;
+  for (let attempt = 1; attempt < attempts; attempt += 1) {
+    total += Math.min(baseDelayMs * 2 ** (attempt - 1), maxDelayMs);
+  }
+  return total;
+}
+
+const startupAttempts = positiveInteger(process.env.STARTUP_DB_RETRY_MAX_ATTEMPTS, 8);
+const startupConnectionTimeoutMs = positiveInteger(process.env.DB_CONNECTION_TIMEOUT_MS, 30000);
+const startupBaseDelayMs = positiveInteger(process.env.STARTUP_DB_RETRY_BASE_DELAY_MS, 2000);
+const startupMaxDelayMs = positiveInteger(process.env.STARTUP_DB_RETRY_MAX_DELAY_MS, 15000);
+const oneDatabaseStartupBudgetMs =
+  startupAttempts * startupConnectionTimeoutMs +
+  startupBackoffBudget(startupAttempts, startupBaseDelayMs, startupMaxDelayMs);
+// API checks primary and Log DB serially. Workers use at most the same bound.
+const listenTimeoutMs = positiveInteger(
+  process.env.PM2_LISTEN_TIMEOUT_MS,
+  oneDatabaseStartupBudgetMs * 2 + 30000,
+);
+const shutdownTimeoutMs = positiveInteger(process.env.SHUTDOWN_TIMEOUT_MS, 20000);
+const killTimeoutMs = positiveInteger(process.env.PM2_KILL_TIMEOUT_MS, shutdownTimeoutMs + 10000);
+
 module.exports = {
   apps: [
     {
@@ -52,9 +75,8 @@ module.exports = {
       error_file: 'logs/pm2-error.log',
 
       wait_ready: true,
-      listen_timeout: 20000,
-      // main.ts drains for 20s by default; PM2 must allow more than that.
-      kill_timeout: 30000,
+      listen_timeout: listenTimeoutMs,
+      kill_timeout: killTimeoutMs,
 
       env: {
         NODE_ENV: 'development',
@@ -92,8 +114,8 @@ module.exports = {
       error_file: 'logs/pm2-workers-error.log',
 
       wait_ready: true,
-      listen_timeout: 20000,
-      kill_timeout: 30000,
+      listen_timeout: listenTimeoutMs,
+      kill_timeout: killTimeoutMs,
 
       env: {
         NODE_ENV: 'development',
@@ -106,7 +128,7 @@ module.exports = {
         UV_THREADPOOL_SIZE: '8',
       },
 
-      description: 'General pg-boss workers (alerts, billing, AI, automation, and maintenance)',
+      description: 'General PGMQ workers (alerts, billing, AI, automation, and maintenance)',
       version: '2.0.0',
     },
 
@@ -129,8 +151,8 @@ module.exports = {
       error_file: 'logs/pm2-ingestion-error.log',
 
       wait_ready: true,
-      listen_timeout: 20000,
-      kill_timeout: 30000,
+      listen_timeout: listenTimeoutMs,
+      kill_timeout: killTimeoutMs,
 
       env: {
         NODE_ENV: 'development',
@@ -143,7 +165,7 @@ module.exports = {
         UV_THREADPOOL_SIZE: '8',
       },
 
-      description: 'Ingestion worker tier (pg-boss pipelines + DLQ + usage rollup)',
+      description: 'Ingestion worker tier (PGMQ pipelines + DLQ + usage rollup)',
       version: '2.0.0',
     },
 
@@ -171,8 +193,8 @@ module.exports = {
       error_file: 'logs/pm2-analytics-error.log',
 
       wait_ready: true,
-      listen_timeout: 20000,
-      kill_timeout: 20000,
+      listen_timeout: listenTimeoutMs,
+      kill_timeout: killTimeoutMs,
 
       env: {
         NODE_ENV: 'development',

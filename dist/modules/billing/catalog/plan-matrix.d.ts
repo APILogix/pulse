@@ -2,7 +2,7 @@
  * Plan-to-Feature Entitlement Matrix
  *
  * Defines plan metadata and entitlement values for all 5 platform plans.
- * Auto-generated from catalog version 2.0.
+ * Auto-generated from canonical catalog version 2.0.
  */
 import type { FeatureKey, PlanKey } from './feature-registry.js';
 export type { PlanKey };
@@ -33,6 +33,9 @@ export interface PlanDefinition {
 export interface PlanFeatureValue {
     readonly featureKey: FeatureKey;
     readonly value: boolean | number | string | null;
+    readonly booleanValue?: boolean | null;
+    readonly integerValue?: number | null;
+    readonly stringValue?: string | null;
     readonly overageRate?: number;
     readonly overageUnit?: number;
     readonly gracePercent?: number;
@@ -42,17 +45,16 @@ export declare class PlanNotFoundError extends Error {
     readonly planKey: string;
     constructor(planKey: string);
 }
+export interface PlanEntitlementEntry {
+    readonly plan: PlanDefinition;
+    readonly features: readonly PlanFeatureValue[];
+    readonly [key: string]: any;
+}
 /**
- * Authoritative Plan Entitlement Matrix mapping each plan to its 102 feature values.
+ * Authoritative Plan Entitlement Matrix mapping each plan to its canonical feature values.
  */
-export declare const PLAN_MATRIX: Readonly<Record<PlanKey, {
-    readonly plan: PlanDefinition;
-    readonly features: readonly PlanFeatureValue[];
-}>>;
-export declare const CANONICAL_PLAN_MATRIX: Readonly<Record<PlanKey, {
-    readonly plan: PlanDefinition;
-    readonly features: readonly PlanFeatureValue[];
-}>>;
+export declare const PLAN_MATRIX: Readonly<Record<PlanKey, PlanEntitlementEntry>>;
+export declare const CANONICAL_PLAN_MATRIX: Readonly<Record<PlanKey, PlanEntitlementEntry>>;
 /**
  * Returns all feature values configured for a plan.
  */

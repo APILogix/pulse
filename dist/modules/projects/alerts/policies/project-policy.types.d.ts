@@ -22,10 +22,10 @@ export declare const UpdatePolicyOverrideBodySchema: z.ZodObject<{
     cooldownSeconds: z.ZodOptional<z.ZodNullable<z.ZodNumber>>;
     channels: z.ZodOptional<z.ZodNullable<z.ZodArray<z.ZodString>>>;
     severity: z.ZodOptional<z.ZodNullable<z.ZodEnum<{
+        critical: "critical";
         error: "error";
         info: "info";
         warning: "warning";
-        critical: "critical";
     }>>>;
     maintenanceWindows: z.ZodOptional<z.ZodNullable<z.ZodArray<z.ZodString>>>;
     evaluationWindowSeconds: z.ZodOptional<z.ZodNullable<z.ZodNumber>>;

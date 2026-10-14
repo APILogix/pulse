@@ -8,3 +8,5 @@ export function generateId(): string {
 export function generateUUID(): string {
   return uuidv7();
 }
+
+export { uuidv7 };

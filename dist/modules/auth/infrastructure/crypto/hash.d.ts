@@ -6,7 +6,7 @@ export declare function hashToken(token: string): string;
 export declare function generateSecureToken(byteLength?: number): string;
 export declare function hashEmailFlowToken(purpose: EmailFlowPurpose, token: string): string;
 export declare function generateEmailFlowToken(): string;
-export declare const FAKE_BCRYPT_HASH: string;
+export declare const FAKE_BCRYPT_HASH = "$2b$12$wlOhNJvKxQ3Jz/fAIFtyU.ndcQfpS8fF/.2oPkIadNMBj/G5DnxWa";
 export declare function timingSafeFakePasswordCompare(candidate: string): Promise<void>;
 export declare function buildDeviceFingerprint(ip: string, userAgent: string): string;
 export declare function getIpSubnet(ip: string): string;

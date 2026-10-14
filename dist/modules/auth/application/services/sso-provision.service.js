@@ -1,7 +1,8 @@
 /**
  * Shared SSO user resolution (OIDC + SAML): lookup, JIT provision, domain policy.
  */
-import { createHash, randomUUID } from 'crypto';
+import { createHash } from 'crypto';
+import { v7 as uuidv7 } from 'uuid';
 import { logAudit } from '../../../../shared/middleware/audit-logger.js';
 import * as repository from '../../infrastructure/repositories/index.js';
 import { AuthError, AuthErrorCodes } from '../../domain/types.js';
@@ -58,7 +59,7 @@ export async function resolveSsoUser(email, displayName, provider, ipAddress, re
     const fullName = displayName?.trim() || normalized.split('@')[0] || 'User';
     const role = provider.oidc_jit_default_role || 'member';
     const user = await repository.withTransaction(async (client) => {
-        const created = await repository.createSsoJitUser({ id: randomUUID(), email: normalized, full_name: fullName }, client);
+        const created = await repository.createSsoJitUser({ id: uuidv7(), email: normalized, full_name: fullName }, client);
         await repository.addOrgMemberSsoProvision(provider.org_id, created.id, role, client);
         return created;
     });

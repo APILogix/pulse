@@ -4,10 +4,10 @@ export declare const CreateProjectAlertRouteBodySchema: z.ZodObject<{
     description: z.ZodOptional<z.ZodString>;
     event_types: z.ZodDefault<z.ZodArray<z.ZodString>>;
     severity_levels: z.ZodDefault<z.ZodArray<z.ZodEnum<{
+        critical: "critical";
         error: "error";
         info: "info";
         warning: "warning";
-        critical: "critical";
     }>>>;
     source_services: z.ZodDefault<z.ZodArray<z.ZodString>>;
     target_connector_ids: z.ZodArray<z.ZodString>;
@@ -22,10 +22,10 @@ export declare const UpdateProjectAlertRouteBodySchema: z.ZodObject<{
     description: z.ZodOptional<z.ZodOptional<z.ZodString>>;
     event_types: z.ZodOptional<z.ZodDefault<z.ZodArray<z.ZodString>>>;
     severity_levels: z.ZodOptional<z.ZodDefault<z.ZodArray<z.ZodEnum<{
+        critical: "critical";
         error: "error";
         info: "info";
         warning: "warning";
-        critical: "critical";
     }>>>>;
     source_services: z.ZodOptional<z.ZodDefault<z.ZodArray<z.ZodString>>>;
     target_connector_ids: z.ZodOptional<z.ZodArray<z.ZodString>>;

@@ -26,10 +26,14 @@ import type {
 } from "../types.js";
 import { ProjectError } from "../shared/utils.js";
 
-const API_KEY_COLUMNS = `
-  id, organization_id, project_id, environment_id, name, public_key, secret_hash,
+const API_KEY_PUBLIC_COLUMNS = `
+  id, organization_id, project_id, environment_id, name, public_key,
   status, expires_at, last_used_at, created_by, rotated_from_key_id,
   created_at, updated_at, deleted_at
+`;
+
+const API_KEY_COLUMNS = `
+  ${API_KEY_PUBLIC_COLUMNS}, secret_hash
 `;
 
 /** Statuses that still authenticate telemetry (rotation grace is checked separately). */
@@ -42,7 +46,7 @@ type ApiKeyRow = {
   environment_id: string;
   name: string;
   public_key: string;
-  secret_hash: string;
+  secret_hash?: string;
   status: ApiKeyStatus;
   expires_at: Date | null;
   last_used_at: Date | null;
@@ -137,7 +141,7 @@ export class ApiKeyRepository {
     params.push(query.limit, offset);
 
     const result = await db.query<ApiKeyRow>(
-      `SELECT ${API_KEY_COLUMNS} FROM project_api_keys
+      `SELECT ${API_KEY_PUBLIC_COLUMNS} FROM project_api_keys
        ${whereClause}
        ORDER BY created_at DESC
        LIMIT $${params.length - 1} OFFSET $${params.length}`,
@@ -335,6 +339,21 @@ export class ApiKeyRepository {
       throw new ProjectError("API_KEY_NOT_FOUND", "API key not found", 404);
     }
     return this.publicShape(this.mapApiKeyRecord(result.rows[0]!));
+  }
+
+  /** Bulk revoke all active keys for a project in a single query (PROJ-Q022). */
+  async revokeAllActiveProjectApiKeys(
+    projectId: string,
+    client?: PoolClient,
+  ): Promise<number> {
+    const db = client ?? this.db;
+    const result = await db.query(
+      `UPDATE project_api_keys
+          SET status = 'revoked', deleted_at = COALESCE(deleted_at, NOW())
+        WHERE project_id = $1 AND deleted_at IS NULL`,
+      [projectId],
+    );
+    return result.rowCount ?? 0;
   }
 
   /** Mark the superseded credential as rotated. Grace lives on the rotation row. */
@@ -622,7 +641,7 @@ export class ApiKeyRepository {
       environmentId: row.environment_id,
       name: row.name,
       publicKey: row.public_key,
-      secretHash: row.secret_hash,
+      secretHash: row.secret_hash ?? "",
       status: row.status,
       expiresAt: row.expires_at,
       lastUsedAt: row.last_used_at,

@@ -22,6 +22,7 @@ import { buildFacets, buildPublicProjection, isPublicField, operatorsForField } 
 import { parseSearch } from './search-parser.js';
 import { createCursorPayload, encodeCursor } from './cursor.js';
 import {
+  buildCombinedAggregateStatement,
   buildListStatement,
   buildStatisticsStatement,
   buildSummaryStatement,
@@ -132,8 +133,8 @@ export class ExplorerQueryEngine {
     if (parsed.text.length > 5) {
       throw new QueryValidationError('A maximum of 5 search terms is supported');
     }
-    if (parsed.text.some((term) => term.trim().length > 0 && term.trim().length < 3)) {
-      throw new QueryValidationError('Search terms must contain at least 3 characters');
+    if (parsed.text.some((term) => term.trim().length > 0 && term.trim().length < 2)) {
+      throw new QueryValidationError('Search terms must contain at least 2 characters');
     }
 
     const sortField = query.sort.field;
@@ -157,18 +158,36 @@ export class ExplorerQueryEngine {
     const { query, freeText } = this.normalize(queryResource, rawQuery);
 
     const listStmt = buildListStatement(queryResource, ctx, query, freeText);
-    const summaryStmt = buildSummaryStatement(queryResource, ctx, query, freeText);
-    const statsStmt = buildStatisticsStatement(queryResource, ctx, query, freeText);
+    const combinedStmt = buildCombinedAggregateStatement(queryResource, ctx, query, freeText);
 
-    const [rawRows, summaryRows, statsRows] = await Promise.all([
-      this.executor.run<Record<string, unknown>>(listStmt.sql, listStmt.params),
-      summaryStmt
-        ? this.executor.run<Record<string, unknown>>(summaryStmt.sql, summaryStmt.params)
-        : Promise.resolve<Record<string, unknown>[]>([]),
-      statsStmt
-        ? this.executor.run<Record<string, unknown>>(statsStmt.sql, statsStmt.params)
-        : Promise.resolve<Record<string, unknown>[]>([]),
-    ]);
+    let rawRows: Array<Record<string, unknown>> = [];
+    let summaryRow: Record<string, unknown> | undefined;
+    let statsRow: Record<string, unknown> | undefined;
+
+    if (combinedStmt) {
+      const [listResult, aggResult] = await Promise.all([
+        this.executor.run<Record<string, unknown>>(listStmt.sql, listStmt.params),
+        this.executor.run<Record<string, unknown>>(combinedStmt.sql, combinedStmt.params),
+      ]);
+      rawRows = listResult;
+      const aggFirst = aggResult[0];
+      if (aggFirst) {
+        if (combinedStmt.summaryKeys.length > 0) {
+          summaryRow = {};
+          for (const key of combinedStmt.summaryKeys) {
+            summaryRow[key] = aggFirst[`s__${key}`] ?? aggFirst[key];
+          }
+        }
+        if (combinedStmt.statsKeys.length > 0) {
+          statsRow = {};
+          for (const key of combinedStmt.statsKeys) {
+            statsRow[key] = aggFirst[`st__${key}`] ?? aggFirst[key];
+          }
+        }
+      }
+    } else {
+      rawRows = await this.executor.run<Record<string, unknown>>(listStmt.sql, listStmt.params);
+    }
 
     const pagination = this.paginate(rawRows, listStmt.reversed, listStmt.limit, query, queryResource, ctx);
     const pageRows = pagination.rows;
@@ -178,8 +197,8 @@ export class ExplorerQueryEngine {
       success: true,
       items,
       pagination: pagination.meta,
-      summary: toNumberMap(summaryRows[0]),
-      statistics: toNullableNumberMap(statsRows[0]),
+      summary: toNumberMap(summaryRow),
+      statistics: toNullableNumberMap(statsRow),
       appliedFilters: query.filters,
       availableFilters: buildFacets(queryResource),
       aggregations: {},

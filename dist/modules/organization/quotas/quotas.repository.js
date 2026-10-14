@@ -50,7 +50,16 @@ export class QuotasRepository extends BaseRepository {
          COALESCE(u.dashboards_used, 0)::text AS dashboards_used
        FROM (SELECT $1::uuid AS organization_id) org
        LEFT JOIN LATERAL (
-         SELECT *
+         SELECT
+           events_used,
+           event_limit,
+           ai_credits_used,
+           ai_credit_limit,
+           projects_used,
+           api_keys_used,
+           connectors_used,
+           alert_rules_used,
+           dashboards_used
          FROM organization_usage_current_period
          WHERE organization_id = org.organization_id
          ORDER BY period_end DESC

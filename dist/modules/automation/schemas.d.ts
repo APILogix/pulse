@@ -37,15 +37,15 @@ export declare const PaginationSchema: z.ZodObject<{
 }, z.core.$strip>;
 export declare const TriggerDefinitionSchema: z.ZodObject<{
     triggerKind: z.ZodEnum<{
-        schedule: "schedule";
         manual: "manual";
         event: "event";
         webhook: "webhook";
+        schedule: "schedule";
     }>;
     triggerType: z.ZodEnum<{
         "alert.event.created": "alert.event.created";
-        "alert.event.acknowledged": "alert.event.acknowledged";
         "alert.event.resolved": "alert.event.resolved";
+        "alert.event.acknowledged": "alert.event.acknowledged";
         "alert.event.escalated": "alert.event.escalated";
         "alert.rule.firing": "alert.rule.firing";
         "error.group.created": "error.group.created";
@@ -113,33 +113,24 @@ export declare const ActionDefinitionSchema: z.ZodObject<{
     actionKey: z.ZodString;
     actionType: z.ZodEnum<{
         "notification.send": "notification.send";
-        "incident.create": "incident.create";
-        "incident.assign_owner": "incident.assign_owner";
-        "incident.timeline.append": "incident.timeline.append";
-        "incident.postmortem.generate_draft": "incident.postmortem.generate_draft";
-        "ticket.github.create": "ticket.github.create";
-        "ticket.jira.create": "ticket.jira.create";
-        "pagerduty.trigger": "pagerduty.trigger";
-        "runbook.open": "runbook.open";
-        "runbook.step.create": "runbook.step.create";
-        "status_page.update": "status_page.update";
-        "approval.request": "approval.request";
-        "connector.delivery.retry": "connector.delivery.retry";
-        "alert.severity.change": "alert.severity.change";
-        "alert.silence.create": "alert.silence.create";
-        "ai.summary.generate": "ai.summary.generate";
-        "ai.root_cause.generate": "ai.root_cause.generate";
-        "report.export": "report.export";
-        "rollback.recommend": "rollback.recommend";
-        "release.guard.warn": "release.guard.warn";
-        "release.guard.pause": "release.guard.pause";
         "quota.notify": "quota.notify";
-        "quota.throttle_recommend": "quota.throttle_recommend";
-        "retention.archive": "retention.archive";
-        "retention.purge_request": "retention.purge_request";
         "security.notify": "security.notify";
         "webhook.call": "webhook.call";
+        "pagerduty.trigger": "pagerduty.trigger";
+        "connector.delivery.retry": "connector.delivery.retry";
+        "alert.silence.create": "alert.silence.create";
+        "incident.create": "incident.create";
+        "incident.timeline.append": "incident.timeline.append";
+        "incident.assign_owner": "incident.assign_owner";
+        "approval.request": "approval.request";
+        "rollback.recommend": "rollback.recommend";
         noop: "noop";
+        "ai.summary.generate": "ai.summary.generate";
+        "ai.root_cause.generate": "ai.root_cause.generate";
+        "incident.postmortem.generate_draft": "incident.postmortem.generate_draft";
+        "report.export": "report.export";
+        "ticket.github.create": "ticket.github.create";
+        "ticket.jira.create": "ticket.jira.create";
     }>;
     integrationKey: z.ZodOptional<z.ZodString>;
     sortOrder: z.ZodDefault<z.ZodNumber>;
@@ -178,9 +169,9 @@ export declare const CreateWorkflowSchema: z.ZodObject<{
     name: z.ZodString;
     description: z.ZodOptional<z.ZodString>;
     workflowType: z.ZodEnum<{
+        custom: "custom";
         report: "report";
         security: "security";
-        custom: "custom";
         dead_letter: "dead_letter";
         anomaly: "anomaly";
         escalation: "escalation";
@@ -205,15 +196,15 @@ export declare const CreateWorkflowSchema: z.ZodObject<{
     projectId: z.ZodOptional<z.ZodString>;
     trigger: z.ZodObject<{
         triggerKind: z.ZodEnum<{
-            schedule: "schedule";
             manual: "manual";
             event: "event";
             webhook: "webhook";
+            schedule: "schedule";
         }>;
         triggerType: z.ZodEnum<{
             "alert.event.created": "alert.event.created";
-            "alert.event.acknowledged": "alert.event.acknowledged";
             "alert.event.resolved": "alert.event.resolved";
+            "alert.event.acknowledged": "alert.event.acknowledged";
             "alert.event.escalated": "alert.event.escalated";
             "alert.rule.firing": "alert.rule.firing";
             "error.group.created": "error.group.created";
@@ -281,33 +272,24 @@ export declare const CreateWorkflowSchema: z.ZodObject<{
         actionKey: z.ZodString;
         actionType: z.ZodEnum<{
             "notification.send": "notification.send";
-            "incident.create": "incident.create";
-            "incident.assign_owner": "incident.assign_owner";
-            "incident.timeline.append": "incident.timeline.append";
-            "incident.postmortem.generate_draft": "incident.postmortem.generate_draft";
-            "ticket.github.create": "ticket.github.create";
-            "ticket.jira.create": "ticket.jira.create";
-            "pagerduty.trigger": "pagerduty.trigger";
-            "runbook.open": "runbook.open";
-            "runbook.step.create": "runbook.step.create";
-            "status_page.update": "status_page.update";
-            "approval.request": "approval.request";
-            "connector.delivery.retry": "connector.delivery.retry";
-            "alert.severity.change": "alert.severity.change";
-            "alert.silence.create": "alert.silence.create";
-            "ai.summary.generate": "ai.summary.generate";
-            "ai.root_cause.generate": "ai.root_cause.generate";
-            "report.export": "report.export";
-            "rollback.recommend": "rollback.recommend";
-            "release.guard.warn": "release.guard.warn";
-            "release.guard.pause": "release.guard.pause";
             "quota.notify": "quota.notify";
-            "quota.throttle_recommend": "quota.throttle_recommend";
-            "retention.archive": "retention.archive";
-            "retention.purge_request": "retention.purge_request";
             "security.notify": "security.notify";
             "webhook.call": "webhook.call";
+            "pagerduty.trigger": "pagerduty.trigger";
+            "connector.delivery.retry": "connector.delivery.retry";
+            "alert.silence.create": "alert.silence.create";
+            "incident.create": "incident.create";
+            "incident.timeline.append": "incident.timeline.append";
+            "incident.assign_owner": "incident.assign_owner";
+            "approval.request": "approval.request";
+            "rollback.recommend": "rollback.recommend";
             noop: "noop";
+            "ai.summary.generate": "ai.summary.generate";
+            "ai.root_cause.generate": "ai.root_cause.generate";
+            "incident.postmortem.generate_draft": "incident.postmortem.generate_draft";
+            "report.export": "report.export";
+            "ticket.github.create": "ticket.github.create";
+            "ticket.jira.create": "ticket.jira.create";
         }>;
         integrationKey: z.ZodOptional<z.ZodString>;
         sortOrder: z.ZodDefault<z.ZodNumber>;
@@ -345,15 +327,15 @@ export declare const UpdateWorkflowSchema: z.ZodObject<{
     description: z.ZodOptional<z.ZodString>;
     trigger: z.ZodOptional<z.ZodObject<{
         triggerKind: z.ZodEnum<{
-            schedule: "schedule";
             manual: "manual";
             event: "event";
             webhook: "webhook";
+            schedule: "schedule";
         }>;
         triggerType: z.ZodEnum<{
             "alert.event.created": "alert.event.created";
-            "alert.event.acknowledged": "alert.event.acknowledged";
             "alert.event.resolved": "alert.event.resolved";
+            "alert.event.acknowledged": "alert.event.acknowledged";
             "alert.event.escalated": "alert.event.escalated";
             "alert.rule.firing": "alert.rule.firing";
             "error.group.created": "error.group.created";
@@ -421,33 +403,24 @@ export declare const UpdateWorkflowSchema: z.ZodObject<{
         actionKey: z.ZodString;
         actionType: z.ZodEnum<{
             "notification.send": "notification.send";
-            "incident.create": "incident.create";
-            "incident.assign_owner": "incident.assign_owner";
-            "incident.timeline.append": "incident.timeline.append";
-            "incident.postmortem.generate_draft": "incident.postmortem.generate_draft";
-            "ticket.github.create": "ticket.github.create";
-            "ticket.jira.create": "ticket.jira.create";
-            "pagerduty.trigger": "pagerduty.trigger";
-            "runbook.open": "runbook.open";
-            "runbook.step.create": "runbook.step.create";
-            "status_page.update": "status_page.update";
-            "approval.request": "approval.request";
-            "connector.delivery.retry": "connector.delivery.retry";
-            "alert.severity.change": "alert.severity.change";
-            "alert.silence.create": "alert.silence.create";
-            "ai.summary.generate": "ai.summary.generate";
-            "ai.root_cause.generate": "ai.root_cause.generate";
-            "report.export": "report.export";
-            "rollback.recommend": "rollback.recommend";
-            "release.guard.warn": "release.guard.warn";
-            "release.guard.pause": "release.guard.pause";
             "quota.notify": "quota.notify";
-            "quota.throttle_recommend": "quota.throttle_recommend";
-            "retention.archive": "retention.archive";
-            "retention.purge_request": "retention.purge_request";
             "security.notify": "security.notify";
             "webhook.call": "webhook.call";
+            "pagerduty.trigger": "pagerduty.trigger";
+            "connector.delivery.retry": "connector.delivery.retry";
+            "alert.silence.create": "alert.silence.create";
+            "incident.create": "incident.create";
+            "incident.timeline.append": "incident.timeline.append";
+            "incident.assign_owner": "incident.assign_owner";
+            "approval.request": "approval.request";
+            "rollback.recommend": "rollback.recommend";
             noop: "noop";
+            "ai.summary.generate": "ai.summary.generate";
+            "ai.root_cause.generate": "ai.root_cause.generate";
+            "incident.postmortem.generate_draft": "incident.postmortem.generate_draft";
+            "report.export": "report.export";
+            "ticket.github.create": "ticket.github.create";
+            "ticket.jira.create": "ticket.jira.create";
         }>;
         integrationKey: z.ZodOptional<z.ZodString>;
         sortOrder: z.ZodDefault<z.ZodNumber>;
@@ -507,9 +480,9 @@ export declare const ListWorkflowsQuerySchema: z.ZodObject<{
         disabled: "disabled";
     }>>;
     workflowType: z.ZodOptional<z.ZodEnum<{
+        custom: "custom";
         report: "report";
         security: "security";
-        custom: "custom";
         dead_letter: "dead_letter";
         anomaly: "anomaly";
         escalation: "escalation";
@@ -552,8 +525,8 @@ export declare const ListRunsQuerySchema: z.ZodObject<{
     workflowId: z.ZodOptional<z.ZodString>;
     triggerType: z.ZodOptional<z.ZodEnum<{
         "alert.event.created": "alert.event.created";
-        "alert.event.acknowledged": "alert.event.acknowledged";
         "alert.event.resolved": "alert.event.resolved";
+        "alert.event.acknowledged": "alert.event.acknowledged";
         "alert.event.escalated": "alert.event.escalated";
         "alert.rule.firing": "alert.rule.firing";
         "error.group.created": "error.group.created";
@@ -608,8 +581,8 @@ export declare const IngestEventSchema: z.ZodObject<{
     sourceModule: z.ZodString;
     eventType: z.ZodEnum<{
         "alert.event.created": "alert.event.created";
-        "alert.event.acknowledged": "alert.event.acknowledged";
         "alert.event.resolved": "alert.event.resolved";
+        "alert.event.acknowledged": "alert.event.acknowledged";
         "alert.event.escalated": "alert.event.escalated";
         "alert.rule.firing": "alert.rule.firing";
         "error.group.created": "error.group.created";
@@ -666,10 +639,10 @@ export declare const ListApprovalsQuerySchema: z.ZodObject<{
         desc: "desc";
     }>>;
     status: z.ZodOptional<z.ZodEnum<{
+        rejected: "rejected";
         expired: "expired";
         pending: "pending";
         approved: "approved";
-        rejected: "rejected";
         cancelled: "cancelled";
     }>>;
     workflowId: z.ZodOptional<z.ZodString>;
@@ -683,9 +656,9 @@ export declare const ListApprovalsQuerySchema: z.ZodObject<{
 export declare const TemplateDefinitionSchema: z.ZodObject<{
     schemaVersion: z.ZodNumber;
     workflowType: z.ZodEnum<{
+        custom: "custom";
         report: "report";
         security: "security";
-        custom: "custom";
         dead_letter: "dead_letter";
         anomaly: "anomaly";
         escalation: "escalation";
@@ -704,15 +677,15 @@ export declare const TemplateDefinitionSchema: z.ZodObject<{
     }>;
     trigger: z.ZodObject<{
         kind: z.ZodEnum<{
-            schedule: "schedule";
             manual: "manual";
             event: "event";
             webhook: "webhook";
+            schedule: "schedule";
         }>;
         type: z.ZodEnum<{
             "alert.event.created": "alert.event.created";
-            "alert.event.acknowledged": "alert.event.acknowledged";
             "alert.event.resolved": "alert.event.resolved";
+            "alert.event.acknowledged": "alert.event.acknowledged";
             "alert.event.escalated": "alert.event.escalated";
             "alert.rule.firing": "alert.rule.firing";
             "error.group.created": "error.group.created";
@@ -766,33 +739,24 @@ export declare const TemplateDefinitionSchema: z.ZodObject<{
         actionKey: z.ZodString;
         actionType: z.ZodEnum<{
             "notification.send": "notification.send";
-            "incident.create": "incident.create";
-            "incident.assign_owner": "incident.assign_owner";
-            "incident.timeline.append": "incident.timeline.append";
-            "incident.postmortem.generate_draft": "incident.postmortem.generate_draft";
-            "ticket.github.create": "ticket.github.create";
-            "ticket.jira.create": "ticket.jira.create";
-            "pagerduty.trigger": "pagerduty.trigger";
-            "runbook.open": "runbook.open";
-            "runbook.step.create": "runbook.step.create";
-            "status_page.update": "status_page.update";
-            "approval.request": "approval.request";
-            "connector.delivery.retry": "connector.delivery.retry";
-            "alert.severity.change": "alert.severity.change";
-            "alert.silence.create": "alert.silence.create";
-            "ai.summary.generate": "ai.summary.generate";
-            "ai.root_cause.generate": "ai.root_cause.generate";
-            "report.export": "report.export";
-            "rollback.recommend": "rollback.recommend";
-            "release.guard.warn": "release.guard.warn";
-            "release.guard.pause": "release.guard.pause";
             "quota.notify": "quota.notify";
-            "quota.throttle_recommend": "quota.throttle_recommend";
-            "retention.archive": "retention.archive";
-            "retention.purge_request": "retention.purge_request";
             "security.notify": "security.notify";
             "webhook.call": "webhook.call";
+            "pagerduty.trigger": "pagerduty.trigger";
+            "connector.delivery.retry": "connector.delivery.retry";
+            "alert.silence.create": "alert.silence.create";
+            "incident.create": "incident.create";
+            "incident.timeline.append": "incident.timeline.append";
+            "incident.assign_owner": "incident.assign_owner";
+            "approval.request": "approval.request";
+            "rollback.recommend": "rollback.recommend";
             noop: "noop";
+            "ai.summary.generate": "ai.summary.generate";
+            "ai.root_cause.generate": "ai.root_cause.generate";
+            "incident.postmortem.generate_draft": "incident.postmortem.generate_draft";
+            "report.export": "report.export";
+            "ticket.github.create": "ticket.github.create";
+            "ticket.jira.create": "ticket.jira.create";
         }>;
         riskLevel: z.ZodDefault<z.ZodEnum<{
             critical: "critical";

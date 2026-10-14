@@ -16,7 +16,9 @@ export const EventUsageBodySchema = z.object({
   organizationId: UuidSchema,
   projectId: UuidSchema.optional().nullable(),
   eventType: z.string().min(1).max(64),
-  count: z.coerce.number().int().positive().max(1_000_000),
+  count: z.coerce.number().positive().max(1_000_000),
+  weightedCredits: z.coerce.number().positive().optional(),
+  rawCount: z.coerce.number().int().positive().optional(),
   sizeBytes: z.coerce.number().int().nonnegative().optional(),
 });
 

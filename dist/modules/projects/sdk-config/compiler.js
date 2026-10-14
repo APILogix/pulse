@@ -21,30 +21,6 @@ export const PLATFORM_MANDATORY_SCRUB_FIELDS = [
     "refresh_token",
     "client_secret",
 ];
-const DEFAULT_FEATURES = new Set([
-    "tracing",
-    "requestCapture",
-    "errors",
-    "metrics",
-    "logging",
-]);
-const DEFAULT_INSTRUMENTATION = new Set([
-    "http",
-    "https",
-    "fetch",
-    "fastify",
-    "express",
-    "eventEmitterPatch",
-]);
-const DEFAULT_ENTITLEMENTS = new Set([
-    "customSpans",
-    "customMetrics",
-    "logging",
-    "requestCapture",
-    "tracing",
-    "errors",
-    "metrics",
-]);
 const ROUTE_DEFAULTS = {
     errors: {
         batchSize: 100,
@@ -118,10 +94,10 @@ const ROUTE_DEFAULTS = {
     },
 };
 function schemaDefaults() {
-    const features = Object.fromEntries(FEATURE_KEYS.map((key) => [key, DEFAULT_FEATURES.has(key)]));
+    const features = Object.fromEntries(FEATURE_KEYS.map((key) => [key, true]));
     const killswitches = Object.fromEntries(KILLSWITCH_KEYS.map((key) => [key, false]));
-    const instrumentation = Object.fromEntries(INSTRUMENTATION_KEYS.map((key) => [key, DEFAULT_INSTRUMENTATION.has(key)]));
-    const entitlements = Object.fromEntries(ENTITLEMENT_KEYS.map((key) => [key, DEFAULT_ENTITLEMENTS.has(key)]));
+    const instrumentation = Object.fromEntries(INSTRUMENTATION_KEYS.map((key) => [key, key !== "axios"]));
+    const entitlements = Object.fromEntries(ENTITLEMENT_KEYS.map((key) => [key, true]));
     return {
         schemaVersion: SCHEMA_VERSION,
         sdk: { projectId: "", environment: "", release: DEFAULT_SDK_RELEASE },
@@ -135,13 +111,10 @@ function schemaDefaults() {
             logs: 1,
             events: 1,
             messages: 1,
-            profiles: 0.1,
-            replays: 0.1,
+            profiles: 1,
+            replays: 1,
             crons: 1,
-            routes: {
-                "/health": { requests: 0, traces: 0, spans: 0, metrics: 0, logs: 0 },
-                "/favicon.ico": { traces: 0, requests: 0 },
-            },
+            routes: {},
         },
         instrumentation,
         privacy: {
@@ -165,11 +138,11 @@ function schemaDefaults() {
             },
         },
         limits: {
-            maxSpansPerTrace: 2000,
-            maxSpanAttributes: 128,
-            maxAttributeLength: 4096,
-            maxPayloadSize: 1048576,
-            maxQueueSize: 10000,
+            maxSpansPerTrace: 5000,
+            maxSpanAttributes: 200,
+            maxAttributeLength: 8192,
+            maxPayloadSize: 4194304,
+            maxQueueSize: 100000,
             maxMemoryMb: "auto",
             tenantGovernance: {
                 enabled: false,
@@ -177,6 +150,11 @@ function schemaDefaults() {
                 quotaPerWindow: 10000,
                 windowDurationMs: 60000,
                 criticalReserve: 100,
+            },
+            persistenceGovernance: {
+                maxPersistPerMinute: 100_000,
+                adaptive: true,
+                budgetExceededLogIntervalMs: 60_000,
             },
         },
         killswitches,
@@ -189,11 +167,11 @@ function schemaDefaults() {
             },
             queue: {
                 overflowStrategy: "drop_oldest",
-                maxSize: 10000,
-                criticalReserve: 1000,
+                maxSize: 100000,
+                criticalReserve: 10000,
             },
             connections: {
-                maxTotalConnections: 50,
+                maxTotalConnections: 100,
                 acquireTimeoutMs: 5000,
             },
             keepAlive: true,
@@ -274,6 +252,18 @@ function enforceEnvelope(config, policy) {
         const current = config.limits[key];
         if (typeof ceiling === "number" && typeof current === "number" && current > ceiling) {
             config.limits[key] = ceiling;
+        }
+    }
+    const persistence = policy?.persistenceGovernance;
+    if (persistence) {
+        if (typeof persistence.maxPersistPerMinute === "number") {
+            config.limits.persistenceGovernance.maxPersistPerMinute = Math.min(config.limits.persistenceGovernance.maxPersistPerMinute, persistence.maxPersistPerMinute);
+        }
+        if (typeof persistence.adaptive === "boolean") {
+            config.limits.persistenceGovernance.adaptive = persistence.adaptive;
+        }
+        if (typeof persistence.budgetExceededLogIntervalMs === "number") {
+            config.limits.persistenceGovernance.budgetExceededLogIntervalMs = Math.max(config.limits.persistenceGovernance.budgetExceededLogIntervalMs, persistence.budgetExceededLogIntervalMs);
         }
     }
 }

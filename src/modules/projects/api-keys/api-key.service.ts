@@ -11,8 +11,10 @@
  *    Postgres round trip. NO Redis.
  * 6. Write every sensitive lifecycle event to organization_audit_logs.
  */
+import type { PoolClient } from "pg";
 import type { FastifyBaseLogger } from "fastify";
 import { apiKeyCache } from "../../../config/lrucashe.js";
+import { redisLookupCache } from "../../../db/redis/lookup-cache.js";
 import type { OrganizationRepository } from "../../organization/repository.js";
 import type { OrganizationAuditService } from "../../organization/audit-logs/audit-logs.service.js";
 import { ProjectMemberRole } from "../types.js";
@@ -113,7 +115,6 @@ export class ApiKeyService extends BaseProjectService {
     meta: RequestMeta,
   ): Promise<CreateApiKeyResponse> {
     await this.requireProjectAccess(orgId, projectId, userId, "admin");
-    this.assertFutureExpiry(body.expiresAt);
     await this.enforceProjectModuleLimit(orgId, "apiKey");
 
     const env = await this.environmentRepository.findEnvironment(projectId, body.environmentId);
@@ -121,26 +122,100 @@ export class ApiKeyService extends BaseProjectService {
       throw new ProjectError("ENVIRONMENT_NOT_FOUND", "Active environment not found", 404);
     }
 
-    const activeKeys = await this.apiKeyRepository.countActiveApiKeys(projectId, body.environmentId);
-    if (activeKeys >= MAX_ACTIVE_KEYS_ON_CREATE) {
-      throw new ProjectError(
-        "API_KEY_LIMIT_EXCEEDED",
-        `Maximum ${MAX_ACTIVE_KEYS_ON_CREATE} active API keys are allowed per environment`,
-        400,
+    const keyMaterial = createApiKey(env.slug);
+
+    // Enterprise key lifecycle: Under the same project and execution environment,
+    // existing active keys are superseded/deleted so that only the latest active key is retained.
+    const executeInTx = typeof this.repository?.withTransaction === "function"
+      ? (cb: (client?: PoolClient) => Promise<any>) => this.repository.withTransaction(cb)
+      : async (cb: (client?: PoolClient) => Promise<any>) => cb(undefined);
+
+    const result = await executeInTx(async (client) => {
+      // 1. Fetch any existing active API keys for this project and environment
+      const existingKeys = typeof this.apiKeyRepository.listActiveApiKeyRecords === "function"
+        ? await this.apiKeyRepository.listActiveApiKeyRecords(
+            projectId,
+            body.environmentId,
+            client,
+          )
+        : [];
+
+      // 2. Soft-delete and revoke each existing active key in a single batch query (or single query if 1 key)
+      if (client && existingKeys.length === 1) {
+        await client.query(
+          `UPDATE project_api_keys
+              SET status = 'revoked',
+                  deleted_at = COALESCE(deleted_at, NOW()),
+                  revoked_at = NOW(),
+                  revoked_by = $1,
+                  revoked_reason = 'Superseded by new API key'
+            WHERE id = $2 AND deleted_at IS NULL`,
+          [userId, existingKeys[0]!.id],
+        );
+      } else if (client && existingKeys.length > 1) {
+        const oldKeyIds = existingKeys.map((k) => k.id);
+        await client.query(
+          `UPDATE project_api_keys
+              SET status = 'revoked',
+                  deleted_at = COALESCE(deleted_at, NOW()),
+                  revoked_at = NOW(),
+                  revoked_by = $1,
+                  revoked_reason = 'Superseded by new API key'
+            WHERE id = ANY($2::uuid[]) AND deleted_at IS NULL`,
+          [userId, oldKeyIds],
+        );
+      }
+
+      // 3. Create the new API key with NO expiration (expiresAt: null)
+      const created = await this.apiKeyRepository.createApiKey(
+        {
+          projectId,
+          organizationId: orgId,
+          environmentId: body.environmentId,
+          publicKey: keyMaterial.publicKey,
+          secretHash: keyMaterial.secretHash,
+          name: body.name,
+          createdBy: userId,
+          expiresAt: null, // Always store with no expiry
+        },
+        client,
       );
+
+      return { created, supersededKeys: existingKeys };
+    });
+
+    const { created, supersededKeys } = result;
+
+    // Invalidate caches and logdb sync for all superseded keys
+    for (const oldKey of supersededKeys) {
+      this.evictApiKeyConfig(oldKey.secretHash);
+      syncApiKeyLookupToLogDbBestEffort(oldKey.id, "api_key.revoked");
     }
 
-    const keyMaterial = createApiKey(env.slug);
-    const created = await this.apiKeyRepository.createApiKey({
-      projectId,
-      organizationId: orgId,
-      environmentId: body.environmentId,
-      publicKey: keyMaterial.publicKey,
-      secretHash: keyMaterial.secretHash,
-      name: body.name,
-      createdBy: userId,
-      expiresAt: body.expiresAt ?? null,
-    });
+    // Pre-warm Tier-0 and Tier-1 Redis caches immediately for the newly minted key
+    // This ensures that the very next /v1/init or /v1/sdk-config call hits cache instantly (<1ms).
+    void redisLookupCache.setApiKeyMapping(
+      keyMaterial.fullKey,
+      {
+        organizationId: orgId,
+        projectId,
+        defaultEnvironmentId: created.environmentId,
+        allowedEnvironmentIds: [created.environmentId],
+      },
+      created.secretHash,
+    );
+
+    try {
+      apiKeyCache.set(created.secretHash, {
+        projectId,
+        environmentId: created.environmentId,
+        organizationId: orgId,
+        status: "active",
+        isLive: env.slug === "production",
+      } as any);
+    } catch {
+      // Non-fatal cache warming
+    }
 
     await this.audit(meta, {
       orgId,
@@ -150,15 +225,24 @@ export class ApiKeyService extends BaseProjectService {
       entityId: created.id,
       entityName: created.name,
       isSensitive: true,
-      newValues: { projectId, environmentId: created.environmentId, publicKey: created.publicKey },
+      newValues: {
+        projectId,
+        environmentId: created.environmentId,
+        publicKey: created.publicKey,
+        supersededKeyCount: supersededKeys.length,
+      },
     });
 
-    // Keep the org-level fast-path counter in sync with actual key creation.
-    // Non-fatal: the authoritative limit check above already ran against the
-    // live COUNT(*), so a failed counter update never blocks the request.
-    await this.adjustOrgApiKeyUsage(orgId, 1);
+    // Keep the org-level fast-path counter accurate
+    const netDelta = 1 - supersededKeys.length;
+    if (netDelta !== 0) {
+      await this.adjustOrgApiKeyUsage(orgId, netDelta > 0 ? 1 : -1);
+    }
 
-    this.logger.info({ orgId, projectId, apiKeyId: created.id, userId }, "Project API key created");
+    this.logger.info(
+      { orgId, projectId, apiKeyId: created.id, userId, supersededCount: supersededKeys.length },
+      "Project API key created (no expiry) and previous keys superseded",
+    );
     syncApiKeyLookupToLogDbBestEffort(created.id, "api_key.created");
     return { apiKey: this.publicApiKey(created), fullKey: keyMaterial.fullKey };
   }
@@ -629,6 +713,7 @@ export class ApiKeyService extends BaseProjectService {
   public evictApiKeyConfig(secretHash: string): void {
     try {
       apiKeyCache.delete(secretHash);
+      void redisLookupCache.invalidateApiKey(secretHash);
     } catch (err) {
       this.logger.warn({ err }, "Failed to evict API key cache");
     }

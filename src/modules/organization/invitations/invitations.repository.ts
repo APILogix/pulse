@@ -4,6 +4,27 @@ import type { CursorPaginationQuery, CursorPaginatedResponse } from "../shared/t
 import type { OrgInvitationRow } from "./invitations.schema.js";
 import { quotaGuard } from "../../billing/entitlements/quota-guard.js";
 
+const ORG_INVITATION_COLUMNS = `
+  oi.id,
+  oi.org_id,
+  oi.invited_by,
+  oi.email,
+  oi.role,
+  oi.token_hash,
+  oi.expires_at,
+  oi.status,
+  oi.accepted_at,
+  oi.accepted_by,
+  oi.declined_at,
+  oi.revoked_at,
+  oi.revoked_by,
+  oi.resent_count,
+  oi.last_resent_at,
+  oi.created_at,
+  inv.email AS invited_by_email,
+  inv.full_name AS invited_by_name
+`;
+
 export class InvitationsRepository extends BaseRepository {
   async createInvitation(orgId: string, invitedBy: string, email: string, role: string, tokenHash: string, expiresAt: Date): Promise<OrgInvitationRow> {
     try {
@@ -14,13 +35,15 @@ export class InvitationsRepository extends BaseRepository {
           [`organization_invitations:${orgId}:${email.trim().toLowerCase()}`]
         );
 
+        // Normalize at app boundary — plain equality enables B-Tree index scan.
+        const normalizedEmail = email.trim().toLowerCase();
         const existing = await client.query<OrgInvitationRow>(
-          `SELECT oi.*,inv.email AS invited_by_email,inv.full_name AS invited_by_name
+          `SELECT ${ORG_INVITATION_COLUMNS}
            FROM organization_invitations oi
            LEFT JOIN users inv ON inv.id=oi.invited_by
-           WHERE oi.org_id=$1 AND lower(oi.email)=lower($2) AND oi.status='pending'
+           WHERE oi.org_id=$1 AND lower(oi.email)=$2 AND oi.status='pending'
            FOR UPDATE OF oi`,
-          [orgId, email]
+          [orgId, normalizedEmail]
         );
 
         if (existing.rows[0]) {
@@ -38,7 +61,7 @@ export class InvitationsRepository extends BaseRepository {
           );
 
           const withInviter = await client.query<OrgInvitationRow>(
-            `SELECT oi.*,inv.email AS invited_by_email,inv.full_name AS invited_by_name
+            `SELECT ${ORG_INVITATION_COLUMNS}
              FROM organization_invitations oi
              LEFT JOIN users inv ON inv.id=oi.invited_by
              WHERE oi.id=$1`,
@@ -55,7 +78,7 @@ export class InvitationsRepository extends BaseRepository {
         );
 
         const withInviter = await client.query<OrgInvitationRow>(
-          `SELECT oi.*,inv.email AS invited_by_email,inv.full_name AS invited_by_name
+          `SELECT ${ORG_INVITATION_COLUMNS}
            FROM organization_invitations oi
            LEFT JOIN users inv ON inv.id=oi.invited_by
            WHERE oi.id=$1`,
@@ -74,7 +97,7 @@ export class InvitationsRepository extends BaseRepository {
 
   async findInvitationById(id: string): Promise<OrgInvitationRow | null> {
     const r = await this.db.query<OrgInvitationRow>(
-      `SELECT oi.*,inv.email AS invited_by_email,inv.full_name AS invited_by_name
+      `SELECT ${ORG_INVITATION_COLUMNS}
        FROM organization_invitations oi LEFT JOIN users inv ON inv.id=oi.invited_by WHERE oi.id=$1`, [id]
     );
     return r.rows[0] ?? null;
@@ -82,7 +105,7 @@ export class InvitationsRepository extends BaseRepository {
 
   async findInvitationByTokenHash(hash: string): Promise<(OrgInvitationRow & { email_hash?: string }) | null> {
     const r = await this.db.query<OrgInvitationRow & { email_hash: string }>(
-      `SELECT oi.*,inv.email AS invited_by_email,inv.full_name AS invited_by_name, oi.email_hash
+      `SELECT ${ORG_INVITATION_COLUMNS}, oi.email_hash
        FROM organization_invitations oi LEFT JOIN users inv ON inv.id=oi.invited_by WHERE oi.token_hash=$1`, [hash]
     );
     return r.rows[0] ?? null;
@@ -105,7 +128,7 @@ export class InvitationsRepository extends BaseRepository {
     params.push(q.limit + 1);
 
     const r = await this.db.query<OrgInvitationRow>(
-      `SELECT oi.*,inv.email AS invited_by_email,inv.full_name AS invited_by_name
+      `SELECT ${ORG_INVITATION_COLUMNS}
        FROM organization_invitations oi LEFT JOIN users inv ON inv.id=oi.invited_by WHERE ${where} ORDER BY oi.created_at DESC LIMIT $${params.length}`,
       params
     );
@@ -248,7 +271,7 @@ export class InvitationsRepository extends BaseRepository {
 
   async findInvitationByOrgAndId(orgId: string, invitationId: string): Promise<OrgInvitationRow | null> {
     const r = await this.db.query<OrgInvitationRow>(
-      `SELECT oi.*,inv.email AS invited_by_email,inv.full_name AS invited_by_name
+      `SELECT ${ORG_INVITATION_COLUMNS}
        FROM organization_invitations oi LEFT JOIN users inv ON inv.id=oi.invited_by
        WHERE oi.org_id=$1 AND oi.id=$2`, [orgId, invitationId]
     );
@@ -264,12 +287,14 @@ export class InvitationsRepository extends BaseRepository {
   }
 
   async findUserByEmail(email: string): Promise<{ id: string; email: string; full_name: string } | null> {
+    // Normalize at app boundary — plain equality enables B-Tree index scan.
+    const normalized = email.trim().toLowerCase();
     const r = await this.db.query<{ id: string; email: string; full_name: string }>(
       `SELECT id, email, full_name
        FROM users
-       WHERE lower(email) = lower($1) AND deleted_at IS NULL
+       WHERE email = $1 AND deleted_at IS NULL
        LIMIT 1`,
-      [email]
+      [normalized]
     );
     return r.rows[0] ?? null;
   }

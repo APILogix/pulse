@@ -10,8 +10,23 @@ export interface BootstrapUserContext {
   avatarUrl?: string | null;
 }
 
+export interface OwnedOrganizationSummary {
+  id: string;
+  name: string;
+  slug: string;
+  status: string;
+}
+
+export interface OrganizationCreationEligibility {
+  /** False when POST /organizations would reject with "User already owns an organization". */
+  allowed: boolean;
+  /** The organization that blocks creation, when there is one. */
+  ownedOrganization: OwnedOrganizationSummary | null;
+}
+
 export interface BootstrapResponseData {
   currentOrganizationId: string | null;
+  organizationCreation: OrganizationCreationEligibility;
   organizations: Array<{
     id: string;
     name: string;
@@ -117,6 +132,24 @@ export class BootstrapService {
     }
   }
 
+  /**
+   * Same rule as CoreRepository.createOrg: a user may own one organization
+   * that is not deleted (archived ones still count). Returning it here lets
+   * the console explain the limit before the user fills in the form.
+   */
+  private async fetchOrganizationCreation(userId: string): Promise<OrganizationCreationEligibility> {
+    const result = await this.db.query<OwnedOrganizationSummary>(
+      `SELECT id, name, slug, status
+       FROM organizations
+       WHERE owner_user_id = $1 AND deleted_at IS NULL
+       ORDER BY created_at ASC
+       LIMIT 1`,
+      [userId]
+    );
+    const owned = result.rows[0] ?? null;
+    return { allowed: owned === null, ownedOrganization: owned };
+  }
+
   private emptyUsage() {
     return {
       success: true,
@@ -152,12 +185,14 @@ export class BootstrapService {
       [user.id]
     );
     const orgs = orgsResult.rows;
+    const organizationCreation = await this.fetchOrganizationCreation(user.id);
 
     let currentOrg = orgs.find((o) => o.id === preferredOrgId) ?? orgs[0] ?? null;
 
     if (!currentOrg) {
       return {
         currentOrganizationId: null,
+        organizationCreation,
         organizations: [],
         projects: [],
         billing: null,
@@ -316,6 +351,7 @@ export class BootstrapService {
 
     return {
       currentOrganizationId: orgId,
+      organizationCreation,
       organizations: orgs.map((o) => ({
         id: o.id,
         name: o.name,

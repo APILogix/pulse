@@ -2,7 +2,7 @@ import type { FastifyBaseLogger } from 'fastify';
 import type { Pool } from 'pg';
 import { pgboss } from '../../../lib/pgboss.js';
 import { env } from '../../../config/env.js';
-import { CONNECTOR_JOBS, CONNECTOR_PRIORITY, type ConnectorJobName } from '../../connectors/job.constants.js';
+import { CONNECTOR_PRIORITY, connectorTransportQueue } from '../../connectors/job.constants.js';
 import {
   AlertRuntimeRepository,
   type NotificationJobDetailRow,
@@ -61,11 +61,20 @@ export class AlertNotificationRouter {
 
   private async dispatch(job: NotificationJobDetailRow): Promise<NotificationJobStatus> {
     const startedAt = Date.now();
-    console.log(`\n[ALERT_ROUTER] 🚀 Dispatching notification job ${job.id} | Channel: ${job.channel_kind} | Mode: ${job.delivery_mode} | Recipient: ${job.recipient_ref ?? job.recipient_user_id ?? 'N/A'} | Severity: ${job.severity} | Rule: ${job.rule_id}`);
+    // Structured only, and never log recipient addresses (PII).
+    this.log.debug(
+      {
+        notificationJobId: job.id,
+        channelKind: job.channel_kind,
+        deliveryMode: job.delivery_mode,
+        severity: job.severity,
+        ruleId: job.rule_id,
+      },
+      'dispatching notification job',
+    );
     try {
       if (job.channel_kind === 'in_app') {
         await this.mark(job, 'sent', startedAt);
-        console.log(`[ALERT_ROUTER] 📱 In-App notification job ${job.id} processed as sent`);
         return 'sent';
       }
 
@@ -74,7 +83,10 @@ export class AlertNotificationRouter {
           (job.recipient_type !== 'PROJECT_OWNER' && job.recipient_type !== 'ORGANIZATION_FALLBACK')
           || job.provider !== 'MANAGED_EMAIL'
         )) {
-          console.log(`[ALERT_ROUTER] ⚠️ Suppressing email job ${job.id}: invalid restricted delivery contract`);
+          this.log.warn(
+            { notificationJobId: job.id, reason: 'invalid_restricted_delivery_contract' },
+            'notification job suppressed',
+          );
           await this.mark(job, 'suppressed', startedAt, 'invalid_restricted_delivery_contract');
           return 'suppressed';
         }
@@ -87,16 +99,18 @@ export class AlertNotificationRouter {
               ? await this.owners.findActiveVerifiedFallbackRecipient(job.organization_id, job.project_id)
               : null;
             if (!fallback) {
-              console.log(`[ALERT_ROUTER] ⚠️ Suppressing email job ${job.id}: owner email unavailable and no fallback found`);
+              this.log.warn(
+                { notificationJobId: job.id, projectId: job.project_id, reason: 'owner_email_unavailable' },
+                'notification job suppressed: no verified owner or fallback recipient',
+              );
               await this.mark(job, 'suppressed', startedAt, 'owner_email_unavailable');
               return 'suppressed';
             }
           }
         }
 
-        const queueName = env.ALERTING_V2_READ
-          ? 'connector.v2.email'
-          : `${CONNECTOR_JOBS.send}-email` as ConnectorJobName;
+        // Canonical V2 transport is the ONLY delivery path.
+        const queueName = connectorTransportQueue('email');
 
         const emailTransport: ManagedEmailJobData = {
           organizationId: job.organization_id,
@@ -128,25 +142,38 @@ export class AlertNotificationRouter {
           } as never,
         );
         await this.mark(job, 'queued', startedAt);
-        console.log(`[ALERT_ROUTER] 📬 Queued managed email job ${job.id} -> Queue: "${queueName}" | Recipient: "${job.recipient_ref}" | RecipientType: ${job.recipient_type}`);
+        this.log.info(
+          {
+            notificationJobId: job.id,
+            queue: queueName,
+            recipientType: job.recipient_type,
+            channelKind: 'email',
+          },
+          'managed email notification queued to canonical transport',
+        );
         return 'queued';
       }
 
       if (job.delivery_mode === 'EMAIL_ONLY_RESTRICTED') {
-        console.log(`[ALERT_ROUTER] ⚠️ Suppressing job ${job.id}: invalid restricted delivery contract`);
+        this.log.warn(
+          { notificationJobId: job.id, reason: 'invalid_restricted_delivery_contract' },
+          'notification job suppressed',
+        );
         await this.mark(job, 'suppressed', startedAt, 'invalid_restricted_delivery_contract');
         return 'suppressed';
       }
 
       if (!job.connector_id) {
-        console.log(`[ALERT_ROUTER] ⚠️ Suppressing job ${job.id}: missing connector ID`);
+        this.log.warn(
+          { notificationJobId: job.id, channelKind: job.channel_kind, reason: 'missing_connector' },
+          'notification job suppressed: no connector bound',
+        );
         await this.mark(job, 'suppressed', startedAt, 'missing_connector');
         return 'suppressed';
       }
 
-      const queueName = env.ALERTING_V2_READ
-        ? `connector.v2.${job.channel_kind}`
-        : `${CONNECTOR_JOBS.send}-${job.channel_kind}` as ConnectorJobName;
+      // Canonical V2 transport is the ONLY delivery path.
+      const queueName = connectorTransportQueue(job.channel_kind);
       const transport: ConnectorTransportJob = {
         organizationId: job.organization_id,
         notificationJobId: job.id,
@@ -161,14 +188,7 @@ export class AlertNotificationRouter {
       };
       await pgboss.send(
         queueName,
-        env.ALERTING_V2_READ
-          ? transport
-          : {
-              organizationId: job.organization_id,
-              connectorId: job.connector_id,
-              payload: job.payload,
-              routeId: job.route_id,
-            },
+        transport,
         {
           priority: CONNECTOR_PRIORITY[toConnectorSeverity(job.severity)] ?? job.priority,
           retryLimit: 0,
@@ -178,10 +198,17 @@ export class AlertNotificationRouter {
         } as never,
       );
       await this.mark(job, 'queued', startedAt);
-      console.log(`[ALERT_ROUTER] 📬 Queued connector job ${job.id} -> Queue: "${queueName}" | Connector: ${job.connector_id} | Channel: ${job.channel_kind}`);
+      this.log.info(
+        {
+          notificationJobId: job.id,
+          queue: queueName,
+          connectorId: job.connector_id,
+          channelKind: job.channel_kind,
+        },
+        'connector notification queued to canonical transport',
+      );
       return 'queued';
     } catch (err) {
-      console.error(`[ALERT_ROUTER] ❌ Notification job ${job.id} dispatch failed:`, err);
       await this.mark(job, 'failed', startedAt, err instanceof Error ? err.message : String(err));
       this.log.error({ err, notificationJobId: job.id }, 'Alert notification dispatch failed');
       return 'failed';

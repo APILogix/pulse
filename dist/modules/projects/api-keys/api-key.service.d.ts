@@ -1,16 +1,3 @@
-/**
- * API key business service.
- *
- * Flow:
- * 1. Authorize via project membership before any read/mutation.
- * 2. Enforce credential limits and lifecycle (`status` is authoritative).
- * 3. Mint key material in memory; persist only the hash + public key; return
- *    the full key exactly once.
- * 4. Record rotation workflow rows in `project_api_key_rotations`.
- * 5. Warm/evict the in-process LRU so ingestion resolves keys without a
- *    Postgres round trip. NO Redis.
- * 6. Write every sensitive lifecycle event to organization_audit_logs.
- */
 import type { FastifyBaseLogger } from "fastify";
 import type { OrganizationRepository } from "../../organization/repository.js";
 import type { OrganizationAuditService } from "../../organization/audit-logs/audit-logs.service.js";

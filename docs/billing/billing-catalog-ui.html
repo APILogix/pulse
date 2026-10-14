@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Pulse Billing Catalog</title>
+    <link rel="icon" href="data:," />
+    <link rel="stylesheet" href="./billing-catalog-ui.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <section class="hero">
+        <div>
+          <p class="eyebrow">Pulse billing catalog</p>
+          <h1>Plan catalog redesign console</h1>
+          <p class="lede">
+            Compare plan pricing, quotas, features, integrations, and the exact JSON payloads from the billing docs.
+          </p>
+        </div>
+        <div class="source-panel">
+          <label for="catalogSource">Catalog source</label>
+          <select id="catalogSource">
+            <option value="v2">Canonical v2 plans</option>
+            <option value="v3">Enterprise finite-quota v3</option>
+          </select>
+          <span id="catalogMeta">Loading catalog...</span>
+          <a class="catalog-json-link" href="./billing-catalog-redesign-v4.json" target="_blank" rel="noreferrer">Open proposed v4 JSON</a>
+        </div>
+      </section>
+
+      <section class="toolbar" aria-label="Billing catalog controls">
+        <div class="segmented" role="group" aria-label="Billing interval">
+          <button type="button" class="is-active" data-interval="monthly">Monthly</button>
+          <button type="button" data-interval="annual">Annual</button>
+        </div>
+        <div class="segmented" role="group" aria-label="Catalog section">
+          <button type="button" class="is-active" data-section="summary">Summary</button>
+          <button type="button" data-section="quotas">Quotas</button>
+          <button type="button" data-section="features">Features</button>
+          <button type="button" data-section="integrations">Integrations</button>
+          <button type="button" data-section="json">JSON</button>
+        </div>
+        <label class="search-label" for="catalogSearch">Search</label>
+        <input id="catalogSearch" type="search" placeholder="Find quota, feature, signal..." autocomplete="off" />
+      </section>
+
+      <section class="plans" id="planCards" aria-label="Plans"></section>
+
+      <dialog id="redesignDrawer" class="redesign-drawer" aria-labelledby="drawerTitle">
+        <div class="drawer-scrim" data-close-drawer></div>
+        <section class="drawer-sheet">
+          <header class="drawer-header">
+            <div>
+              <p class="eyebrow">Plan redesign · v3 proposal</p>
+              <h2 id="drawerTitle">Plan details</h2>
+              <p id="drawerSubtitle" class="drawer-subtitle"></p>
+            </div>
+            <div class="drawer-actions">
+              <button type="button" id="copyProposal">Copy plan JSON</button>
+              <button type="button" class="icon-button" id="closeDrawer" aria-label="Close plan redesign" title="Close">×</button>
+            </div>
+          </header>
+          <nav class="drawer-tabs" aria-label="Plan redesign views">
+            <button type="button" class="is-active" data-drawer-tab="redesign">Redesigned plan</button>
+            <button type="button" data-drawer-tab="enterprise">Unified Enterprise</button>
+            <button type="button" data-drawer-tab="changes">Changes to ship</button>
+          </nav>
+          <div id="drawerContent" class="drawer-content"></div>
+        </section>
+      </dialog>
+
+      <section class="detail-layout">
+        <article class="detail-panel">
+          <div class="panel-head">
+            <div>
+              <p class="eyebrow" id="activePlanTier">Plan</p>
+              <h2 id="activePlanName">Loading</h2>
+            </div>
+            <span class="price" id="activePlanPrice"></span>
+          </div>
+          <p id="activePlanDescription" class="description"></p>
+          <div id="summaryGrid" class="summary-grid"></div>
+          <div id="detailContent" class="detail-content"></div>
+        </article>
+
+        <aside class="json-panel">
+          <div class="panel-head compact">
+            <div>
+              <p class="eyebrow">Raw selected plan</p>
+              <h2>JSON browser</h2>
+            </div>
+            <button type="button" id="copyJson">Copy</button>
+          </div>
+          <pre id="jsonView">{}</pre>
+        </aside>
+      </section>
+    </main>
+
+    <script src="./billing-catalog-ui.js"></script>
+  </body>
+</html>

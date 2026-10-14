@@ -43,10 +43,14 @@ export default async function provisioningRoutes(fastify) {
         try {
             const { provider } = request.params;
             if (!isLinkableProvider(provider)) {
+                // Message corrected: `isLinkableProvider` accepts only google and
+                // github (see identity-link.config.ts), and no Microsoft passport
+                // strategy is ever registered. Advertising microsoft here caused
+                // clients to build UI for a provider this endpoint always rejects.
                 return reply.status(400).send({
                     error: {
                         code: 'VALIDATION_ERROR',
-                        message: 'Provider must be google, github, or microsoft',
+                        message: 'Provider must be google or github',
                     },
                 });
             }

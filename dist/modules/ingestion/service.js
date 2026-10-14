@@ -4,9 +4,9 @@
  * Request-path flow (fast, no heavy work):
  *   1. Envelope checks (object / apiKey / non-empty events / batch cap).
  *   2. Resolve project from the API key (LRU cache -> Postgres fallback),
- *      including billing plan tier and org-wide rate limits.
- *   3. Enforce project status, key permissions, project + org rate limits,
- *      and a cached org quota pre-check.
+ *      including billing plan tier.
+ *   3. Enforce project status, key permissions, and a cached org quota
+ *      pre-check.
  *   4. Plan-aware backpressure shedding driven by the ingest.* queue depth.
  *   5. BASIC per-event validation only (object, known SDK type, size cap) —
  *      full Zod normalization runs worker-side, never here.
@@ -21,24 +21,23 @@
  * worker processes.
  *
  * Hardening notes:
- *   - Rate limiters are sweeping, atomic, bounded token-buckets (no Map
- *     leak, no race window between read and increment).
  *   - Quota pre-check is cached (TTL INGESTION_QUOTA_CACHE_TTL_MS) and
  *     fail-open: a missing row or DB error never blocks ingestion.
  *   - Queue provisioning runs once per process behind a module-level
  *     promise; createQueue is idempotent so multi-process boot is safe.
  */
-import { createHash, randomUUID } from 'crypto';
+import { createHash } from 'crypto';
+import { v7 as uuidv7 } from 'uuid';
 import { env } from '../../config/env.js';
 import { logger } from '../../config/logger.js';
 import { apiKeyCache } from '../../config/lrucashe.js';
 import { syncApiKeyLookupToLogDbBestEffort, syncEnvironmentLookupToLogDbBestEffort, syncEnvironmentSdkConfigLookupToLogDbBestEffort, syncProjectLookupToLogDbBestEffort, } from '../../shared/logdb/lookup-sync.js';
 import { PostgresWriter } from './postgress.writter.js';
-import { IngestionRateLimiter } from './rate-limiter.js';
 import { UsageCounter } from './usage/usage-counter.js';
 import { SDK_EVENT_TYPES, normalizeSdkEnvironment, } from './pipeline/event-normalizer.js';
-import { enqueueIngestJobs, ingestQueueDepth, ingestQueueFor, jobPriority, normalizePlanTier, provisionIngestQueues, PLAN_WEIGHT, TYPE_URGENCY, } from './queue/ingest-queues.js';
+import { createEmptyQueueDepthSnapshot, enqueueIngestJobs, ingestQueueDepth, ingestQueueFor, jobPriority, normalizePlanTier, provisionIngestQueues, PLAN_WEIGHT, TYPE_URGENCY, } from './queue/ingest-queues.js';
 import { entitlementsService } from '../billing/entitlements/service.js';
+import { redisLookupCache } from '../../db/redis/lookup-cache.js';
 const svcLogger = logger.child({ component: 'ingestion-service' });
 function hashApiKey(apiKey) {
     return createHash('sha256').update(apiKey).digest('hex');
@@ -54,19 +53,28 @@ const QUOTA_CACHE_MAX_ENTRIES = 10_000;
 // ingest.* queue exactly once per process; races across processes are harmless.
 let provisioningPromise = null;
 let queuesProvisioned = false;
+let lastProvisionAttemptAt = 0;
+const PROVISION_RETRY_INTERVAL_MS = 5000;
 function ensureIngestQueuesProvisioned() {
-    if (!provisioningPromise) {
-        provisioningPromise = provisionIngestQueues()
-            .then(() => {
-            queuesProvisioned = true;
-        })
-            .catch((err) => {
-            queuesProvisioned = false;
-            provisioningPromise = null; // allow retry on the next request
-            svcLogger.error({ err }, 'ingest queue provisioning failed');
-            throw err;
-        });
+    if (queuesProvisioned)
+        return Promise.resolve();
+    if (provisioningPromise)
+        return provisioningPromise;
+    const now = Date.now();
+    if (now - lastProvisionAttemptAt < PROVISION_RETRY_INTERVAL_MS) {
+        return Promise.resolve();
     }
+    lastProvisionAttemptAt = now;
+    provisioningPromise = provisionIngestQueues()
+        .then(() => {
+        queuesProvisioned = true;
+    })
+        .catch((err) => {
+        queuesProvisioned = false;
+        provisioningPromise = null; // allow retry after interval
+        svcLogger.error({ err }, 'ingest queue provisioning failed');
+        throw err;
+    });
     return provisioningPromise;
 }
 function warmIngestQueuesProvisioned() {
@@ -83,8 +91,6 @@ export class IngestionService {
     pool;
     writer;
     sdkConfigService;
-    rateLimiter;
-    orgRateLimiter;
     usage;
     backpressure;
     replayMaxEvents;
@@ -96,17 +102,7 @@ export class IngestionService {
     // Cached queue-depth probe so request-path backpressure stays O(1). The
     // grouped scan on pgboss.job refreshes in the background; ingestion never
     // waits on this advisory signal.
-    cachedDepth = {
-        pending: 0,
-        ready: 0,
-        deferred: 0,
-        active: 0,
-        failed: 0,
-        deadLettered: 0,
-        oldestPendingAgeMs: null,
-        perQueue: [],
-        dlqPerQueue: [],
-    };
+    cachedDepth = createEmptyQueueDepthSnapshot();
     cachedDepthAt = 0;
     depthRefreshPromise = null;
     // Cached org quota reads (organization_usage_current_period), fail-open.
@@ -124,14 +120,6 @@ export class IngestionService {
         this.replayMaxEvents = config.replayMaxEvents ?? env.INGESTION_REPLAY_MAX_EVENTS;
         this.jobChunkSize = config.jobChunkSize ?? env.INGESTION_JOB_CHUNK_SIZE;
         this.jobMaxBytes = Math.max(MAX_EVENT_BYTES, config.jobMaxBytes ?? env.INGESTION_JOB_MAX_BYTES);
-        this.rateLimiter = new IngestionRateLimiter({
-            ttlMs: env.INGESTION_RATE_BUCKET_TTL_MS,
-            sweepIntervalMs: env.INGESTION_RATE_BUCKET_SWEEP_MS,
-        });
-        this.orgRateLimiter = new IngestionRateLimiter({
-            ttlMs: env.INGESTION_RATE_BUCKET_TTL_MS,
-            sweepIntervalMs: env.INGESTION_RATE_BUCKET_SWEEP_MS,
-        });
         // API-tier usage counter. Tier-1 (memory) + Tier-2 (UNLOGGED staging) only;
         // the worker tier drives the staging->durable rollup so the many API
         // cluster processes don't all contend on flush_usage_counters().
@@ -269,10 +257,21 @@ export class IngestionService {
             this.depthRefreshPromise = null;
         });
     }
-    /** Cached queue-depth probe (background refreshed at most every 1s). */
+    /**
+     * Cached queue-depth probe. Never awaits the probe: it returns the current
+     * snapshot immediately and kicks off a background refresh when stale, so the
+     * request path stays O(1).
+     *
+     * The TTL is configurable (INGESTION_QUEUE_DEPTH_CACHE_MS, default 3000ms)
+     * rather than the previous hardcoded 1000ms. The probe is a grouped scan over
+     * pgboss.job executed on the contended control pool, and it only feeds an
+     * ADVISORY shedding decision whose thresholds are 100k/250k jobs — a snapshot
+     * a couple of seconds old cannot change that verdict, so paying for it once
+     * per second per API process was wasted contention.
+     */
     async queueDepth() {
         const now = Date.now();
-        if (now - this.cachedDepthAt > 1000) {
+        if (now - this.cachedDepthAt > env.INGESTION_QUEUE_DEPTH_CACHE_MS) {
             this.refreshQueueDepth();
         }
         return this.cachedDepth;
@@ -381,38 +380,38 @@ export class IngestionService {
      * SDK event types in a single request. Retained for backward compatibility;
      * new SDK transports use the per-signal typed routes via ingestTyped().
      */
-    async ingestBatch(req, apiKey) {
-        return this.processIngest(req, null, apiKey);
+    async ingestBatch(req, apiKey, clientHints) {
+        return this.processIngest(req, null, apiKey, clientHints);
     }
     /**
      * Public typed-ingestion entrypoint used by the data-driven route table
      * (route-table.ts). It is a thin pass-through to the single policy boundary
-     * `processIngest`, so API-key validation, quota checks, rate limits,
+     * `processIngest`, so API-key validation, quota checks, admission control,
      * backpressure, per-event type enforcement, and queue-priority math are never
      * duplicated per endpoint. A typed route accepts ONLY its declared event
      * family; any foreign event fails the whole batch with INVALID_EVENT_TYPE.
      */
-    async ingestTyped(req, apiKey, type) {
-        return this.processIngest(req, type, apiKey);
+    async ingestTyped(req, apiKey, type, clientHints) {
+        return this.processIngest(req, type, apiKey, clientHints);
     }
     // Named aliases retained for the legacy `POST /v1/ingest/<type>` routes.
-    async ingestRequests(req, apiKey) {
-        return this.ingestTyped(req, apiKey, 'request');
+    async ingestRequests(req, apiKey, clientHints) {
+        return this.ingestTyped(req, apiKey, 'request', clientHints);
     }
-    async ingestErrors(req, apiKey) {
-        return this.ingestTyped(req, apiKey, 'error');
+    async ingestErrors(req, apiKey, clientHints) {
+        return this.ingestTyped(req, apiKey, 'error', clientHints);
     }
-    async ingestLogs(req, apiKey) {
-        return this.ingestTyped(req, apiKey, 'log');
+    async ingestLogs(req, apiKey, clientHints) {
+        return this.ingestTyped(req, apiKey, 'log', clientHints);
     }
-    async ingestMetrics(req, apiKey) {
-        return this.ingestTyped(req, apiKey, 'metric');
+    async ingestMetrics(req, apiKey, clientHints) {
+        return this.ingestTyped(req, apiKey, 'metric', clientHints);
     }
     /**
      * Central pipeline — a thin accept-and-enqueue path. `expectedType` (when
      * set) enforces a typed route: every event must match it or be rejected.
      */
-    async processIngest(req, expectedType, apiKey) {
+    async processIngest(req, expectedType, apiKey, clientHints) {
         const startedAt = Date.now();
         const timings = {};
         // 1. Envelope checks.
@@ -428,7 +427,7 @@ export class IngestionService {
         if (events.length > this.maxBatchSize)
             throw new Error('BATCH_TOO_LARGE');
         timings.envelopeMs = elapsedSince(envelopeStartedAt);
-        // 2. Project resolution (+ plan tier, org rate limits).
+        // 2. Project resolution (+ plan tier).
         const projectLookupStartedAt = Date.now();
         const project = await this.resolveProject(apiKey);
         timings.projectLookupMs = elapsedSince(projectLookupStartedAt);
@@ -448,15 +447,8 @@ export class IngestionService {
         const authzStartedAt = Date.now();
         this.assertKeyCanUseEndpoint(project, expectedType);
         timings.authzMs = elapsedSince(authzStartedAt);
-        // 4. Rate limits: project-scoped AND org-wide (noisy-neighbor guard).
-        const rateLimitStartedAt = Date.now();
-        const decision = this.rateLimiter.tryConsume(project.id, project.rateLimitPerSecond, project.rateLimitPerMinute, events.length);
-        if (!decision.allowed)
-            throw new Error('RATE_LIMIT_EXCEEDED');
-        const orgDecision = this.orgRateLimiter.tryConsume(project.orgId, project.orgRateLimitPerSecond, project.orgRateLimitPerMinute, events.length);
-        if (!orgDecision.allowed)
-            throw new Error('RATE_LIMIT_EXCEEDED');
-        timings.rateLimitMs = elapsedSince(rateLimitStartedAt);
+        // 4. Route-level rate limiting is currently disabled for ingestion.
+        timings.rateLimitMs = 0;
         // 5. Quota pre-check (cached, fail-open).
         const quotaStartedAt = Date.now();
         this.assertQuotaAvailable(project.orgId);
@@ -473,7 +465,7 @@ export class IngestionService {
         const queueDepthStartedAt = Date.now();
         const depth = await this.queueDepth();
         timings.queueDepthMs = elapsedSince(queueDepthStartedAt);
-        const batchId = randomUUID();
+        const batchId = uuidv7();
         const receivedAt = new Date().toISOString();
         const errors = [];
         const acceptedByType = new Map();
@@ -555,18 +547,20 @@ export class IngestionService {
             jobsBuilt = jobs.length;
             timings.jobBuildMs = elapsedSince(jobBuildStartedAt);
             const submittedEvents = jobs.reduce((n, job) => n + job.payload.events.length, 0);
-            svcLogger.debug({
-                batchId,
-                expectedType: expectedType ?? 'mixed',
-                eventTypes: Object.fromEntries([...acceptedByType.entries()].map(([type, list]) => [type, list.length])),
-                queues: jobs.map((job) => ({
-                    queue: job.queue,
-                    eventType: job.payload.eventType,
-                    events: job.payload.events.length,
-                    bytes: job.payload.events.reduce((sum, event) => sum + this.eventBytes(event), 0),
-                })),
-                submittedEvents,
-            }, 'ingestion events queued for workers');
+            if (svcLogger.isLevelEnabled('debug')) {
+                svcLogger.debug({
+                    batchId,
+                    expectedType: expectedType ?? 'mixed',
+                    eventTypes: Object.fromEntries([...acceptedByType.entries()].map(([type, list]) => [type, list.length])),
+                    queues: jobs.map((job) => ({
+                        queue: job.queue,
+                        eventType: job.payload.eventType,
+                        events: job.payload.events.length,
+                        bytes: job.payload.metadata.batchBytes ?? 0,
+                    })),
+                    submittedEvents,
+                }, 'ingestion events queued for workers');
+            }
             const enqueueStartedAt = Date.now();
             let result;
             try {
@@ -644,19 +638,41 @@ export class IngestionService {
             enqueueQueues,
             ...timings,
         }, 'ingestion admission profile');
-        const nextMinuteMs = (Math.floor(Date.now() / 60_000) + 1) * 60_000;
         const response = {
             success: true,
             accepted,
             rejected: errors.length,
             batchId,
             limits: {
-                remaining: decision.perMinuteRemaining,
-                resetAt: nextMinuteMs,
+                remaining: Number.MAX_SAFE_INTEGER,
+                resetAt: 0,
             },
         };
         if (errors.length > 0)
             response.errors = errors;
+        if (clientHints) {
+            try {
+                // Tier-0 L1 synchronous fast-path (< 5 microseconds, zero event loop blocking)
+                const cachedRemote = redisLookupCache.getRemoteConfigL1(project.id, environment);
+                if (!cachedRemote) {
+                    // Asynchronously warm L1 for future batches without blocking current response
+                    void redisLookupCache.getRemoteConfig(project.id, environment).catch(() => { });
+                }
+                else {
+                    const currentRev = cachedRemote.version;
+                    const currentHash = cachedRemote.configHash;
+                    const isOutdatedRev = typeof clientHints.configRevision === 'number' && clientHints.configRevision < currentRev;
+                    const isOutdatedHash = typeof clientHints.configHash === 'string' && clientHints.configHash !== currentHash && clientHints.configHash !== cachedRemote.etag;
+                    if (isOutdatedRev || isOutdatedHash) {
+                        response.config_u = true;
+                        response.change = true;
+                    }
+                }
+            }
+            catch {
+                // Non-blocking: fail open, do not disrupt telemetry admission
+            }
+        }
         return response;
     }
     /**
@@ -671,7 +687,7 @@ export class IngestionService {
             let chunkBytes = 0;
             for (const item of list) {
                 if (chunk.length > 0 && (chunk.length >= this.jobChunkSize || chunkBytes + item.bytes > this.jobMaxBytes)) {
-                    jobs.push(this.buildJob(params, type, chunk));
+                    jobs.push(this.buildJob(params, type, chunk, chunkBytes));
                     chunk = [];
                     chunkBytes = 0;
                 }
@@ -679,12 +695,12 @@ export class IngestionService {
                 chunkBytes += item.bytes;
             }
             if (chunk.length > 0) {
-                jobs.push(this.buildJob(params, type, chunk));
+                jobs.push(this.buildJob(params, type, chunk, chunkBytes));
             }
         }
         return jobs;
     }
-    buildJob(params, type, events) {
+    buildJob(params, type, events, batchBytes) {
         const metadata = {
             batchId: params.batchId,
             apiKeyId: params.apiKeyId,
@@ -693,6 +709,7 @@ export class IngestionService {
             receivedAt: params.receivedAt,
             environment: params.environment,
             deferCount: 0,
+            batchBytes,
             projectSlug: params.projectSlug,
             projectName: params.projectName,
             orgSlug: params.orgSlug,
@@ -722,7 +739,7 @@ export class IngestionService {
     /** Best-effort stable id for a single event in a batch. */
     extractEventId(raw) {
         if (typeof raw !== 'object' || raw === null)
-            return randomUUID();
+            return uuidv7();
         const r = raw;
         if (typeof r.eventId === 'string' && r.eventId.length > 0 && r.eventId.length <= 128) {
             return r.eventId;
@@ -730,7 +747,7 @@ export class IngestionService {
         if (typeof r.requestId === 'string' && r.requestId.length > 0 && r.requestId.length <= 128) {
             return r.requestId;
         }
-        return randomUUID();
+        return uuidv7();
     }
     assertKeyCanUseEndpoint(project, expectedType) {
         if (!project.permissions.includes('ingest:write')) {
@@ -801,8 +818,9 @@ export class IngestionService {
                 deadLettered,
             },
             perQueue: depth.perQueue,
-            rateLimiterEntries: this.rateLimiter.size(),
-            orgRateLimiterEntries: this.orgRateLimiter.size(),
+            perEventType: depth.perEventType,
+            rateLimiterEntries: 0,
+            orgRateLimiterEntries: 0,
             quotaCacheEntries: this.quotaCache.size,
             backpressure: {
                 highWater: this.backpressure.highWater,
@@ -816,11 +834,12 @@ export class IngestionService {
         if (!project)
             throw new Error('INVALID_API_KEY');
         return {
-            perSecond: project.rateLimitPerSecond,
-            perMinute: project.rateLimitPerMinute,
+            enabled: false,
+            perSecond: null,
+            perMinute: null,
             maxBatchSize: this.maxBatchSize,
-            orgPerSecond: project.orgRateLimitPerSecond,
-            orgPerMinute: project.orgRateLimitPerMinute,
+            orgPerSecond: null,
+            orgPerMinute: null,
             planTier: project.planTier,
         };
     }
@@ -900,7 +919,7 @@ export class IngestionService {
                 eventType: stored.eventType,
                 events: stored.events,
                 metadata: {
-                    batchId: typeof meta.batchId === 'string' ? meta.batchId : randomUUID(),
+                    batchId: typeof meta.batchId === 'string' ? meta.batchId : uuidv7(),
                     apiKeyId: typeof meta.apiKeyId === 'string' ? meta.apiKeyId : '',
                     planTier,
                     receivedAt: new Date().toISOString(),
@@ -939,7 +958,7 @@ export class IngestionService {
                 eventType,
                 events,
                 metadata: {
-                    batchId: randomUUID(),
+                    batchId: uuidv7(),
                     apiKeyId: '',
                     planTier: normalizePlanTier(null),
                     receivedAt: new Date().toISOString(),
@@ -987,7 +1006,7 @@ export class IngestionService {
             throw new Error('INVALID_ENVIRONMENT');
         const replayEnvironment = requestedEnvironment ?? undefined;
         const events = await this.writer.getEventsForReplay(req.projectId, req.startTime, req.endTime, req.eventTypes, this.replayMaxEvents, replayEnvironment);
-        const replayId = randomUUID();
+        const replayId = uuidv7();
         if (events.length === 0)
             return { replayId, queued: 0 };
         // Resolve the org's plan tier for priority math (admin path: no API key).
@@ -1042,8 +1061,6 @@ export class IngestionService {
     }
     /** Drain in-process state. The queue is durable in Postgres. */
     async shutdown() {
-        this.rateLimiter.dispose();
-        this.orgRateLimiter.dispose();
         this.quotaCache.clear();
         await this.usage.stop();
     }
@@ -1066,21 +1083,14 @@ export class IngestionService {
         const params = [projectId];
         if (counterType)
             params.push(counterType);
-        const r = await this.pool.query(`SELECT metric.counter_type,
-              SUM(metric.value)::text AS total,
-              MAX(usage.bucket)::text AS period_start
+        const r = await this.pool.query(`SELECT usage.counter_type,
+              SUM(usage.total_value)::text AS total,
+              MAX(usage.period_start)::text AS period_start
          FROM project_usage_realtime usage
-         CROSS JOIN LATERAL (VALUES
-           ('total_events', usage.total_events::numeric),
-           ('errors', usage.errors::numeric),
-           ('requests', usage.requests::numeric),
-           ('total_bytes', usage.total_bytes::numeric),
-           ('rate_limit_usage', usage.rate_limit_usage::numeric)
-         ) metric(counter_type, value)
         WHERE usage.project_id = $1
-          ${counterType ? "AND metric.counter_type = $2" : ""}
-        GROUP BY metric.counter_type
-        ORDER BY metric.counter_type`, params);
+          ${counterType ? "AND usage.counter_type = $2" : ""}
+        GROUP BY usage.counter_type
+        ORDER BY usage.counter_type`, params);
         return r.rows.map((row) => ({
             counterType: row.counter_type,
             total: Number(row.total ?? 0),

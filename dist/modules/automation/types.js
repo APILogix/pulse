@@ -66,46 +66,88 @@ export const TRIGGER_TYPES = [
 // ═══════════════════════════════════════════════════════════════════════════════
 // ACTION TYPES
 // ═══════════════════════════════════════════════════════════════════════════════
+/**
+ * Supported automation action types.
+ *
+ * Every type listed here either performs a real side effect, or fails explicitly
+ * with INTEGRATION_NOT_CONFIGURED when its backing integration is absent.
+ * No action type in this list silently pretends to succeed.
+ *
+ * Nine action types were removed (see docs/automationv2/24-action-inventory-and-decisions.md)
+ * because they had no backing entity in the schema, duplicated another action, or
+ * were unsafe to expose to tenant-authored automation:
+ *   runbook.open, runbook.step.create      -> no runbook entity exists anywhere
+ *   status_page.update                     -> no status-page subsystem exists
+ *   release.guard.warn                     -> duplicate of notification.send
+ *   release.guard.pause                    -> project_releases is append-only; nothing to pause
+ *   retention.archive                      -> platform-level scheduled concern, not per-tenant
+ *   retention.purge_request                -> irreversible data deletion must never be automatable
+ *   quota.throttle_recommend               -> advisory duplicate of quota.notify
+ *   alert.severity.change                  -> conflicts with the alerting decision engine, which
+ *                                             owns severity and only escalates (GREATEST)
+ */
 export const ACTION_TYPES = [
+    // ── Real side effects, backed by existing infrastructure ──
     'notification.send',
-    'incident.create',
-    'incident.assign_owner',
-    'incident.timeline.append',
-    'incident.postmortem.generate_draft',
-    'ticket.github.create',
-    'ticket.jira.create',
-    'pagerduty.trigger',
-    'runbook.open',
-    'runbook.step.create',
-    'status_page.update',
-    'approval.request',
-    'connector.delivery.retry',
-    'alert.severity.change',
-    'alert.silence.create',
-    'ai.summary.generate',
-    'ai.root_cause.generate',
-    'report.export',
-    'rollback.recommend',
-    'release.guard.warn',
-    'release.guard.pause',
     'quota.notify',
-    'quota.throttle_recommend',
-    'retention.archive',
-    'retention.purge_request',
     'security.notify',
     'webhook.call',
+    'pagerduty.trigger',
+    'connector.delivery.retry',
+    'alert.silence.create',
+    'incident.create',
+    'incident.timeline.append',
+    'incident.assign_owner',
+    'approval.request',
+    'rollback.recommend',
     'noop',
+    // ── Require an external integration; fail explicitly when unavailable ──
+    'ai.summary.generate',
+    'ai.root_cause.generate',
+    'incident.postmortem.generate_draft',
+    'report.export',
+    'ticket.github.create',
+    'ticket.jira.create',
 ];
+/**
+ * Action types that require a configured external integration and have no
+ * in-product implementation. When the integration is not injected these MUST
+ * fail with INTEGRATION_NOT_CONFIGURED rather than reporting success.
+ */
+export const INTEGRATION_DEPENDENT_ACTIONS = new Set([
+    'ai.summary.generate',
+    'ai.root_cause.generate',
+    'incident.postmortem.generate_draft',
+    'report.export',
+    'ticket.github.create',
+    'ticket.jira.create',
+]);
 // ═══════════════════════════════════════════════════════════════════════════════
 // DANGEROUS ACTIONS (require approval by default)
 // ═══════════════════════════════════════════════════════════════════════════════
-export const DANGEROUS_ACTIONS = new Set([
-    'release.guard.pause',
-    'retention.purge_request',
-    'quota.throttle_recommend',
-    'status_page.update',
-    'webhook.call', // when external URL is not allowlisted
-]);
+/**
+ * Actions requiring explicit human approval before execution.
+ *
+ * Now empty, and that is a deliberate, narrower-blast-radius design rather than a
+ * relaxation of safety. The four previously-listed destructive actions
+ * (release.guard.pause, retention.purge_request, quota.throttle_recommend,
+ * status_page.update) have been removed from the product entirely, so they can no
+ * longer be requested at all — which is strictly safer than gating them.
+ *
+ * webhook.call was also listed here. It is now implemented as connector-referenced
+ * only: it can target exclusively a `webhook` connector the organization already
+ * created, whose URL is SSRF-validated at creation and again on every send
+ * (connectors/shared/http.ts -> validateWebhookUrl), and whose credentials live
+ * encrypted in connector_credentials, never in workflow config. Because the
+ * destination is pre-approved infrastructure rather than an arbitrary URL supplied
+ * by the rule author, per-run approval added friction without adding safety.
+ *
+ * Approval enforcement itself remains fully wired: any action whose risk resolves
+ * to high/critical still requires approval (see ActionRunnerRegistry.execute), so
+ * adding a genuinely dangerous action here — or marking one high-risk in
+ * automation_actions.risk_level — re-engages the gate immediately.
+ */
+export const DANGEROUS_ACTIONS = new Set([]);
 // ═══════════════════════════════════════════════════════════════════════════════
 // CONDITION OPERATORS
 // ═══════════════════════════════════════════════════════════════════════════════

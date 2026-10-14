@@ -26,7 +26,8 @@
  *   - Queue provisioning runs once per process behind a module-level
  *     promise; createQueue is idempotent so multi-process boot is safe.
  */
-import { createHash, randomUUID } from 'crypto';
+import { createHash } from 'crypto';
+import { v7 as uuidv7 } from 'uuid';
 import type { Pool } from 'pg';
 
 import { env } from '../../config/env.js';
@@ -46,6 +47,7 @@ import {
   type SdkEventType,
 } from './pipeline/event-normalizer.js';
 import {
+  createEmptyQueueDepthSnapshot,
   enqueueIngestJobs,
   ingestQueueDepth,
   ingestQueueFor,
@@ -74,6 +76,12 @@ import type {
   RemoteSdkConfigService,
 } from '../projects/sdk-config/sdk-config.service.js';
 import { entitlementsService } from '../billing/entitlements/service.js';
+import { redisLookupCache } from '../../db/redis/lookup-cache.js';
+
+export interface IngestClientHints {
+  configRevision?: number;
+  configHash?: string;
+}
 
 const svcLogger = logger.child({ component: 'ingestion-service' });
 
@@ -95,20 +103,30 @@ const QUOTA_CACHE_MAX_ENTRIES = 10_000;
 // ingest.* queue exactly once per process; races across processes are harmless.
 let provisioningPromise: Promise<void> | null = null;
 let queuesProvisioned = false;
+let lastProvisionAttemptAt = 0;
+const PROVISION_RETRY_INTERVAL_MS = 5000;
 
 function ensureIngestQueuesProvisioned(): Promise<void> {
-  if (!provisioningPromise) {
-    provisioningPromise = provisionIngestQueues()
-      .then(() => {
-        queuesProvisioned = true;
-      })
-      .catch((err) => {
-        queuesProvisioned = false;
-        provisioningPromise = null; // allow retry on the next request
-        svcLogger.error({ err }, 'ingest queue provisioning failed');
-        throw err;
-      });
+  if (queuesProvisioned) return Promise.resolve();
+  if (provisioningPromise) return provisioningPromise;
+
+  const now = Date.now();
+  if (now - lastProvisionAttemptAt < PROVISION_RETRY_INTERVAL_MS) {
+    return Promise.resolve();
   }
+  lastProvisionAttemptAt = now;
+
+  provisioningPromise = provisionIngestQueues()
+    .then(() => {
+      queuesProvisioned = true;
+    })
+    .catch((err) => {
+      queuesProvisioned = false;
+      provisioningPromise = null; // allow retry after interval
+      svcLogger.error({ err }, 'ingest queue provisioning failed');
+      throw err;
+    });
+
   return provisioningPromise;
 }
 
@@ -205,17 +223,7 @@ export class IngestionService {
   // Cached queue-depth probe so request-path backpressure stays O(1). The
   // grouped scan on pgboss.job refreshes in the background; ingestion never
   // waits on this advisory signal.
-  private cachedDepth: IngestQueueDepthSnapshot = {
-    pending: 0,
-    ready: 0,
-    deferred: 0,
-    active: 0,
-    failed: 0,
-    deadLettered: 0,
-    oldestPendingAgeMs: null,
-    perQueue: [],
-    dlqPerQueue: [],
-  };
+  private cachedDepth: IngestQueueDepthSnapshot = createEmptyQueueDepthSnapshot();
   private cachedDepthAt = 0;
   private depthRefreshPromise: Promise<void> | null = null;
 
@@ -386,10 +394,21 @@ export class IngestionService {
       });
   }
 
-  /** Cached queue-depth probe (background refreshed at most every 1s). */
+  /**
+   * Cached queue-depth probe. Never awaits the probe: it returns the current
+   * snapshot immediately and kicks off a background refresh when stale, so the
+   * request path stays O(1).
+   *
+   * The TTL is configurable (INGESTION_QUEUE_DEPTH_CACHE_MS, default 3000ms)
+   * rather than the previous hardcoded 1000ms. The probe is a grouped scan over
+   * pgboss.job executed on the contended control pool, and it only feeds an
+   * ADVISORY shedding decision whose thresholds are 100k/250k jobs — a snapshot
+   * a couple of seconds old cannot change that verdict, so paying for it once
+   * per second per API process was wasted contention.
+   */
   private async queueDepth(): Promise<IngestQueueDepthSnapshot> {
     const now = Date.now();
-    if (now - this.cachedDepthAt > 1000) {
+    if (now - this.cachedDepthAt > env.INGESTION_QUEUE_DEPTH_CACHE_MS) {
       this.refreshQueueDepth();
     }
     return this.cachedDepth;
@@ -506,8 +525,8 @@ export class IngestionService {
    * SDK event types in a single request. Retained for backward compatibility;
    * new SDK transports use the per-signal typed routes via ingestTyped().
    */
-  async ingestBatch(req: IngestRequest, apiKey: string): Promise<IngestResponse> {
-    return this.processIngest(req, null, apiKey);
+  async ingestBatch(req: IngestRequest, apiKey: string, clientHints?: IngestClientHints): Promise<IngestResponse> {
+    return this.processIngest(req, null, apiKey, clientHints);
   }
 
   /**
@@ -522,22 +541,23 @@ export class IngestionService {
     req: IngestRequest,
     apiKey: string,
     type: SdkEventType,
+    clientHints?: IngestClientHints,
   ): Promise<IngestResponse> {
-    return this.processIngest(req, type, apiKey);
+    return this.processIngest(req, type, apiKey, clientHints);
   }
 
   // Named aliases retained for the legacy `POST /v1/ingest/<type>` routes.
-  async ingestRequests(req: IngestRequest, apiKey: string): Promise<IngestResponse> {
-    return this.ingestTyped(req, apiKey, 'request');
+  async ingestRequests(req: IngestRequest, apiKey: string, clientHints?: IngestClientHints): Promise<IngestResponse> {
+    return this.ingestTyped(req, apiKey, 'request', clientHints);
   }
-  async ingestErrors(req: IngestRequest, apiKey: string): Promise<IngestResponse> {
-    return this.ingestTyped(req, apiKey, 'error');
+  async ingestErrors(req: IngestRequest, apiKey: string, clientHints?: IngestClientHints): Promise<IngestResponse> {
+    return this.ingestTyped(req, apiKey, 'error', clientHints);
   }
-  async ingestLogs(req: IngestRequest, apiKey: string): Promise<IngestResponse> {
-    return this.ingestTyped(req, apiKey, 'log');
+  async ingestLogs(req: IngestRequest, apiKey: string, clientHints?: IngestClientHints): Promise<IngestResponse> {
+    return this.ingestTyped(req, apiKey, 'log', clientHints);
   }
-  async ingestMetrics(req: IngestRequest, apiKey: string): Promise<IngestResponse> {
-    return this.ingestTyped(req, apiKey, 'metric');
+  async ingestMetrics(req: IngestRequest, apiKey: string, clientHints?: IngestClientHints): Promise<IngestResponse> {
+    return this.ingestTyped(req, apiKey, 'metric', clientHints);
   }
 
   /**
@@ -548,6 +568,7 @@ export class IngestionService {
     req: IngestRequest,
     expectedType: SdkEventType | null,
     apiKey: string,
+    clientHints?: IngestClientHints,
   ): Promise<IngestResponse> {
     const startedAt = Date.now();
     const timings: Record<string, number> = {};
@@ -602,7 +623,7 @@ export class IngestionService {
     const depth = await this.queueDepth();
     timings.queueDepthMs = elapsedSince(queueDepthStartedAt);
 
-    const batchId = randomUUID();
+    const batchId = uuidv7();
     const receivedAt = new Date().toISOString();
     const errors: Array<{ eventId: string; reason: string }> = [];
     const acceptedByType = new Map<SdkEventType, AcceptedIngestEvent[]>();
@@ -698,23 +719,25 @@ export class IngestionService {
       jobsBuilt = jobs.length;
       timings.jobBuildMs = elapsedSince(jobBuildStartedAt);
       const submittedEvents = jobs.reduce((n, job) => n + job.payload.events.length, 0);
-      svcLogger.debug(
-        {
-          batchId,
-          expectedType: expectedType ?? 'mixed',
-          eventTypes: Object.fromEntries(
-            [...acceptedByType.entries()].map(([type, list]) => [type, list.length]),
-          ),
-          queues: jobs.map((job) => ({
-            queue: job.queue,
-            eventType: job.payload.eventType,
-            events: job.payload.events.length,
-            bytes: job.payload.events.reduce<number>((sum, event) => sum + this.eventBytes(event), 0),
-          })),
-          submittedEvents,
-        },
-        'ingestion events queued for workers',
-      );
+      if (svcLogger.isLevelEnabled('debug')) {
+        svcLogger.debug(
+          {
+            batchId,
+            expectedType: expectedType ?? 'mixed',
+            eventTypes: Object.fromEntries(
+              [...acceptedByType.entries()].map(([type, list]) => [type, list.length]),
+            ),
+            queues: jobs.map((job) => ({
+              queue: job.queue,
+              eventType: job.payload.eventType,
+              events: job.payload.events.length,
+              bytes: job.payload.metadata.batchBytes ?? 0,
+            })),
+            submittedEvents,
+          },
+          'ingestion events queued for workers',
+        );
+      }
       const enqueueStartedAt = Date.now();
       let result;
       try {
@@ -817,6 +840,29 @@ export class IngestionService {
       },
     };
     if (errors.length > 0) response.errors = errors;
+
+    if (clientHints) {
+      try {
+        // Tier-0 L1 synchronous fast-path (< 5 microseconds, zero event loop blocking)
+        const cachedRemote = redisLookupCache.getRemoteConfigL1(project.id, environment);
+        if (!cachedRemote) {
+          // Asynchronously warm L1 for future batches without blocking current response
+          void redisLookupCache.getRemoteConfig(project.id, environment).catch(() => {});
+        } else {
+          const currentRev = cachedRemote.version;
+          const currentHash = cachedRemote.configHash;
+          const isOutdatedRev = typeof clientHints.configRevision === 'number' && clientHints.configRevision < currentRev;
+          const isOutdatedHash = typeof clientHints.configHash === 'string' && clientHints.configHash !== currentHash && clientHints.configHash !== cachedRemote.etag;
+          if (isOutdatedRev || isOutdatedHash) {
+            response.config_u = true;
+            response.change = true;
+          }
+        }
+      } catch {
+        // Non-blocking: fail open, do not disrupt telemetry admission
+      }
+    }
+
     return response;
   }
 
@@ -847,7 +893,7 @@ export class IngestionService {
       let chunkBytes = 0;
       for (const item of list) {
         if (chunk.length > 0 && (chunk.length >= this.jobChunkSize || chunkBytes + item.bytes > this.jobMaxBytes)) {
-          jobs.push(this.buildJob(params, type, chunk));
+          jobs.push(this.buildJob(params, type, chunk, chunkBytes));
           chunk = [];
           chunkBytes = 0;
         }
@@ -855,7 +901,7 @@ export class IngestionService {
         chunkBytes += item.bytes;
       }
       if (chunk.length > 0) {
-        jobs.push(this.buildJob(params, type, chunk));
+        jobs.push(this.buildJob(params, type, chunk, chunkBytes));
       }
     }
     return jobs;
@@ -865,6 +911,7 @@ export class IngestionService {
     params: Omit<Parameters<IngestionService['buildJobs']>[0], 'byType'>,
     type: SdkEventType,
     events: unknown[],
+    batchBytes?: number,
   ): { queue: string; payload: IngestJobPayload; priority: number } {
     const metadata: IngestJobMetadata = {
       batchId: params.batchId,
@@ -874,6 +921,7 @@ export class IngestionService {
       receivedAt: params.receivedAt,
       environment: params.environment,
       deferCount: 0,
+      batchBytes,
       projectSlug: params.projectSlug,
       projectName: params.projectName,
       orgSlug: params.orgSlug,
@@ -903,7 +951,7 @@ export class IngestionService {
 
   /** Best-effort stable id for a single event in a batch. */
   private extractEventId(raw: unknown): string {
-    if (typeof raw !== 'object' || raw === null) return randomUUID();
+    if (typeof raw !== 'object' || raw === null) return uuidv7();
     const r = raw as { eventId?: unknown; requestId?: unknown };
     if (typeof r.eventId === 'string' && r.eventId.length > 0 && r.eventId.length <= 128) {
       return r.eventId;
@@ -911,7 +959,7 @@ export class IngestionService {
     if (typeof r.requestId === 'string' && r.requestId.length > 0 && r.requestId.length <= 128) {
       return r.requestId;
     }
-    return randomUUID();
+    return uuidv7();
   }
 
   private assertKeyCanUseEndpoint(project: ResolvedProject, expectedType: SdkEventType | null): void {
@@ -987,6 +1035,7 @@ export class IngestionService {
         deadLettered,
       },
       perQueue: depth.perQueue,
+      perEventType: depth.perEventType,
       rateLimiterEntries: 0,
       orgRateLimiterEntries: 0,
       quotaCacheEntries: this.quotaCache.size,
@@ -1102,7 +1151,7 @@ export class IngestionService {
         eventType: stored.eventType as SdkEventType,
         events: stored.events,
         metadata: {
-          batchId: typeof meta.batchId === 'string' ? meta.batchId : randomUUID(),
+          batchId: typeof meta.batchId === 'string' ? meta.batchId : uuidv7(),
           apiKeyId: typeof meta.apiKeyId === 'string' ? meta.apiKeyId : '',
           planTier,
           receivedAt: new Date().toISOString(),
@@ -1148,7 +1197,7 @@ export class IngestionService {
         eventType,
         events,
         metadata: {
-          batchId: randomUUID(),
+          batchId: uuidv7(),
           apiKeyId: '',
           planTier: normalizePlanTier(null),
           receivedAt: new Date().toISOString(),
@@ -1210,7 +1259,7 @@ export class IngestionService {
       this.replayMaxEvents,
       replayEnvironment,
     );
-    const replayId = randomUUID();
+    const replayId = uuidv7();
     if (events.length === 0) return { replayId, queued: 0 };
 
     // Resolve the org's plan tier for priority math (admin path: no API key).
@@ -1298,21 +1347,14 @@ export class IngestionService {
       total: string;
       period_start: string | null;
     }>(
-      `SELECT metric.counter_type,
-              SUM(metric.value)::text AS total,
-              MAX(usage.bucket)::text AS period_start
+      `SELECT usage.counter_type,
+              SUM(usage.total_value)::text AS total,
+              MAX(usage.period_start)::text AS period_start
          FROM project_usage_realtime usage
-         CROSS JOIN LATERAL (VALUES
-           ('total_events', usage.total_events::numeric),
-           ('errors', usage.errors::numeric),
-           ('requests', usage.requests::numeric),
-           ('total_bytes', usage.total_bytes::numeric),
-           ('rate_limit_usage', usage.rate_limit_usage::numeric)
-         ) metric(counter_type, value)
         WHERE usage.project_id = $1
-          ${counterType ? "AND metric.counter_type = $2" : ""}
-        GROUP BY metric.counter_type
-        ORDER BY metric.counter_type`,
+          ${counterType ? "AND usage.counter_type = $2" : ""}
+        GROUP BY usage.counter_type
+        ORDER BY usage.counter_type`,
       params,
     );
     return r.rows.map((row) => ({

@@ -17,15 +17,8 @@ export function toOrgDto(row: OrganizationRow): OrganizationDto {
     id: row.id,
     name: row.name,
     slug: row.slug,
-    description: row.description,
     logoUrl: row.logo_url,
-    websiteUrl: row.website_url,
-    industry: row.industry,
-    companySize: row.company_size,
-    country: row.country,
     timezone: row.timezone,
-    billingEmail: row.billing_email,
-    supportEmail: row.support_email,
     ownerUserId: row.owner_user_id,
     status: row.status,
     createdAt: row.created_at,
@@ -73,7 +66,7 @@ export class CoreService {
     return org;
   }
 
-  async createOrganization(meta: RequestMeta, data: { name: string; slug?: string; description?: string; industry?: string; companySize?: string; country?: string; timezone?: string; billingEmail?: string }) {
+  async createOrganization(meta: RequestMeta, data: { name: string; slug?: string; timezone?: string }) {
     const provisioned = await this.deps.repository.withTransaction(async (client) => {
       // 1. Create organization (status is synced to default billing below)
       const created = await this.deps.repository.createOrg(client, data.name, meta.actorUserId, data, 'trialing');

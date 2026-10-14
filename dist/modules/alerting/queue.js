@@ -1,6 +1,7 @@
-import { pgboss } from '../../lib/pgboss.js';
+import { pgmq } from '../../lib/pgmq.js';
+import { PgmqWorker } from '../../lib/pgmq-worker.js';
 import { env } from '../../config/env.js';
-import { pool } from '../../config/database.js';
+import { pool, notificationPool } from '../../config/database.js';
 import { AlertingRepository } from './repository.js';
 import { AlertEscalationSweep } from './escalation.js';
 import { ConnectorRepository } from '../connectors/repository.js';
@@ -10,21 +11,13 @@ import { AlertChannelRepository } from '../projects/alerts/channels/channel.repo
 import { AlertConfigRepository } from './config/alert-config.repository.js';
 import { AlertNotificationRouter } from './runtime/notification-router.js';
 import { TelemetryOutboxRelay } from './runtime/telemetry-outbox-relay.js';
+import { AlertDomainOutboxRelay } from './runtime/alert-domain-outbox-relay.js';
 import { SnapshotEscalationWorker } from './escalation/escalation.worker.js';
+import { AlertAutoResolveSweep } from './runtime/auto-resolve-sweep.js';
 import { NotificationEntitlementService } from './runtime/notification-entitlement.service.js';
 import { EmailOnlyRestrictedRouting, ProjectOwnerRepository } from './runtime/email-only-restricted-routing.js';
-export const ALERT_JOBS = {
-    cleanup: 'alert.cleanup',
-    escalate: 'alert.escalate',
-    escalationSweep: 'alert.escalation-sweep',
-    evaluateFast: 'alert.evaluate.fast',
-    evaluateWindow: 'alert.evaluate.window',
-    evaluateOperational: 'alert.evaluate.operational',
-    evaluateAi: 'alert.evaluate.ai',
-    notificationRouter: 'alert.notification-router',
-    telemetryOutboxRelay: 'alert.telemetry-outbox-relay',
-    errorGroupRegressed: 'alert.error-group-regressed',
-};
+import { ALERT_JOBS, ALERT_DELIVERY_WORKER_JOBS } from './queue-names.js';
+export { ALERT_JOBS, ALERT_DELIVERY_WORKER_JOBS } from './queue-names.js';
 const DEFAULTS = {
     group: 'all',
     strictQueueCreation: false,
@@ -34,63 +27,54 @@ const DEFAULTS = {
     retentionDeliveryAttemptsDays: 30,
     retentionDeadLettersDays: 30,
 };
-export const ALERT_DELIVERY_WORKER_JOBS = [
-    ALERT_JOBS.escalate,
-    ALERT_JOBS.escalationSweep,
-    ALERT_JOBS.evaluateFast,
-    ALERT_JOBS.evaluateWindow,
-    ALERT_JOBS.evaluateOperational,
-    ALERT_JOBS.evaluateAi,
-    ALERT_JOBS.notificationRouter,
-    ALERT_JOBS.telemetryOutboxRelay,
-    ALERT_JOBS.errorGroupRegressed,
-];
-function allJobs(arg) {
-    if (Array.isArray(arg))
-        return arg;
-    return arg ? [arg] : [];
-}
 /**
- * Register all Alerting V2 pg-boss workers + timers. Idempotent per process.
+ * Register all Alerting V2 PGMQ workers + dispatch intervals.
  */
-export async function registerAlertingWorkers(logger, config = {}, _projectSubscriptionResolver, telemetryPool) {
+export async function registerAlertingWorkers(logger, config = {}, _projectSubscriptionResolver, telemetryPool, primaryConfigPool) {
     const cfg = { ...DEFAULTS, ...config };
     const alertDeliveryOnly = cfg.group === 'alert-delivery';
     const log = logger.child({ component: 'alerting-workers', group: cfg.group });
     const alertRepo = new AlertingRepository();
     const connectorRepo = new ConnectorRepository();
-    const enqueueConnectorJob = async (queue, data, options) => pgboss.send(queue, data, options);
+    const enqueueConnectorJob = async (queue, data, options) => {
+        const queueName = queue.replace(/\./g, '_');
+        return pgmq.send(queueName, data, { delaySeconds: typeof options?.delaySeconds === 'number' ? options.delaySeconds : 0 });
+    };
     const entitlement = new NotificationEntitlementService();
     const runtimePool = telemetryPool ?? pool;
-    const projectOwners = new ProjectOwnerRepository(pool);
+    const configPool = primaryConfigPool ?? notificationPool ?? pool;
+    const projectOwners = new ProjectOwnerRepository(configPool);
     const routing = new NotificationRoutingService({
         logger,
-        channelRepository: new AlertChannelRepository(pool),
-        configRepository: new AlertConfigRepository(pool),
+        channelRepository: new AlertChannelRepository(configPool),
+        configRepository: new AlertConfigRepository(configPool),
         entitlementService: entitlement,
         restrictedRouting: new EmailOnlyRestrictedRouting(projectOwners),
     });
     const escalationSweep = new AlertEscalationSweep(alertRepo, connectorRepo, enqueueConnectorJob, logger);
-    // ── Queue creation with enterprise defaults ─────────────────────────────
+    // ── Provision Queues ──────────────────────────────────────────────────
     const alertJobs = alertDeliveryOnly
         ? ALERT_DELIVERY_WORKER_JOBS
         : Object.values(ALERT_JOBS);
-    for (const job of alertJobs) {
-        await safeCreateQueue(job, job === ALERT_JOBS.errorGroupRegressed
-            ? { retryLimit: 3, retryDelay: 1, retryBackoff: true, expireInSeconds: 300 }
-            : undefined, cfg.strictQueueCreation);
-    }
-    const runtimeEngines = new AlertRuntimeEngines(logger, runtimePool, pool, routing);
+    await pgmq.createQueues([...alertJobs], { concurrency: 4 });
+    const runtimeEngines = new AlertRuntimeEngines(logger, runtimePool, configPool, routing);
     const notificationRouter = new AlertNotificationRouter(runtimePool, logger, projectOwners);
     const telemetryOutboxRelay = new TelemetryOutboxRelay(runtimePool, logger);
+    const alertDomainOutboxRelay = new AlertDomainOutboxRelay(runtimePool, logger);
     const snapshotEscalation = new SnapshotEscalationWorker(logger, runtimePool, routing);
-    // ── escalation-sweep: advance due escalations + resume expired acks ─────
-    await pgboss.work(ALERT_JOBS.escalationSweep, {}, (async () => {
+    const autoResolveSweep = new AlertAutoResolveSweep(runtimePool, logger);
+    const workers = [];
+    // ── escalation-sweep worker ─────────────────────────────────────────────
+    workers.push(new PgmqWorker(pgmq, async () => {
         await escalationSweep.run(cfg.sweepClaimLimit);
-    }));
+    }, { queue: ALERT_JOBS.escalationSweep, batchSize: 1, concurrency: 1 }));
+    // ── auto-resolve-sweep worker ───────────────────────────────────────────
+    workers.push(new PgmqWorker(pgmq, async () => {
+        await autoResolveSweep.run(cfg.sweepClaimLimit);
+    }, { queue: ALERT_JOBS.autoResolveSweep, batchSize: 1, concurrency: 1 }));
     // ── cleanup: retention purge ────────────────────────────────────────────
     if (!alertDeliveryOnly) {
-        await pgboss.work(ALERT_JOBS.cleanup, {}, (async () => {
+        workers.push(new PgmqWorker(pgmq, async () => {
             const [events, batches, attempts, deadLetters, throttles] = await Promise.all([
                 alertRepo.purgeOldTerminalEvents(cfg.retentionResolvedEventsDays),
                 alertRepo.purgeOldBatches(cfg.retentionBatchesDays),
@@ -99,80 +83,72 @@ export async function registerAlertingWorkers(logger, config = {}, _projectSubsc
                 alertRepo.purgeOldThrottleWindows(),
             ]);
             log.info({ events, batches, attempts, deadLetters, throttles }, 'Alerting retention cleanup finished');
-        }));
+        }, { queue: ALERT_JOBS.cleanup, batchSize: 1, concurrency: 1 }));
     }
     // ── Snapshot escalation worker ──────────────────────────────────────────
-    await pgboss.work(ALERT_JOBS.escalate, { localConcurrency: 4, batchSize: 1 }, (async (arg) => {
+    workers.push(new PgmqWorker(pgmq, async (msg) => {
         if (!env.ESCALATION_V2)
             return;
-        const jobs = allJobs(arg);
-        await Promise.all(jobs.map((job) => snapshotEscalation.run(job.data)));
-    }));
+        await snapshotEscalation.run(msg.message);
+    }, { queue: ALERT_JOBS.escalate, batchSize: 1, concurrency: 4 }));
     // ── Canonical V2 fast evaluator ─────────────────────────────────────────
-    await pgboss.work(ALERT_JOBS.evaluateFast, { localConcurrency: 8, batchSize: 1 }, (async (arg) => {
-        const jobs = allJobs(arg);
-        await Promise.all(jobs.map((job) => runtimeEngines.evaluateFast(job.data)));
-    }));
+    workers.push(new PgmqWorker(pgmq, async (msg) => {
+        await runtimeEngines.evaluateFast(msg.message);
+    }, { queue: ALERT_JOBS.evaluateFast, batchSize: 1, concurrency: 8 }));
     // ── Canonical V2 window tier evaluator ──────────────────────────────────
-    await pgboss.work(ALERT_JOBS.evaluateWindow, { localConcurrency: 4, batchSize: 1 }, (async (arg) => {
-        const jobs = allJobs(arg);
-        await Promise.all(jobs.map((job) => runtimeEngines.evaluateTier({ organizationId: job.data.organizationId, tier: 'window' })));
-    }));
+    workers.push(new PgmqWorker(pgmq, async (msg) => {
+        await runtimeEngines.evaluateTier({ organizationId: msg.message.organizationId, tier: 'window' });
+    }, { queue: ALERT_JOBS.evaluateWindow, batchSize: 1, concurrency: 4 }));
     // ── Canonical V2 operational tier evaluator ─────────────────────────────
-    await pgboss.work(ALERT_JOBS.evaluateOperational, { localConcurrency: 3, batchSize: 1 }, (async (arg) => {
-        const jobs = allJobs(arg);
-        await Promise.all(jobs.map((job) => runtimeEngines.evaluateTier({ organizationId: job.data.organizationId, tier: 'operational' })));
-    }));
+    workers.push(new PgmqWorker(pgmq, async (msg) => {
+        await runtimeEngines.evaluateTier({ organizationId: msg.message.organizationId, tier: 'operational' });
+    }, { queue: ALERT_JOBS.evaluateOperational, batchSize: 1, concurrency: 3 }));
     // ── Canonical V2 AI tier evaluator ──────────────────────────────────────
-    await pgboss.work(ALERT_JOBS.evaluateAi, { localConcurrency: 2, batchSize: 1 }, (async (arg) => {
-        const jobs = allJobs(arg);
-        await Promise.all(jobs.map((job) => runtimeEngines.evaluateTier({ organizationId: job.data.organizationId, tier: 'ai' })));
-    }));
+    workers.push(new PgmqWorker(pgmq, async (msg) => {
+        await runtimeEngines.evaluateTier({ organizationId: msg.message.organizationId, tier: 'ai' });
+    }, { queue: ALERT_JOBS.evaluateAi, batchSize: 1, concurrency: 2 }));
     // ── Canonical V2 notification router ────────────────────────────────────
-    await pgboss.work(ALERT_JOBS.notificationRouter, { localConcurrency: 5, batchSize: 1 }, (async (arg) => {
-        const jobs = allJobs(arg);
-        await Promise.all(jobs.map((job) => job.data.notificationJobId
-            ? notificationRouter.dispatchById(job.data.notificationJobId)
-            : notificationRouter.run(100)));
-    }));
+    workers.push(new PgmqWorker(pgmq, async (msg) => {
+        if (msg.message.notificationJobId) {
+            await notificationRouter.dispatchById(msg.message.notificationJobId);
+        }
+        else {
+            await notificationRouter.run(100);
+        }
+    }, { queue: ALERT_JOBS.notificationRouter, batchSize: 1, concurrency: 5 }));
     // ── Canonical V2 telemetry outbox relay ─────────────────────────────────
-    await pgboss.work(ALERT_JOBS.telemetryOutboxRelay, { localConcurrency: 2, batchSize: 1 }, (async () => {
+    workers.push(new PgmqWorker(pgmq, async () => {
         await telemetryOutboxRelay.run(250);
-    }));
+    }, { queue: ALERT_JOBS.telemetryOutboxRelay, batchSize: 1, concurrency: 2 }));
+    // ── Alerting -> automation domain event outbox relay ────────────────────
+    workers.push(new PgmqWorker(pgmq, async () => {
+        await alertDomainOutboxRelay.run(100);
+    }, { queue: ALERT_JOBS.alertDomainOutboxRelay, batchSize: 1, concurrency: 2 }));
     // ── Canonical V2 error regression evaluator ─────────────────────────────
-    await pgboss.work(ALERT_JOBS.errorGroupRegressed, { localConcurrency: 4, batchSize: 1 }, (async (arg) => {
-        const jobs = allJobs(arg);
-        await Promise.all(jobs.map(async (job) => {
-            const payload = job.data;
-            await runtimeEngines.evaluateFast({
-                organizationId: String(payload.organizationId ?? ''),
-                projectId: String(payload.projectId ?? ''),
-                environment: typeof payload.environment === 'string' ? payload.environment : null,
-                events: [{
-                        type: 'error',
-                        eventId: String(payload.eventId ?? ''),
-                        message: String(payload.eventType ?? 'ErrorGroupRegressed'),
-                        severity: String(payload.severity ?? 'error'),
-                        fingerprint: String(payload.fingerprint ?? ''),
-                    }],
-            });
-        }));
-    }));
-    // ── Schedules (cron & timers) ───────────────────────────────────────────
-    await pgboss.schedule(ALERT_JOBS.escalationSweep, '* * * * *', {}, { singletonKey: 'alert-escalation-sweep' });
-    if (!alertDeliveryOnly) {
-        await pgboss.schedule(ALERT_JOBS.cleanup, '17 3 * * *', {}, { singletonKey: 'alert-cleanup' });
-    }
+    workers.push(new PgmqWorker(pgmq, async (msg) => {
+        const payload = msg.message;
+        await runtimeEngines.evaluateFast({
+            organizationId: String(payload.organizationId ?? ''),
+            projectId: String(payload.projectId ?? ''),
+            environment: typeof payload.environment === 'string' ? payload.environment : null,
+            events: [{
+                    type: 'error',
+                    eventId: String(payload.eventId ?? ''),
+                    message: String(payload.eventType ?? 'ErrorGroupRegressed'),
+                    severity: String(payload.severity ?? 'error'),
+                    fingerprint: String(payload.fingerprint ?? ''),
+                }],
+        });
+    }, { queue: ALERT_JOBS.errorGroupRegressed, batchSize: 1, concurrency: 4 }));
+    await Promise.all(workers.map((worker) => worker.start()));
+    // ── Runtime Dispatch Timers ─────────────────────────────────────────────
     const runtimeTimers = startRuntimeDispatchTimers(runtimePool, log);
-    log.info({ ...cfg }, 'Alerting V2 workers registered');
+    log.info({ ...cfg, workers: workers.length }, 'Alerting V2 PGMQ workers registered');
     return {
         stop: async () => {
-            await pgboss.unschedule(ALERT_JOBS.escalationSweep).catch(() => undefined);
-            if (!alertDeliveryOnly) {
-                await pgboss.unschedule(ALERT_JOBS.cleanup).catch(() => undefined);
-            }
             for (const timer of runtimeTimers)
                 clearInterval(timer);
+            await Promise.all(workers.map((w) => w.stop()));
         },
     };
 }
@@ -180,14 +156,7 @@ function startRuntimeDispatchTimers(telemetryPool, log) {
     const dispatch = async (queue, cadenceSeconds) => {
         try {
             const orgs = await activeRuntimeOrganizations(telemetryPool);
-            const bucket = Math.floor(Date.now() / (cadenceSeconds * 1000));
-            await Promise.allSettled(orgs.map((organizationId) => pgboss.send(queue, { organizationId }, {
-                singletonKey: `${queue}:${organizationId}:${bucket}`,
-                expireInSeconds: Math.max(60, cadenceSeconds * 4),
-                retryLimit: 2,
-                retryDelay: 5,
-                retryBackoff: true,
-            })));
+            await Promise.allSettled(orgs.map((organizationId) => pgmq.send(queue, { organizationId })));
             if (orgs.length > 0)
                 log.debug({ queue, orgs: orgs.length }, 'Runtime alert evaluation jobs dispatched');
         }
@@ -199,14 +168,11 @@ function startRuntimeDispatchTimers(telemetryPool, log) {
         setInterval(() => void dispatch(ALERT_JOBS.evaluateWindow, 5), 5_000),
         setInterval(() => void dispatch(ALERT_JOBS.evaluateOperational, 30), 30_000),
         setInterval(() => void dispatch(ALERT_JOBS.evaluateAi, 300), 300_000),
-        setInterval(() => void pgboss.send(ALERT_JOBS.notificationRouter, {}, {
-            singletonKey: `alert-notification-router:${Math.floor(Date.now() / 10_000)}`,
-            expireInSeconds: 60,
-        }).catch(() => undefined), 10_000),
-        setInterval(() => void pgboss.send(ALERT_JOBS.telemetryOutboxRelay, {}, {
-            singletonKey: `alert-telemetry-outbox:${Math.floor(Date.now() / 1_000)}`,
-            expireInSeconds: 30,
-        }).catch(() => undefined), 1_000),
+        setInterval(() => void pgmq.send(ALERT_JOBS.notificationRouter, {}).catch(() => undefined), 10_000),
+        setInterval(() => void pgmq.send(ALERT_JOBS.telemetryOutboxRelay, {}).catch(() => undefined), 1_000),
+        setInterval(() => void pgmq.send(ALERT_JOBS.alertDomainOutboxRelay, {}).catch(() => undefined), 1_000),
+        setInterval(() => void pgmq.send(ALERT_JOBS.escalationSweep, {}).catch(() => undefined), 60_000),
+        setInterval(() => void pgmq.send(ALERT_JOBS.autoResolveSweep, {}).catch(() => undefined), 60_000),
     ];
     for (const timer of timers)
         timer.unref();
@@ -232,27 +198,11 @@ async function activeRuntimeOrganizations(telemetryPool) {
             return result.rows.map((row) => row.organization_id);
         }
     }
-    catch {
-        // If watermarks/metrics tables are not populated yet, fall back gracefully
-    }
-    // Fallback to recent telemetry events if aggregates are not present
+    catch { }
     const fallbackResult = await telemetryPool.query(`SELECT DISTINCT organization_id
        FROM events_requests
       WHERE ingested_at >= NOW() - INTERVAL '15 minutes'
       LIMIT 1000`).catch(() => ({ rows: [] }));
     return fallbackResult.rows.map((row) => row.organization_id);
-}
-async function safeCreateQueue(name, options, strict = false) {
-    const boss = pgboss;
-    if (typeof boss.createQueue !== 'function') {
-        if (strict)
-            throw new Error(`PgBoss queue factory is unavailable for required queue ${name}`);
-        return;
-    }
-    if (strict) {
-        await boss.createQueue(name, options);
-        return;
-    }
-    await boss.createQueue(name, options).catch(() => undefined);
 }
 //# sourceMappingURL=queue.js.map

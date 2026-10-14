@@ -32,6 +32,7 @@ export declare function generateBackupCodes(): Promise<{
     hashed: string[];
 }>;
 export declare function verifyBackupCodeHash(plain: string, hashed: string): boolean;
+export declare function verifyBackupCodeHashAsync(plain: string, hashed: string): Promise<boolean>;
 export declare function emailToHash(email: string): string;
 export declare function toUserProfile(user: User): UserProfile;
 export declare function assertUserUsable(user: User): void;

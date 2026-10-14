@@ -29,8 +29,8 @@ export declare const AlertActionMergeModeSchema: z.ZodEnum<{
     merge: "merge";
 }>;
 export declare const NotificationChannelKindSchema: z.ZodEnum<{
-    sms: "sms";
     email: "email";
+    sms: "sms";
     webhook: "webhook";
     slack: "slack";
     discord: "discord";
@@ -47,10 +47,10 @@ export declare const CreateBindingSchema: z.ZodObject<{
     enabled: z.ZodDefault<z.ZodBoolean>;
     priority: z.ZodDefault<z.ZodNumber>;
     severity: z.ZodOptional<z.ZodNullable<z.ZodEnum<{
+        critical: "critical";
         error: "error";
         info: "info";
         warning: "warning";
-        critical: "critical";
     }>>>;
     cooldownSeconds: z.ZodOptional<z.ZodNullable<z.ZodNumber>>;
     deduplicationWindowSeconds: z.ZodOptional<z.ZodNullable<z.ZodNumber>>;
@@ -64,8 +64,8 @@ export declare const CreateBindingSchema: z.ZodObject<{
         merge: "merge";
     }>>;
     requestedChannels: z.ZodOptional<z.ZodNullable<z.ZodArray<z.ZodEnum<{
-        sms: "sms";
         email: "email";
+        sms: "sms";
         webhook: "webhook";
         slack: "slack";
         discord: "discord";
@@ -102,10 +102,10 @@ export declare const UpdateBindingSchema: z.ZodObject<{
     enabled: z.ZodOptional<z.ZodDefault<z.ZodBoolean>>;
     priority: z.ZodOptional<z.ZodDefault<z.ZodNumber>>;
     severity: z.ZodOptional<z.ZodOptional<z.ZodNullable<z.ZodEnum<{
+        critical: "critical";
         error: "error";
         info: "info";
         warning: "warning";
-        critical: "critical";
     }>>>>;
     cooldownSeconds: z.ZodOptional<z.ZodOptional<z.ZodNullable<z.ZodNumber>>>;
     deduplicationWindowSeconds: z.ZodOptional<z.ZodOptional<z.ZodNullable<z.ZodNumber>>>;
@@ -119,8 +119,8 @@ export declare const UpdateBindingSchema: z.ZodObject<{
         merge: "merge";
     }>>>;
     requestedChannels: z.ZodOptional<z.ZodOptional<z.ZodNullable<z.ZodArray<z.ZodEnum<{
-        sms: "sms";
         email: "email";
+        sms: "sms";
         webhook: "webhook";
         slack: "slack";
         discord: "discord";

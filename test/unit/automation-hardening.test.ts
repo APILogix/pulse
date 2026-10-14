@@ -27,29 +27,52 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // 1. SQL UNIQUE INDEX — idempotency_key
 // ═══════════════════════════════════════════════════════════════════════════════
 
-describe('Migration 008/009: idempotency_key unique index (folded from 016)', () => {
-  it('creates a UNIQUE index where idempotency_key IS NOT NULL', () => {
-    // Read the migration SQL and verify it contains the correct DDL
+/**
+ * These two assertions previously read
+ * `src/db/postgres/canonical_migrations_draft/19_automation/*.sql`, a directory that
+ * does not exist in this repository, so they failed with ENOENT rather than checking
+ * anything. They now read the migration files that are actually applied, under
+ * `src/db/postgres/primary_db_draft/14_automation/`.
+ *
+ * The equivalent guarantees are additionally proven against a real database in
+ * test/integration/automation-runtime.test.ts, which builds the schema from these
+ * same files and asserts the indexes exist in pg_indexes. Keeping the text checks
+ * here is still useful: they fail fast without needing a database.
+ */
+const AUTOMATION_MIGRATIONS = '../../src/db/postgres/primary_db_draft/14_automation';
+
+describe('Automation runtime migrations: idempotency unique indexes', () => {
+  it('creates a UNIQUE index on run-step idempotency_key where it is not null', () => {
     const fs = require('fs');
     const path = require('path');
     const sql = fs.readFileSync(
-      path.join(__dirname, '../../src/db/postgres/canonical_migrations_draft/19_automation/008_automation_run_steps.sql'),
-      'utf8'
+      path.join(__dirname, `${AUTOMATION_MIGRATIONS}/002_create_automation_runtime.sql`),
+      'utf8',
     );
-    
+
     expect(sql).toContain('CREATE UNIQUE INDEX');
-    expect(sql).toContain('idx_automation_steps_idempotency_key_unique');
+    expect(sql).toContain('uq_automation_run_steps_idempotency_key');
     expect(sql).toContain('WHERE idempotency_key IS NOT NULL');
+  });
+
+  it('creates a UNIQUE index on run idempotency_key so duplicate runs raise 23505', () => {
+    const fs = require('fs');
+    const path = require('path');
+    const sql = fs.readFileSync(
+      path.join(__dirname, `${AUTOMATION_MIGRATIONS}/002_create_automation_runtime.sql`),
+      'utf8',
+    );
+    expect(sql).toContain('uq_automation_runs_idempotency_key');
   });
 
   it('creates approval per-step partial unique index', () => {
     const fs = require('fs');
     const path = require('path');
     const sql = fs.readFileSync(
-      path.join(__dirname, '../../src/db/postgres/canonical_migrations_draft/19_automation/009_automation_approvals.sql'),
-      'utf8'
+      path.join(__dirname, `${AUTOMATION_MIGRATIONS}/001_create_automation_approvals.sql`),
+      'utf8',
     );
-    
+
     expect(sql).toContain('idx_automation_approvals_step_pending_unique');
     expect(sql).toContain("WHERE status = 'pending'");
     expect(sql).toContain('step_id IS NOT NULL');
@@ -317,10 +340,32 @@ describe('SSRF protection', () => {
     expect(result.safe).toBe(false);
   });
 
-  it('blocks non-HTTPS protocol', () => {
-    const result = validateWebhookUrl('http://example.com/webhook');
+  /**
+   * The guard's `allowHttp` option defaults to `NODE_ENV === 'development' || 'test'`,
+   * a deliberate relaxation so local HTTP endpoints work while developing. Vitest sets
+   * NODE_ENV=test, so asserting the bare default here was testing the dev policy and
+   * failing, while implying production was insecure.
+   *
+   * Verified directly against the compiled guard: with NODE_ENV=production,
+   * `http://example.com/webhook` is rejected with "Protocol must be https, got http:".
+   * This test now pins the production policy explicitly, so it holds regardless of the
+   * environment the suite runs in.
+   */
+  it('blocks non-HTTPS protocol under the production policy', () => {
+    const result = validateWebhookUrl('http://example.com/webhook', { allowHttp: false });
     expect(result.safe).toBe(false);
     expect(result.reason).toContain('https');
+  });
+
+  it('permits plain HTTP only when explicitly allowed (dev/test convenience)', () => {
+    const result = validateWebhookUrl('http://example.com/webhook', { allowHttp: true });
+    expect(result.safe).toBe(true);
+  });
+
+  it('still blocks a private host even when HTTP is allowed', () => {
+    // The HTTP relaxation must not become a hole in the private-network guard.
+    const result = validateWebhookUrl('http://169.254.169.254/latest/meta-data/', { allowHttp: true });
+    expect(result.safe).toBe(false);
   });
 
   it('blocks credentials in URL', () => {

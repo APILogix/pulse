@@ -128,13 +128,35 @@ export class UsageRepository {
   }> {
     const db = client ?? this.db;
     const [summary, hourly, daily, heatmap, eventTypes] = await Promise.all([
-      db.query<{ member_count: string; api_key_count: string; total_events: string; total_bytes: string; current_hour_events: string }>(
+      db.query<{
+        member_count: string;
+        api_key_count: string;
+        total_events: string;
+        total_bytes: string;
+        current_hour_events: string;
+        requests: string;
+        errors: string;
+        logs: string;
+        traces: string;
+        spans: string;
+        metrics: string;
+        profiles: string;
+        ai_events: string;
+      }>(
         `SELECT
            (SELECT COUNT(*) FROM project_members WHERE organization_id=$1 AND project_id=$2 AND status='active')::text member_count,
            (SELECT COUNT(*) FROM project_api_keys WHERE organization_id=$1 AND project_id=$2 AND deleted_at IS NULL)::text api_key_count,
            COALESCE(SUM(total_events),0)::text total_events,
-           '0'::text total_bytes,
-           COALESCE(SUM(total_events) FILTER(WHERE bucket>=date_trunc('hour',NOW())),0)::text current_hour_events
+           COALESCE((SELECT SUM(event_bytes) FROM project_usage_hourly WHERE organization_id=$1 AND project_id=$2 AND bucket>=date_trunc('day',NOW())), 0)::text total_bytes,
+           COALESCE(SUM(total_events) FILTER(WHERE bucket>=date_trunc('hour',NOW())),0)::text current_hour_events,
+           COALESCE(SUM(requests),0)::text requests,
+           COALESCE(SUM(errors),0)::text errors,
+           COALESCE(SUM(logs),0)::text logs,
+           COALESCE(SUM(traces),0)::text traces,
+           COALESCE(SUM(spans),0)::text spans,
+           COALESCE(SUM(metrics),0)::text metrics,
+           COALESCE(SUM(profiles),0)::text profiles,
+           COALESCE(SUM(ai_events),0)::text ai_events
          FROM project_usage_minute
         WHERE organization_id=$1 AND project_id=$2 AND bucket>=date_trunc('day',NOW())`,
         [organizationId, projectId],
@@ -161,10 +183,11 @@ export class UsageRepository {
         [organizationId, projectId],
       ),
       db.query<{ event_type: string; total_events: string }>(
-        `SELECT m.event_type,SUM(m.events)::text total_events
+        `SELECT t.name AS event_type, COALESCE(SUM(m.accepted_event_count), 0)::text AS total_events
            FROM api_key_usage_minute m
-          WHERE m.organization_id=$1 AND m.project_id=$2 AND m.bucket>=date_trunc('day',NOW()) AND m.event_type <> '__all__'
-          GROUP BY m.event_type ORDER BY SUM(m.events) DESC`,
+           JOIN telemetry_event_types t ON t.id = m.event_type_id
+          WHERE m.organization_id = $1 AND m.project_id = $2 AND m.bucket >= date_trunc('day', NOW()) AND t.name <> '__all__'
+          GROUP BY t.name ORDER BY SUM(m.accepted_event_count) DESC`,
         [organizationId, projectId],
       ),
     ]);
@@ -203,7 +226,16 @@ export class UsageRepository {
       totalBytesToday: Number(summaryRow?.total_bytes ?? 0),
       peakHour: peak.hour,
       currentHourEvents: Number(summaryRow?.current_hour_events ?? 0),
-      categoryBreakdown: {},
+      categoryBreakdown: {
+        requests: Number(summaryRow?.requests ?? 0),
+        errors: Number(summaryRow?.errors ?? 0),
+        logs: Number(summaryRow?.logs ?? 0),
+        traces: Number(summaryRow?.traces ?? 0),
+        spans: Number(summaryRow?.spans ?? 0),
+        metrics: Number(summaryRow?.metrics ?? 0),
+        profiles: Number(summaryRow?.profiles ?? 0),
+        ai_events: Number(summaryRow?.ai_events ?? 0),
+      },
       eventTypeBreakdown: Object.fromEntries(eventTypes.rows.map((row) => [row.event_type, Number(row.total_events)])),
       hourlyBreakdown: hourlyRows,
       dailyTrend: dailyRows,

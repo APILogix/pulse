@@ -477,12 +477,32 @@ export class ConnectorService {
     }
     async assertConnectorEntitled(orgId, type) {
         const featureKey = CONNECTOR_TYPE_FEATURE_KEYS[type];
-        const [moduleEnabled, providerEnabled, connectorLimit, used] = (await Promise.all([
-            this.entitlements.hasFeature(orgId, 'alerting.enabled'),
-            this.entitlements.hasFeature(orgId, featureKey),
-            this.entitlements.getEffectiveIntegerFeature(orgId, 'quota.connectors'),
-            this.repository.countActiveConnectors(orgId),
-        ]));
+        let moduleEnabled = false;
+        let providerEnabled = false;
+        let connectorLimit = 0;
+        let used = 0;
+        const entitlementsRepo = this.entitlements;
+        if (typeof entitlementsRepo.getFeaturesMap === 'function') {
+            const [featuresMap, activeCount] = await Promise.all([
+                entitlementsRepo.getFeaturesMap(orgId, ['alerting.enabled', featureKey, 'quota.connectors']),
+                this.repository.countActiveConnectors(orgId),
+            ]);
+            const alertingRow = featuresMap.get('alerting.enabled');
+            moduleEnabled = Boolean(alertingRow?.boolean_value || (alertingRow?.integer_value ?? 0) > 0);
+            const providerRow = featuresMap.get(featureKey);
+            providerEnabled = Boolean(providerRow?.boolean_value || (providerRow?.integer_value ?? 0) > 0);
+            const quotaRow = featuresMap.get('quota.connectors');
+            connectorLimit = Number(quotaRow?.integer_value ?? 0);
+            used = activeCount;
+        }
+        else {
+            [moduleEnabled, providerEnabled, connectorLimit, used] = (await Promise.all([
+                this.entitlements.hasFeature(orgId, 'alerting.enabled'),
+                this.entitlements.hasFeature(orgId, featureKey),
+                this.entitlements.getEffectiveIntegerFeature(orgId, 'quota.connectors'),
+                this.repository.countActiveConnectors(orgId),
+            ]));
+        }
         if (!moduleEnabled) {
             throw new ConnectorError('Alerting and notification integrations are not enabled for this organization', 'CONNECTOR_ENTITLEMENT_DENIED', 403, {
                 featureKey: 'alerting.enabled',

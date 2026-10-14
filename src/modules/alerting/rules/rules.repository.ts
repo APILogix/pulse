@@ -12,6 +12,7 @@
  */
 import type { PoolClient } from 'pg';
 import { pool } from '../../../config/database.js';
+import { AlertRuleBindingsRepository } from '../config/bindings.repository.js';
 import {
   AlertConflictError,
   AlertNotFoundError,
@@ -33,6 +34,39 @@ import {
   type ListRulesQuery,
   type MetricGranularity,
 } from '../types.js';
+
+/**
+ * Fields whose change actually affects EVALUATION SEMANTICS — what a rule checks,
+ * or how it behaves once matched — as opposed to purely cosmetic metadata.
+ *
+ * Used to decide whether a `PATCH /rules/:id` should allocate a new
+ * `alert_rules.current_revision`. The alert fingerprint's `policyId` embeds
+ * `current_revision` (see runtime/alert-fingerprint.ts, decision/decision.engine.ts),
+ * so bumping it resets dedup/cooldown continuity for that rule's alerts — by
+ * design, a "new revision" is supposed to mean "this could now fire under
+ * different conditions, treat it as materially different". Bumping on EVERY
+ * edit (including a name/description typo fix) would reset that continuity far
+ * too often, which the correctness audit explicitly flagged as undesirable. So
+ * only a change to one of these fields, or to the `conditions` array itself,
+ * allocates a revision; renaming a rule or editing its description does not.
+ */
+const REVISION_SENSITIVE_FIELDS = new Set([
+  'severity',
+  'cooldownSeconds',
+  'deduplicationWindowSeconds',
+  'deduplicationKeyTemplate',
+  'groupingEnabled',
+  'groupingKeyTemplate',
+  'autoResolveAfterMinutes',
+  'evaluationIntervalSeconds',
+  // `metadata`/`annotations` are cosmetic EXCEPT that `consecutiveBreachesRequired`
+  // (metadata) / `consecutiveBreaches` (annotations) feed the evaluator's breach
+  // count via resolve-rule.ts's `toConsecutiveBreaches`. Treat both as sensitive
+  // rather than inspecting their contents — a false-positive revision bump on an
+  // unrelated metadata edit is a much smaller cost than a missed one.
+  'metadata',
+  'annotations',
+]);
 
 function pgCode(e: unknown): string | undefined {
   return typeof e === 'object' && e !== null ? (e as { code?: string }).code : undefined;
@@ -106,8 +140,12 @@ export interface CreateRuleInput {
   evaluationCategory?: 'fast' | 'analytics';
 }
 
+export const ALERT_RULE_CONDITIONS_COLUMNS = 'id, rule_id, condition_type, condition_group_id, field_path, operator, threshold_value, lookback_minutes, aggregate_function, sub_query, is_required, order_index, created_at, updated_at';
+export const ALERT_RULE_ACTIONS_COLUMNS = 'id, rule_id, action_type, priority, order_index, connector_id, route_id, template_id, escalation_policy_id, throttle_duration_seconds, max_notifications_per_hour, action_conditions, is_active, created_at, updated_at';
+
 export class RulesRepository {
   private readonly db: typeof pool;
+  private readonly bindingsForRevision: AlertRuleBindingsRepository;
 
   /**
    * ADR-0006: pools are injected explicitly. Alert RULE definition is
@@ -116,6 +154,11 @@ export class RulesRepository {
    */
   constructor(db: typeof pool = pool) {
     this.db = db;
+    // Reuses the SAME revision-allocation SQL that binding mutations already use
+    // (FOR UPDATE row lock + snapshot + INSERT alert_rule_revisions + bump
+    // current_revision, all in one transaction) rather than duplicating it, so
+    // rule edits and binding edits can never allocate colliding revision numbers.
+    this.bindingsForRevision = new AlertRuleBindingsRepository(db);
   }
 
   async withTransaction<T>(fn: (client: PoolClient) => Promise<T>): Promise<T> {
@@ -257,7 +300,7 @@ export class RulesRepository {
 
   async getRuleConditions(ruleId: string): Promise<AlertRuleConditionRow[]> {
     const r = await this.db.query<AlertRuleConditionRow>(
-      `SELECT * FROM alert_rule_conditions WHERE rule_id=$1 ORDER BY order_index ASC`,
+      `SELECT ${ALERT_RULE_CONDITIONS_COLUMNS} FROM alert_rule_conditions WHERE rule_id=$1 ORDER BY order_index ASC`,
       [ruleId],
     );
     return r.rows;
@@ -265,7 +308,7 @@ export class RulesRepository {
 
   async getRuleActions(ruleId: string): Promise<AlertRuleActionRow[]> {
     const r = await this.db.query<AlertRuleActionRow>(
-      `SELECT * FROM alert_rule_actions WHERE rule_id=$1 ORDER BY order_index ASC, priority DESC`,
+      `SELECT ${ALERT_RULE_ACTIONS_COLUMNS} FROM alert_rule_actions WHERE rule_id=$1 ORDER BY order_index ASC, priority DESC`,
       [ruleId],
     );
     return r.rows;
@@ -275,9 +318,7 @@ export class RulesRepository {
   async getRuleActionsByRuleIds(ruleIds: string[]): Promise<AlertRuleActionRow[]> {
     if (ruleIds.length === 0) return [];
     const r = await this.db.query<AlertRuleActionRow>(
-      `SELECT * FROM alert_rule_actions
-       WHERE rule_id = ANY($1::uuid[]) AND is_active = TRUE
-       ORDER BY rule_id, order_index ASC, priority DESC`,
+      `SELECT ${ALERT_RULE_ACTIONS_COLUMNS} FROM alert_rule_actions WHERE rule_id = ANY($1::uuid[]) AND is_active = TRUE ORDER BY rule_id, order_index ASC, priority DESC`,
       [ruleIds],
     );
     return r.rows;
@@ -366,6 +407,20 @@ export class RulesRepository {
         await client.query(`DELETE FROM alert_rule_actions WHERE rule_id=$1`, [id]);
         await this.insertActions(client, id, actions);
       }
+
+      // Allocate a new revision only if something evaluation-relevant changed
+      // (see REVISION_SENSITIVE_FIELDS) — conditions changing always counts,
+      // since that's the literal definition of "what this rule checks".
+      const touchedSensitiveField = Object.keys(fields).some(
+        (k) => fields[k] !== undefined && REVISION_SENSITIVE_FIELDS.has(k),
+      );
+      if (touchedSensitiveField || conditions !== null) {
+        const nextRevision = await this.bindingsForRevision.recordRevision(
+          client, organizationId, id, 'rule', updatedBy,
+        );
+        rule = { ...rule, current_revision: nextRevision };
+      }
+
       return rule;
     });
   }

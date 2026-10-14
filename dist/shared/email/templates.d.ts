@@ -5,23 +5,21 @@
  * live in `./components.ts`; this file is copy and composition only.
  *
  * ── Public contract ──────────────────────────────────────────────────────
- * Every exported function name and input shape is unchanged from the previous
- * revision, so existing call sites in `modules/auth`, `modules/organization`
- * and `modules/user-account` keep compiling untouched. Optional `context`
- * fields were *added* (never required) so security mails can start reporting
+ * Every exported function name and input shape is unchanged, so existing call
+ * sites in `modules/auth`, `modules/organization` and `modules/user-account`
+ * keep compiling untouched. Optional `context` fields let security mails report
  * request provenance — IP, device, timestamp — as callers adopt them.
  *
- * ── What changed visually ────────────────────────────────────────────────
- *   · Brand channel is white, not green. Green now means only "resolved /
- *     healthy / succeeded", per the three-channel law (sentinel-design.md §0).
- *     The old templates used green as the brand colour, which made every
- *     verdict colour ambiguous.
- *   · Inline SVG logo and hero icons removed — Gmail, Outlook and Yahoo strip
- *     `<svg>`, so those were rendering as blank space for most recipients.
- *   · Header gradient removed (§3 forbids gradients in chrome; the logo mark is
- *     the only permitted gradient).
- *   · Added preheaders, a severity rail, bulletproof VML buttons, a responsive
- *     breakpoint, dark-mode locks and real plaintext bodies.
+ * ── Composition ──────────────────────────────────────────────────────────
+ * These mails continue the console's auth pages rather than a generic email
+ * kit. Each one follows the same anatomy the sign-in page does:
+ *
+ *   headline        the outcome or the ask, in the auth heading's voice
+ *   state line      only when the mail reports a verdict (MFA off, locked)
+ *   one action      a single white button; red only for destruction
+ *   quiet notes     expiry and the copy-me link sit under the action
+ *   facts           request provenance as hairline rows
+ *   one callout     only when it changes what the reader does next
  */
 import { type DataRow, type FooterKind } from './components.js';
 import type { Tone } from './theme.js';
@@ -33,8 +31,8 @@ export type EmailTemplate = {
 /**
  * Where a security-sensitive request came from.
  *
- * Optional on every template. When supplied it is rendered as a provenance
- * table, which is what turns "someone asked to reset your password" into an
+ * Optional on every template. When supplied it is rendered as provenance
+ * facts, which is what turns "someone asked to reset your password" into an
  * actionable statement the recipient can verify or dispute.
  */
 export interface RequestContext {
@@ -116,9 +114,14 @@ export interface StandardNotificationInput {
     appName?: string | undefined;
     title: string;
     subject?: string | undefined;
+    /**
+     * For a verdict tone this becomes the state-line label ("Critical",
+     * "Degraded"); otherwise it names the header context.
+     */
     eyebrowText?: string | undefined;
     preheader?: string | undefined;
     tone?: Tone | undefined;
+    /** @deprecated Glyph chips are retired; the value is ignored. */
     chip?: string | undefined;
     userName?: string | undefined;
     summary?: string | undefined;
@@ -133,6 +136,7 @@ export interface StandardNotificationInput {
     primaryAction?: {
         label: string;
         url: string;
+        /** Only `danger` changes the button — every other action is white. */
         tone?: Tone | undefined;
     } | undefined;
     secondaryAction?: {
@@ -156,8 +160,8 @@ export interface StandardNotificationInput {
     } | undefined;
 }
 /**
- * Standard multi-purpose notification email template rendered in Sentinel Mono design.
- * Suitable for general alerts, system reports, digests, and operational notifications.
+ * Multi-purpose notification in the same sheet — general alerts, system
+ * reports and connector notifications that have no dedicated template.
  */
 export declare function standardNotificationTemplate(input: StandardNotificationInput): EmailTemplate;
 //# sourceMappingURL=templates.d.ts.map

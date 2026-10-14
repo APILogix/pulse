@@ -9,6 +9,28 @@
 import type { Pool, PoolClient } from 'pg';
 import { AnalyticsQueryBuilder, type AnalyticsTableKey, type TimeBucket } from './query-builder.js';
 import type { TimeRange } from './types.js';
+import { mergeHistograms, parseHistogram, percentileFromHistogram } from '../analytics-engine/histogram.js';
+import { estimateUnion, fromBuffer } from '../analytics-engine/hll.js';
+
+export const ANALYTICS_ERROR_GROUP_COLUMNS = `
+  id, organization_id, project_id, fingerprint, error_name, message_template, first_seen_at, last_seen_at, total_count, today_count, week_count, month_count, status, assigned_to, services, environments, releases, created_at, updated_at
+`;
+
+export const ANALYTICS_DASHBOARD_COLUMNS = `
+  id, organization_id, project_id, name, description, layout, widgets, is_shared, created_by, created_at, updated_at
+`;
+
+export const ANALYTICS_SAVED_QUERY_COLUMNS = `
+  id, organization_id, project_id, name, description, query_type, query_config, visualization_type, visualization_config, created_by, created_at, updated_at
+`;
+
+export const ANALYTICS_ALERT_COLUMNS = `
+  id, organization_id, project_id, name, metric, operator, threshold, window_minutes, notification_channels, is_active, created_by, created_at, updated_at
+`;
+
+export const ANALYTICS_USER_SESSION_COLUMNS = `
+  id, organization_id, project_id, session_id, user_id, started_at, ended_at, duration_seconds, event_count, error_count, pages, is_crashed, created_at
+`;
 
 export class EventAnalyticsRepository {
   constructor(private readonly db: Pool) {}
@@ -47,10 +69,82 @@ export class EventAnalyticsRepository {
     return { total: Number(row.total), fatal: Number(row.fatal), error: Number(row.error), warning: Number(row.warning) };
   }
 
+  /**
+   * Request statistics across a time range.
+   *
+   * ANL-Q006 optimization: reads from pre-aggregated rollups (request_metrics_1h / request_metrics_1m)
+   * where available, merging logarithmic histograms in memory to estimate p50/p95/p99 without
+   * heavy PERCENTILE_CONT sorting over raw events_requests partitions. Falls back to raw table
+   * only if rollup data is not yet available for the requested range.
+   */
   async getRequestStats(orgId: string, projectId: string | undefined, environment: string | undefined, range: TimeRange): Promise<{
     total: number; errors: number; errorRate: number; avgLatencyMs: number | null;
     p50: number | null; p95: number | null; p99: number | null;
   }> {
+    const durationMs = range.to.getTime() - range.from.getTime();
+    const table = durationMs > 3 * 3600 * 1000 ? 'request_metrics_1h' : 'request_metrics_1m';
+
+    const conditions = ['r.organization_id = $1', 'r.bucket >= $2', 'r.bucket < $3'];
+    const params: unknown[] = [orgId, range.from, range.to];
+    if (projectId) {
+      params.push(projectId);
+      conditions.push(`r.project_id = $${params.length}`);
+    }
+    if (environment) {
+      params.push(environment);
+      conditions.push(`r.environment = $${params.length}`);
+    }
+
+    try {
+      const rollupRes = await this.db.query<{
+        total: string; errors: string; latency_sum_ms: string;
+        histograms: unknown[];
+      }>(
+        `SELECT COALESCE(SUM(r.total_count), 0)::bigint AS total,
+                COALESCE(SUM(r.error_count), 0)::bigint AS errors,
+                COALESCE(SUM(r.latency_sum_ms), 0)::numeric AS latency_sum_ms,
+                ARRAY_AGG(r.latency_hist) FILTER (WHERE r.latency_hist IS NOT NULL) AS histograms
+         FROM ${table} r
+         WHERE ${conditions.join(' AND ')}`,
+        params,
+      );
+
+      const rollupRow = rollupRes.rows[0];
+      const total = Number(rollupRow?.total ?? 0);
+      if (total > 0) {
+        const errors = Number(rollupRow?.errors ?? 0);
+        const latencySumMs = Number(rollupRow?.latency_sum_ms ?? 0);
+        const rawHists = rollupRow?.histograms;
+        const histograms = Array.isArray(rawHists)
+          ? (rawHists as unknown[]).map((h) => parseHistogram(h))
+          : [];
+        const mergedHist = mergeHistograms(histograms);
+
+        return {
+          total,
+          errors,
+          errorRate: total > 0 ? errors / total : 0,
+          avgLatencyMs: total > 0 ? Math.round(latencySumMs / total) : null,
+          p50: percentileFromHistogram(mergedHist, 0.50),
+          p95: percentileFromHistogram(mergedHist, 0.95),
+          p99: percentileFromHistogram(mergedHist, 0.99),
+        };
+      }
+    } catch {
+      // Rollup query failed or table not populated; fall through to raw fallback
+    }
+
+    const rawConditions = ['organization_id=$1', 'occurred_at >= $2', 'occurred_at < $3'];
+    const rawParams: unknown[] = [orgId, range.from, range.to];
+    if (projectId) {
+      rawParams.push(projectId);
+      rawConditions.push(`project_id=$${rawParams.length}`);
+    }
+    if (environment) {
+      rawParams.push(environment);
+      rawConditions.push(`environment=$${rawParams.length}`);
+    }
+
     const r = await this.db.query<{
       total: string; errors: string; avg: string | null;
       p50: string | null; p95: string | null; p99: string | null;
@@ -62,31 +156,87 @@ export class EventAnalyticsRepository {
               PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY latency_ms)::int AS p95,
               PERCENTILE_CONT(0.99) WITHIN GROUP (ORDER BY latency_ms)::int AS p99
        FROM events_requests
-       WHERE organization_id=$1 AND occurred_at >= $2 AND occurred_at < $3
-         AND ($4::uuid IS NULL OR project_id=$4)
-         AND ($5::text IS NULL OR environment=$5)`,
-      [orgId, range.from, range.to, projectId ?? null, environment ?? null],
+       WHERE ${rawConditions.join(' AND ')}`,
+      rawParams,
     );
-    const row = r.rows[0]!;
-    const total = Number(row.total);
-    const errors = Number(row.errors);
+    const row = r.rows[0];
+    const total = Number(row?.total ?? 0);
+    const errors = Number(row?.errors ?? 0);
     return {
       total, errors,
       errorRate: total > 0 ? errors / total : 0,
-      avgLatencyMs: row.avg !== null ? Number(row.avg) : null,
-      p50: row.p50 !== null ? Number(row.p50) : null,
-      p95: row.p95 !== null ? Number(row.p95) : null,
-      p99: row.p99 !== null ? Number(row.p99) : null,
+      avgLatencyMs: row?.avg !== null && row?.avg !== undefined ? Number(row.avg) : null,
+      p50: row?.p50 !== null && row?.p50 !== undefined ? Number(row.p50) : null,
+      p95: row?.p95 !== null && row?.p95 !== undefined ? Number(row.p95) : null,
+      p99: row?.p99 !== null && row?.p99 !== undefined ? Number(row.p99) : null,
     };
   }
 
+  /**
+   * Unique user count across a time range.
+   *
+   * ANL-Q007 optimization: reads from pre-aggregated rollups using HLL sketches
+   * (or exact bucket counts) where available, avoiding massive HashAggregates over
+   * raw events_requests.
+   */
   async getUniqueUserCount(orgId: string, projectId: string | undefined, environment: string | undefined, range: TimeRange): Promise<number> {
+    const durationMs = range.to.getTime() - range.from.getTime();
+    const table = durationMs > 3 * 3600 * 1000 ? 'request_metrics_1h' : 'request_metrics_1m';
+
+    const conditions = ['r.organization_id = $1', 'r.bucket >= $2', 'r.bucket < $3'];
+    const params: unknown[] = [orgId, range.from, range.to];
+    if (projectId) {
+      params.push(projectId);
+      conditions.push(`r.project_id = $${params.length}`);
+    }
+    if (environment) {
+      params.push(environment);
+      conditions.push(`r.environment = $${params.length}`);
+    }
+
+    try {
+      const rollupRes = await this.db.query<{
+        unique_users_exact: string;
+        sketches: unknown[];
+      }>(
+        `SELECT MAX(r.unique_users_exact)::bigint AS unique_users_exact,
+                ARRAY_AGG(r.unique_users_hll) FILTER (WHERE r.unique_users_hll IS NOT NULL) AS sketches
+         FROM ${table} r
+         WHERE ${conditions.join(' AND ')}`,
+        params,
+      );
+
+      const row = rollupRes.rows[0];
+      if (row) {
+        const rawSketches = row.sketches;
+        if (Array.isArray(rawSketches) && rawSketches.length > 0) {
+          const sketches = (rawSketches as unknown[]).map((s) => fromBuffer(s)).filter((s): s is Uint8Array => s !== null);
+          if (sketches.length > 0) {
+            return estimateUnion(sketches);
+          }
+        }
+        const exact = Number(row.unique_users_exact ?? 0);
+        if (exact > 0) return exact;
+      }
+    } catch {
+      // Fall through to raw fallback
+    }
+
+    const rawConditions = ['organization_id=$1', 'occurred_at >= $2', 'occurred_at < $3', 'user_id IS NOT NULL'];
+    const rawParams: unknown[] = [orgId, range.from, range.to];
+    if (projectId) {
+      rawParams.push(projectId);
+      rawConditions.push(`project_id=$${rawParams.length}`);
+    }
+    if (environment) {
+      rawParams.push(environment);
+      rawConditions.push(`environment=$${rawParams.length}`);
+    }
+
     const r = await this.db.query<{ count: string }>(
       `SELECT COUNT(DISTINCT user_id)::bigint AS count FROM events_requests
-       WHERE organization_id=$1 AND occurred_at >= $2 AND occurred_at < $3
-         AND user_id IS NOT NULL AND ($4::uuid IS NULL OR project_id=$4)
-         AND ($5::text IS NULL OR environment=$5)`,
-      [orgId, range.from, range.to, projectId ?? null, environment ?? null],
+       WHERE ${rawConditions.join(' AND ')}`,
+      rawParams,
     );
     return Number(r.rows[0]?.count ?? 0);
   }
@@ -138,7 +288,8 @@ export class EventAnalyticsRepository {
     environment?: string,
   ): Promise<Record<string, unknown> | null> {
     const r = await this.db.query(
-      `SELECT * FROM events_errors
+      `SELECT id, organization_id, project_id, environment, event_id, error_name, message, severity, method, route, url, status_code, service, release, occurred_at
+       FROM events_errors
        WHERE organization_id=$1 AND id=$2
          AND ($3::uuid IS NULL OR project_id=$3)
          AND ($4::text IS NULL OR environment=$4)
@@ -167,7 +318,7 @@ export class EventAnalyticsRepository {
     const dir = filters.sortOrder === 'asc' ? 'ASC' : 'DESC';
     params.push(filters.limit, filters.offset);
     const r = await this.db.query(
-      `SELECT * FROM analytics_error_groups WHERE ${where}
+      `SELECT ${ANALYTICS_ERROR_GROUP_COLUMNS} FROM analytics_error_groups WHERE ${where}
        ORDER BY ${sortCol} ${dir} LIMIT $${params.length - 1} OFFSET $${params.length}`,
       params,
     );
@@ -181,7 +332,7 @@ export class EventAnalyticsRepository {
     environment: string,
   ): Promise<Record<string, unknown> | null> {
     const r = await this.db.query(
-      `SELECT * FROM analytics_error_groups
+      `SELECT ${ANALYTICS_ERROR_GROUP_COLUMNS} FROM analytics_error_groups
        WHERE organization_id=$1 AND project_id=$2 AND fingerprint=$3
          AND $4=ANY(environments)
        LIMIT 1`,
@@ -207,7 +358,7 @@ export class EventAnalyticsRepository {
               updated_at=NOW()
        WHERE organization_id=$1 AND project_id=$2 AND fingerprint=$3
          AND $4=ANY(environments)
-       RETURNING *`,
+       RETURNING ${ANALYTICS_ERROR_GROUP_COLUMNS}`,
       [orgId, projectId, fingerprint, environment, status, assignedTo],
     );
     return (r.rows[0] as Record<string, unknown>) ?? null;
@@ -305,7 +456,8 @@ export class EventAnalyticsRepository {
     environment?: string,
   ): Promise<Record<string, unknown> | null> {
     const r = await this.db.query(
-      `SELECT * FROM events_requests
+      `SELECT id, organization_id, project_id, environment, request_id, method, route, url, status_code, duration_ms, service, occurred_at
+       FROM events_requests
        WHERE organization_id=$1 AND id=$2
          AND ($3::uuid IS NULL OR project_id=$3)
          AND ($4::text IS NULL OR environment=$4)
@@ -320,14 +472,16 @@ export class EventAnalyticsRepository {
     traceId: string,
     projectId: string,
     environment: string,
+    limit = 1000,
   ): Promise<Array<Record<string, unknown>>> {
     const r = await this.db.query(
       `SELECT id, span_id, trace_id, parent_span_id, name, span_kind, span_status, start_time, end_time, duration_ms,
               http_method, http_route, http_status_code, db_system, db_operation, environment
        FROM events_spans
        WHERE organization_id=$1 AND trace_id=$2 AND project_id=$3 AND environment=$4
-       ORDER BY start_time ASC`,
-      [orgId, traceId, projectId, environment],
+       ORDER BY start_time ASC
+       LIMIT $5`,
+      [orgId, traceId, projectId, environment, limit],
     );
     return r.rows as Array<Record<string, unknown>>;
   }
@@ -339,7 +493,8 @@ export class EventAnalyticsRepository {
     environment: string,
   ): Promise<Record<string, unknown> | null> {
     const r = await this.db.query(
-      `SELECT * FROM events_traces
+      `SELECT id, organization_id, project_id, environment, trace_id, duration_ms, service, occurred_at
+       FROM events_traces
        WHERE organization_id=$1 AND trace_id=$2 AND project_id=$3 AND environment=$4
        ORDER BY occurred_at DESC LIMIT 1`,
       [orgId, traceId, projectId, environment],
@@ -367,7 +522,10 @@ export class EventAnalyticsRepository {
     const errorPredicate = `EXISTS (
       SELECT 1 FROM events_spans s
       WHERE s.organization_id=t.organization_id AND s.project_id=t.project_id
-        AND s.trace_id=t.trace_id AND s.environment=t.environment AND s.span_status='error'
+        AND s.trace_id=t.trace_id AND s.environment=t.environment
+        AND s.occurred_at >= t.occurred_at - INTERVAL '1 hour'
+        AND s.occurred_at <= t.occurred_at + INTERVAL '24 hours'
+        AND s.span_status='error'
     )`;
     if (filters.errorOnly) conditions.push(errorPredicate);
     const where = conditions.join(' AND ');
@@ -500,29 +658,56 @@ export class EventAnalyticsRepository {
     limit: number,
   ): Promise<Array<Record<string, unknown>>> {
     const result = await this.db.query(
-      `WITH observations AS (
-         SELECT project_id, service, occurred_at, 'trace'::text AS source FROM events_traces
-          WHERE organization_id=$1 AND occurred_at >= $2 AND occurred_at < $3 AND ($4::uuid IS NULL OR project_id=$4)
-            AND ($5::text IS NULL OR environment=$5)
+      `WITH per_source AS (
+         SELECT project_id, service,
+                COUNT(*)::bigint AS trace_count,
+                0::bigint AS request_count,
+                0::bigint AS log_count,
+                MAX(occurred_at) AS last_seen
+           FROM events_traces
+          WHERE organization_id = $1 AND occurred_at >= $2 AND occurred_at < $3
+            AND ($4::uuid IS NULL OR project_id = $4)
+            AND ($5::text IS NULL OR environment = $5)
+            AND service IS NOT NULL AND BTRIM(service) <> ''
+          GROUP BY project_id, service
+
          UNION ALL
-         SELECT project_id, service, occurred_at, 'request'::text AS source FROM events_requests
-          WHERE organization_id=$1 AND occurred_at >= $2 AND occurred_at < $3 AND ($4::uuid IS NULL OR project_id=$4)
-            AND ($5::text IS NULL OR environment=$5)
+
+         SELECT project_id, service,
+                0::bigint AS trace_count,
+                COUNT(*)::bigint AS request_count,
+                0::bigint AS log_count,
+                MAX(occurred_at) AS last_seen
+           FROM events_requests
+          WHERE organization_id = $1 AND occurred_at >= $2 AND occurred_at < $3
+            AND ($4::uuid IS NULL OR project_id = $4)
+            AND ($5::text IS NULL OR environment = $5)
+            AND service IS NOT NULL AND BTRIM(service) <> ''
+          GROUP BY project_id, service
+
          UNION ALL
-         SELECT project_id, service, occurred_at, 'log'::text AS source FROM events_logs
-          WHERE organization_id=$1 AND occurred_at >= $2 AND occurred_at < $3 AND ($4::uuid IS NULL OR project_id=$4)
-            AND ($5::text IS NULL OR environment=$5)
+
+         SELECT project_id, service,
+                0::bigint AS trace_count,
+                0::bigint AS request_count,
+                COUNT(*)::bigint AS log_count,
+                MAX(occurred_at) AS last_seen
+           FROM events_logs
+          WHERE organization_id = $1 AND occurred_at >= $2 AND occurred_at < $3
+            AND ($4::uuid IS NULL OR project_id = $4)
+            AND ($5::text IS NULL OR environment = $5)
+            AND service IS NOT NULL AND BTRIM(service) <> ''
+          GROUP BY project_id, service
        )
-       SELECT o.service, o.project_id, p.name AS project_name, p.slug AS project_slug,
-              COUNT(*)::bigint AS observed_event_count,
-              COUNT(*) FILTER (WHERE o.source='trace')::bigint AS trace_count,
-              COUNT(*) FILTER (WHERE o.source='request')::bigint AS request_count,
-              COUNT(*) FILTER (WHERE o.source='log')::bigint AS log_count,
-              MAX(o.occurred_at) AS last_seen
-       FROM observations o
-       LEFT JOIN project_lookup p ON p.project_id=o.project_id AND p.organization_id=$1
-       WHERE o.service IS NOT NULL AND BTRIM(o.service) <> ''
-       GROUP BY o.service, o.project_id, p.name, p.slug
+       SELECT s.service, s.project_id, p.name AS project_name, p.slug AS project_slug,
+              SUM(s.trace_count + s.request_count + s.log_count)::bigint AS observed_event_count,
+              SUM(s.trace_count)::bigint AS trace_count,
+              SUM(s.request_count)::bigint AS request_count,
+              SUM(s.log_count)::bigint AS log_count,
+              MAX(s.last_seen) AS last_seen
+       FROM per_source s
+       LEFT JOIN project_lookup p ON p.project_id = s.project_id AND p.organization_id = $1
+       GROUP BY s.service, s.project_id, p.name, p.slug
        ORDER BY last_seen DESC
        LIMIT $6`,
       [orgId, range.from, range.to, projectId ?? null, environment ?? null, Math.max(1, Math.min(limit, 100))],
@@ -591,7 +776,7 @@ export class EventAnalyticsRepository {
     const countRes = await this.db.query<{ count: string }>(`SELECT COUNT(*)::bigint AS count FROM analytics_user_sessions WHERE ${where}`, params);
     params.push(filters.limit, filters.offset);
     const r = await this.db.query(
-      `SELECT * FROM analytics_user_sessions WHERE ${where} ORDER BY started_at DESC LIMIT $${params.length - 1} OFFSET $${params.length}`,
+      `SELECT ${ANALYTICS_USER_SESSION_COLUMNS} FROM analytics_user_sessions WHERE ${where} ORDER BY started_at DESC LIMIT $${params.length - 1} OFFSET $${params.length}`,
       params,
     );
     return { rows: r.rows as Array<Record<string, unknown>>, total: Number(countRes.rows[0]?.count ?? 0) };
@@ -604,7 +789,7 @@ export class EventAnalyticsRepository {
     environment: string,
   ): Promise<Record<string, unknown> | null> {
     const r = await this.db.query(
-      `SELECT * FROM analytics_user_sessions
+      `SELECT ${ANALYTICS_USER_SESSION_COLUMNS} FROM analytics_user_sessions
        WHERE organization_id=$1 AND session_id=$2 AND project_id=$3 AND environment=$4
        LIMIT 1`,
       [orgId, sessionId, projectId, environment],
@@ -692,19 +877,19 @@ export class EventAnalyticsRepository {
   async createDashboard(input: { orgId: string; projectId: string | null; name: string; description: string | null; layout: Record<string, unknown>; widgets: unknown[]; isShared: boolean; createdBy: string }): Promise<Record<string, unknown>> {
     const r = await this.db.query(
       `INSERT INTO analytics_dashboards (organization_id, project_id, name, description, layout, widgets, is_shared, created_by)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING ${ANALYTICS_DASHBOARD_COLUMNS}`,
       [input.orgId, input.projectId, input.name, input.description, JSON.stringify(input.layout), JSON.stringify(input.widgets), input.isShared, input.createdBy],
     );
     return r.rows[0] as Record<string, unknown>;
   }
 
-  async listDashboards(orgId: string): Promise<Array<Record<string, unknown>>> {
-    const r = await this.db.query(`SELECT * FROM analytics_dashboards WHERE organization_id=$1 AND deleted_at IS NULL ORDER BY created_at DESC`, [orgId]);
+  async listDashboards(orgId: string, limit = 100): Promise<Array<Record<string, unknown>>> {
+    const r = await this.db.query(`SELECT ${ANALYTICS_DASHBOARD_COLUMNS} FROM analytics_dashboards WHERE organization_id=$1 AND deleted_at IS NULL ORDER BY created_at DESC LIMIT $2`, [orgId, limit]);
     return r.rows as Array<Record<string, unknown>>;
   }
 
   async getDashboard(orgId: string, id: string): Promise<Record<string, unknown> | null> {
-    const r = await this.db.query(`SELECT * FROM analytics_dashboards WHERE organization_id=$1 AND id=$2 AND deleted_at IS NULL`, [orgId, id]);
+    const r = await this.db.query(`SELECT ${ANALYTICS_DASHBOARD_COLUMNS} FROM analytics_dashboards WHERE organization_id=$1 AND id=$2 AND deleted_at IS NULL`, [orgId, id]);
     return (r.rows[0] as Record<string, unknown>) ?? null;
   }
 
@@ -718,7 +903,7 @@ export class EventAnalyticsRepository {
     }
     vals.push(id, orgId);
     const r = await this.db.query(
-      `UPDATE analytics_dashboards SET ${set.join(',')} WHERE id=$${vals.length - 1} AND organization_id=$${vals.length} AND deleted_at IS NULL RETURNING *`,
+      `UPDATE analytics_dashboards SET ${set.join(',')} WHERE id=$${vals.length - 1} AND organization_id=$${vals.length} AND deleted_at IS NULL RETURNING ${ANALYTICS_DASHBOARD_COLUMNS}`,
       vals,
     );
     return (r.rows[0] as Record<string, unknown>) ?? null;
@@ -733,19 +918,19 @@ export class EventAnalyticsRepository {
   async createSavedQuery(input: { orgId: string; projectId: string | null; name: string; description: string | null; queryType: string; queryConfig: Record<string, unknown>; visualizationType: string | null; visualizationConfig: Record<string, unknown>; createdBy: string }): Promise<Record<string, unknown>> {
     const r = await this.db.query(
       `INSERT INTO analytics_saved_queries (organization_id, project_id, name, description, query_type, query_config, visualization_type, visualization_config, created_by)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING ${ANALYTICS_SAVED_QUERY_COLUMNS}`,
       [input.orgId, input.projectId, input.name, input.description, input.queryType, JSON.stringify(input.queryConfig), input.visualizationType, JSON.stringify(input.visualizationConfig), input.createdBy],
     );
     return r.rows[0] as Record<string, unknown>;
   }
 
-  async listSavedQueries(orgId: string): Promise<Array<Record<string, unknown>>> {
-    const r = await this.db.query(`SELECT * FROM analytics_saved_queries WHERE organization_id=$1 AND deleted_at IS NULL ORDER BY created_at DESC`, [orgId]);
+  async listSavedQueries(orgId: string, limit = 100): Promise<Array<Record<string, unknown>>> {
+    const r = await this.db.query(`SELECT ${ANALYTICS_SAVED_QUERY_COLUMNS} FROM analytics_saved_queries WHERE organization_id=$1 AND deleted_at IS NULL ORDER BY created_at DESC LIMIT $2`, [orgId, limit]);
     return r.rows as Array<Record<string, unknown>>;
   }
 
   async getSavedQuery(orgId: string, id: string): Promise<Record<string, unknown> | null> {
-    const r = await this.db.query(`SELECT * FROM analytics_saved_queries WHERE organization_id=$1 AND id=$2 AND deleted_at IS NULL`, [orgId, id]);
+    const r = await this.db.query(`SELECT ${ANALYTICS_SAVED_QUERY_COLUMNS} FROM analytics_saved_queries WHERE organization_id=$1 AND id=$2 AND deleted_at IS NULL`, [orgId, id]);
     return (r.rows[0] as Record<string, unknown>) ?? null;
   }
 
@@ -758,19 +943,19 @@ export class EventAnalyticsRepository {
   async createAlert(input: { orgId: string; projectId: string | null; name: string; metric: string; operator: string; threshold: number; windowMinutes: number; notificationChannels: string[]; isActive: boolean; createdBy: string }): Promise<Record<string, unknown>> {
     const r = await this.db.query(
       `INSERT INTO analytics_alerts (organization_id, project_id, name, metric, operator, threshold, window_minutes, notification_channels, is_active, created_by)
-       VALUES ($1,$2,$3,$4,$5::analytics_alert_operator,$6,$7,$8,$9,$10) RETURNING *`,
+       VALUES ($1,$2,$3,$4,$5::analytics_alert_operator,$6,$7,$8,$9,$10) RETURNING ${ANALYTICS_ALERT_COLUMNS}`,
       [input.orgId, input.projectId, input.name, input.metric, input.operator, input.threshold, input.windowMinutes, JSON.stringify(input.notificationChannels), input.isActive, input.createdBy],
     );
     return r.rows[0] as Record<string, unknown>;
   }
 
-  async listAlerts(orgId: string): Promise<Array<Record<string, unknown>>> {
-    const r = await this.db.query(`SELECT * FROM analytics_alerts WHERE organization_id=$1 AND deleted_at IS NULL ORDER BY created_at DESC`, [orgId]);
+  async listAlerts(orgId: string, limit = 100): Promise<Array<Record<string, unknown>>> {
+    const r = await this.db.query(`SELECT ${ANALYTICS_ALERT_COLUMNS} FROM analytics_alerts WHERE organization_id=$1 AND deleted_at IS NULL ORDER BY created_at DESC LIMIT $2`, [orgId, limit]);
     return r.rows as Array<Record<string, unknown>>;
   }
 
   async getAlert(orgId: string, id: string): Promise<Record<string, unknown> | null> {
-    const r = await this.db.query(`SELECT * FROM analytics_alerts WHERE organization_id=$1 AND id=$2 AND deleted_at IS NULL`, [orgId, id]);
+    const r = await this.db.query(`SELECT ${ANALYTICS_ALERT_COLUMNS} FROM analytics_alerts WHERE organization_id=$1 AND id=$2 AND deleted_at IS NULL`, [orgId, id]);
     return (r.rows[0] as Record<string, unknown>) ?? null;
   }
 
@@ -782,8 +967,14 @@ export class EventAnalyticsRepository {
   // ── Export ─────────────────────────────────────────────────────────────
   async exportDataset(orgId: string, dataset: 'errors' | 'requests' | 'logs' | 'metrics', range: TimeRange, projectId: string | undefined, environment: string | undefined, limit: number): Promise<Array<Record<string, unknown>>> {
     const table = { errors: 'events_errors', requests: 'events_requests', logs: 'events_logs', metrics: 'events_metrics' }[dataset];
+    const columns = {
+      errors: 'id, organization_id, project_id, environment, event_id, error_name, message, severity, method, route, url, status_code, service, release, occurred_at',
+      requests: 'id, organization_id, project_id, environment, request_id, method, route, url, status_code, duration_ms, service, occurred_at',
+      logs: 'id, organization_id, project_id, environment, log_id, level, message, service, occurred_at',
+      metrics: 'id, organization_id, project_id, environment, metric_name, metric_type, value, unit, occurred_at',
+    }[dataset];
     const r = await this.db.query(
-      `SELECT * FROM ${table}
+      `SELECT ${columns} FROM ${table}
        WHERE organization_id=$1 AND occurred_at >= $2 AND occurred_at < $3 AND ($4::uuid IS NULL OR project_id=$4)
          AND ($5::text IS NULL OR environment=$5)
        ORDER BY occurred_at DESC LIMIT $6`,

@@ -26,23 +26,35 @@ const httpRequestsInFlight = new promClient.Gauge({
     help: 'Number of HTTP requests currently being processed',
     registers: [register],
 });
+const STATUS_CODE_CACHE = [];
+for (let i = 100; i < 600; i++) {
+    STATUS_CODE_CACHE[i] = String(i);
+}
+function getStatusCodeString(code) {
+    return STATUS_CODE_CACHE[code] || String(code);
+}
 async function metricsPlugin(fastify) {
     initializeMetrics();
     fastify.get('/metrics', async (_request, reply) => {
         reply.type(register.contentType);
         return register.metrics();
     });
-    fastify.addHook('onRequest', async () => {
+    fastify.addHook('onRequest', async (request) => {
         httpRequestsInFlight.inc();
+        if (!request.startTime) {
+            request.startTime = Date.now();
+        }
     });
     fastify.addHook('onResponse', async (request, reply) => {
         httpRequestsInFlight.dec();
-        const duration = (Date.now() - request.startTime) / 1000;
-        const route = request.routerPath || request.url;
+        const startTime = request.startTime;
+        const duration = startTime ? Math.max(0, (Date.now() - startTime) / 1000) : 0;
+        // Strictly bound route label cardinality to prevent memory leak from random 404/unmatched URLs
+        const route = request.routeOptions?.url || request.routerPath || 'unmatched';
         const labels = {
             method: request.method,
             route,
-            status_code: reply.statusCode.toString(),
+            status_code: getStatusCodeString(reply.statusCode),
         };
         httpRequestTotal.inc(labels);
         httpRequestDurationMicroseconds.observe(labels, duration);

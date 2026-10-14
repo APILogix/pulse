@@ -1,0 +1,362 @@
+{
+  "schema_version": "2.1.0",
+  "catalog_version": 2,
+  "generated_at": "2026-10-11T00:00:00.000Z",
+  "description": "Canonical catalog of capacity add-ons, promotional coupon templates, regional tax rules, and per-plan SDK default remote configurations.",
+  "addons": {
+    "database_tables": [
+      "addons",
+      "addon_prices",
+      "subscription_addons"
+    ],
+    "canonical_seeder_source": "031b_seed_addon_catalog_canonical.sql",
+    "seeding_status_warning": "Tables addons and addon_prices exist in database/primarydbv2/schema/07_billing/, and AddonsService/AddonsRepository query them, but 031b_seed_addon_catalog_canonical.sql is not currently copied into database/primarydbv2/schema/20_seeders/.",
+    "items": [
+      {
+        "key": "events_10m",
+        "name": "10M Event Credit Pack",
+        "description": "Additional 10,000,000 monthly billable event credits capacity",
+        "category": "capacity",
+        "target_feature_key": "quota.monthly_events",
+        "available_in_tiers": [
+          "starter",
+          "growth",
+          "business"
+        ],
+        "not_available_in_tiers": [
+          "free",
+          "enterprise"
+        ],
+        "is_active": true,
+        "prices": [
+          {
+            "provider": "stripe",
+            "billing_interval": "monthly",
+            "currency": "USD",
+            "amount_minor": 4900,
+            "amount_major": 49,
+            "pricing_model": "per_unit",
+            "unit_quantity": 10000000,
+            "unit_label": "credits",
+            "is_default": true
+          }
+        ]
+      },
+      {
+        "key": "ai_credits_100k",
+        "name": "100K AI Credits Pack",
+        "description": "Additional 100,000 monthly AI investigation credits capacity",
+        "category": "capacity",
+        "target_feature_key": "quota.ai_credits",
+        "available_in_tiers": [
+          "starter",
+          "growth",
+          "business"
+        ],
+        "not_available_in_tiers": [
+          "free",
+          "enterprise"
+        ],
+        "is_active": true,
+        "prices": [
+          {
+            "provider": "stripe",
+            "billing_interval": "monthly",
+            "currency": "USD",
+            "amount_minor": 9900,
+            "amount_major": 99,
+            "pricing_model": "per_unit",
+            "unit_quantity": 100000,
+            "unit_label": "credits",
+            "is_default": true
+          }
+        ]
+      },
+      {
+        "key": "extra_project",
+        "name": "Extra Project Slot",
+        "description": "One additional project slot above plan quota.projects limit",
+        "category": "capacity",
+        "target_feature_key": "quota.projects",
+        "available_in_tiers": [
+          "starter",
+          "growth",
+          "business"
+        ],
+        "not_available_in_tiers": [
+          "free",
+          "enterprise"
+        ],
+        "is_active": true,
+        "prices": [
+          {
+            "provider": "stripe",
+            "billing_interval": "monthly",
+            "currency": "USD",
+            "amount_minor": 500,
+            "amount_major": 5,
+            "pricing_model": "per_unit",
+            "unit_quantity": 1,
+            "unit_label": "projects",
+            "is_default": true
+          }
+        ]
+      },
+      {
+        "key": "extra_member",
+        "name": "Extra Team Member Seat",
+        "description": "One additional organization member seat above plan quota.members limit",
+        "category": "capacity",
+        "target_feature_key": "quota.members",
+        "available_in_tiers": [
+          "starter",
+          "growth",
+          "business"
+        ],
+        "not_available_in_tiers": [
+          "free",
+          "enterprise"
+        ],
+        "is_active": true,
+        "prices": [
+          {
+            "provider": "stripe",
+            "billing_interval": "monthly",
+            "currency": "USD",
+            "amount_minor": 1000,
+            "amount_major": 10,
+            "pricing_model": "per_unit",
+            "unit_quantity": 1,
+            "unit_label": "members",
+            "is_default": true
+          }
+        ]
+      }
+    ]
+  },
+  "promotional_coupons": {
+    "database_tables": [
+      "coupons",
+      "coupon_applicable_plans",
+      "coupon_redemptions"
+    ],
+    "supported_discount_types": [
+      "percentage",
+      "fixed_amount",
+      "credit",
+      "trial"
+    ],
+    "templates": [
+      {
+        "code": "WELCOME20",
+        "name": "20% Welcome Discount",
+        "description": "20% recurring discount for the first 3 months for new customers",
+        "discount_type": "percentage",
+        "discount_value": 20,
+        "currency": null,
+        "duration_type": "repeating",
+        "duration_months": 3,
+        "max_redemptions": null,
+        "max_redemptions_per_org": 1,
+        "applicable_plan_keys": [
+          "starter",
+          "growth",
+          "business"
+        ],
+        "first_time_customers_only": true,
+        "trial_only": false,
+        "is_active": true
+      },
+      {
+        "code": "STARTER50",
+        "name": "50% Off Starter (First Month)",
+        "description": "One-time 50% discount on Starter plan for first-time customers",
+        "discount_type": "percentage",
+        "discount_value": 50,
+        "currency": null,
+        "duration_type": "once",
+        "duration_months": null,
+        "max_redemptions": 1000,
+        "max_redemptions_per_org": 1,
+        "applicable_plan_keys": [
+          "starter"
+        ],
+        "first_time_customers_only": true,
+        "trial_only": false,
+        "is_active": true
+      },
+      {
+        "code": "AI100K",
+        "name": "100K Free AI Credits",
+        "description": "Promotional grant of 100,000 bonus AI credits on Growth, Business, or Enterprise",
+        "discount_type": "credit",
+        "discount_value": 100000,
+        "currency": null,
+        "duration_type": "once",
+        "duration_months": null,
+        "max_redemptions": null,
+        "max_redemptions_per_org": 1,
+        "applicable_plan_keys": [
+          "growth",
+          "business",
+          "enterprise"
+        ],
+        "first_time_customers_only": false,
+        "trial_only": false,
+        "is_active": true
+      },
+      {
+        "code": "TRIAL30",
+        "name": "Extended 30-Day Trial",
+        "description": "Extends trial period to 30 days on Starter and Growth plans",
+        "discount_type": "trial",
+        "discount_value": 30,
+        "currency": null,
+        "duration_type": "once",
+        "duration_months": null,
+        "max_redemptions": null,
+        "max_redemptions_per_org": 1,
+        "applicable_plan_keys": [
+          "starter",
+          "growth"
+        ],
+        "first_time_customers_only": true,
+        "trial_only": true,
+        "is_active": true
+      }
+    ]
+  },
+  "regional_tax_configurations": [
+    {
+      "tax_key": "default_us",
+      "display_name": "United States Default",
+      "country_code": "US",
+      "region_code": null,
+      "tax_rate": 0,
+      "tax_behavior": "exclusive",
+      "reverse_charge_supported": false,
+      "vat_number_required": false,
+      "is_default": true
+    },
+    {
+      "tax_key": "default_eu",
+      "display_name": "European Union VAT",
+      "country_code": null,
+      "region_code": "EU",
+      "tax_rate": 0.2,
+      "tax_behavior": "exclusive",
+      "reverse_charge_supported": true,
+      "vat_number_required": true,
+      "is_default": false
+    },
+    {
+      "tax_key": "default_gb",
+      "display_name": "United Kingdom VAT",
+      "country_code": "GB",
+      "region_code": null,
+      "tax_rate": 0.2,
+      "tax_behavior": "exclusive",
+      "reverse_charge_supported": true,
+      "vat_number_required": true,
+      "is_default": false
+    },
+    {
+      "tax_key": "default_in",
+      "display_name": "India GST",
+      "country_code": "IN",
+      "region_code": null,
+      "tax_rate": 0.18,
+      "tax_behavior": "exclusive",
+      "reverse_charge_supported": false,
+      "vat_number_required": true,
+      "is_default": false
+    }
+  ],
+  "sdk_default_configurations_by_plan": {
+    "free": {
+      "sampling.trace_rate": 0.05,
+      "sampling.error_rate": 1,
+      "sampling.profile_rate": 0,
+      "transport.batch_size": 50,
+      "transport.flush_interval_ms": 5000,
+      "transport.compression": true,
+      "sdk.offline_queue": false,
+      "sdk.dynamic_sampling": false,
+      "privacy.data_scrubbing": false,
+      "privacy.capture_headers": false,
+      "privacy.capture_body": false,
+      "privacy.capture_ip": false,
+      "quota.sdk_batch_queue_size": 0,
+      "quota.sdk_offline_queue_limit": 0,
+      "quota.sdk_persistence_per_minute_fallback": 100000
+    },
+    "starter": {
+      "sampling.trace_rate": 0.1,
+      "sampling.error_rate": 1,
+      "sampling.profile_rate": 0.05,
+      "transport.batch_size": 100,
+      "transport.flush_interval_ms": 3000,
+      "transport.compression": true,
+      "sdk.offline_queue": false,
+      "sdk.dynamic_sampling": false,
+      "privacy.data_scrubbing": false,
+      "privacy.capture_headers": false,
+      "privacy.capture_body": false,
+      "privacy.capture_ip": false,
+      "quota.sdk_batch_queue_size": 1000,
+      "quota.sdk_offline_queue_limit": 0,
+      "quota.sdk_persistence_per_minute_fallback": 100000
+    },
+    "growth": {
+      "sampling.trace_rate": 0.2,
+      "sampling.error_rate": 1,
+      "sampling.profile_rate": 0.1,
+      "transport.batch_size": 250,
+      "transport.flush_interval_ms": 2000,
+      "transport.compression": true,
+      "sdk.offline_queue": true,
+      "sdk.dynamic_sampling": true,
+      "privacy.data_scrubbing": true,
+      "privacy.capture_headers": false,
+      "privacy.capture_body": false,
+      "privacy.capture_ip": false,
+      "quota.sdk_batch_queue_size": 10000,
+      "quota.sdk_offline_queue_limit": 5000,
+      "quota.sdk_persistence_per_minute_fallback": 100000
+    },
+    "business": {
+      "sampling.trace_rate": 0.5,
+      "sampling.error_rate": 1,
+      "sampling.profile_rate": 0.25,
+      "transport.batch_size": 500,
+      "transport.flush_interval_ms": 1000,
+      "transport.compression": true,
+      "sdk.offline_queue": true,
+      "sdk.dynamic_sampling": true,
+      "privacy.data_scrubbing": true,
+      "privacy.capture_headers": true,
+      "privacy.capture_body": true,
+      "privacy.capture_ip": false,
+      "quota.sdk_batch_queue_size": 50000,
+      "quota.sdk_offline_queue_limit": 25000,
+      "quota.sdk_persistence_per_minute_fallback": 250000
+    },
+    "enterprise": {
+      "sampling.trace_rate": 1,
+      "sampling.error_rate": 1,
+      "sampling.profile_rate": 1,
+      "transport.batch_size": 1000,
+      "transport.flush_interval_ms": 500,
+      "transport.compression": true,
+      "sdk.offline_queue": true,
+      "sdk.dynamic_sampling": true,
+      "privacy.data_scrubbing": true,
+      "privacy.capture_headers": true,
+      "privacy.capture_body": true,
+      "privacy.capture_ip": true,
+      "quota.sdk_batch_queue_size": 100000,
+      "quota.sdk_offline_queue_limit": 100000,
+      "quota.sdk_persistence_per_minute_fallback": 1000000
+    }
+  }
+}

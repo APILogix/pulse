@@ -7,8 +7,21 @@ export interface BootstrapUserContext {
     name?: string | null;
     avatarUrl?: string | null;
 }
+export interface OwnedOrganizationSummary {
+    id: string;
+    name: string;
+    slug: string;
+    status: string;
+}
+export interface OrganizationCreationEligibility {
+    /** False when POST /organizations would reject with "User already owns an organization". */
+    allowed: boolean;
+    /** The organization that blocks creation, when there is one. */
+    ownedOrganization: OwnedOrganizationSummary | null;
+}
 export interface BootstrapResponseData {
     currentOrganizationId: string | null;
+    organizationCreation: OrganizationCreationEligibility;
     organizations: Array<{
         id: string;
         name: string;
@@ -60,6 +73,12 @@ export declare class BootstrapService {
     private readonly usage;
     constructor(db?: Pool, entitlements?: EntitlementsService, usage?: UsageService);
     private fetchQuotaUsageCounts;
+    /**
+     * Same rule as CoreRepository.createOrg: a user may own one organization
+     * that is not deleted (archived ones still count). Returning it here lets
+     * the console explain the limit before the user fills in the form.
+     */
+    private fetchOrganizationCreation;
     private emptyUsage;
     getBootstrapContext(user: BootstrapUserContext, preferredOrgId?: string | null): Promise<BootstrapResponseData>;
 }

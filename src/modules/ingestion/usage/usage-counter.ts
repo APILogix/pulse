@@ -1,5 +1,6 @@
-﻿import type { Pool } from 'pg';
+import type { Pool, QueryResult, QueryResultRow } from 'pg';
 import type { Logger } from 'pino';
+import { isExpectedServerlessDisconnect, isTransientPostgresError } from '../../../config/postgres-ssl.js';
 
 export type CounterType = 'events' | 'requests' | 'errors' | 'bytes_ingested' | 'rate_limited' | string;
 
@@ -43,9 +44,13 @@ export class UsageCounter {
   private readonly bufferLimit: number;
   private readonly driveRollup: boolean;
   private timer: NodeJS.Timeout | null = null;
-  private flushing = false;
+  private flushPromise: Promise<void> | null = null;
+  private flushRequested = false;
   private stopped = false;
   private schemaReady: Promise<void> | null = null;
+
+  // Hard bound to guarantee memory cannot grow without limit under sustained sink failure
+  private static readonly MAX_BUFFER_HARD_LIMIT = 20_000;
 
   constructor(private readonly pool: Pool, private readonly log: Logger, opts: UsageCounterOptions = {}) {
     this.flushIntervalMs = opts.flushIntervalMs ?? 30_000;
@@ -56,7 +61,9 @@ export class UsageCounter {
   start(): void {
     if (this.timer) return;
     this.stopped = false;
-    this.timer = setInterval(() => void this.flush(), this.flushIntervalMs);
+    this.timer = setInterval(() => {
+      void this.flush().catch(() => undefined);
+    }, this.flushIntervalMs);
     this.timer.unref?.();
     this.log.info({ flushIntervalMs: this.flushIntervalMs }, 'UsageCounter started');
   }
@@ -73,19 +80,93 @@ export class UsageCounter {
     const eventType = dimensions.eventType?.trim() || 'all';
     const key = [projectId, orgId, counterType, apiKeyId ?? '', eventType].join('\u0000');
     const existing = this.buffer.get(key);
-    if (existing) existing.value += by;
-    else this.buffer.set(key, { projectId, orgId, counterType, value: by, apiKeyId, eventType });
-    if (this.buffer.size >= this.bufferLimit) void this.flush();
+    if (existing) {
+      existing.value = Math.round((existing.value + by) * 10000) / 10000;
+    } else {
+      if (this.buffer.size >= UsageCounter.MAX_BUFFER_HARD_LIMIT) {
+        const oldestKey = this.buffer.keys().next().value;
+        if (oldestKey !== undefined) {
+          this.buffer.delete(oldestKey);
+        }
+        this.log.warn(
+          { bufferSize: this.buffer.size, hardLimit: UsageCounter.MAX_BUFFER_HARD_LIMIT },
+          'UsageCounter buffer reached hard cap; evicted oldest entry to bound memory',
+        );
+      }
+      this.buffer.set(key, { projectId, orgId, counterType, value: Math.round(by * 10000) / 10000, apiKeyId, eventType });
+    }
+    if (this.buffer.size >= this.bufferLimit) {
+      void this.flush().catch(() => undefined);
+    }
   }
 
-  async flush(): Promise<void> {
-    if (this.flushing) return;
-    await this.ensureSchema();
+  flush(): Promise<void> {
+    if (this.flushPromise) {
+      // A threshold/timer/stop request that arrives during a flush means data
+      // may have accumulated in the replacement buffer. The owner loops once
+      // more before resolving, so callers never mistake the first snapshot for
+      // a complete drain.
+      this.flushRequested = true;
+      return this.flushPromise;
+    }
+
+    this.flushRequested = false;
+    const run = (async () => {
+      do {
+        this.flushRequested = false;
+        await this.flushOnce();
+      } while (this.flushRequested && this.buffer.size > 0);
+    })();
+    const tracked = run.finally(() => {
+      if (this.flushPromise === tracked) this.flushPromise = null;
+    });
+    this.flushPromise = tracked;
+    return tracked;
+  }
+
+  private async executeWithRetry<R extends QueryResultRow = any>(
+    sql: string,
+    params?: unknown[],
+    maxRetries = 2,
+  ): Promise<QueryResult<R>> {
+    let attempt = 0;
+    while (true) {
+      try {
+        return await this.pool.query<R>(sql, params);
+      } catch (err: unknown) {
+        attempt++;
+        if (attempt <= maxRetries && isTransientPostgresError(err)) {
+          const delayMs = Math.min(2000, 150 * 2 ** (attempt - 1));
+          this.log.debug(
+            { attempt, maxRetries, delayMs, err: err instanceof Error ? err.message : String(err) },
+            'Transient database error in UsageCounter query; retrying...',
+          );
+          await new Promise((resolve) => setTimeout(resolve, delayMs));
+          continue;
+        }
+        throw err;
+      }
+    }
+  }
+
+  private async flushOnce(): Promise<void> {
     if (this.buffer.size === 0) {
       await this.runRollup();
       return;
     }
-    this.flushing = true;
+
+    // This await is inside the authoritative flushPromise. A concurrent caller
+    // therefore joins this work instead of starting a second schema/flush path.
+    try {
+      await this.ensureSchema();
+    } catch (err) {
+      this.log.warn(
+        { err, bufferedEntries: this.buffer.size, bufferLimit: this.bufferLimit },
+        'UsageCounter schema check failed; counts remain buffered',
+      );
+      throw err;
+    }
+
     const draining = this.buffer;
     this.buffer = new Map<string, BufferEntry>();
     try {
@@ -103,7 +184,7 @@ export class UsageCounter {
           entry.value,
         );
       }
-      await this.pool.query(
+      await this.executeWithRetry(
         `INSERT INTO usage_counter_staging (
            project_id, org_id, api_key_id, event_type, counter_type, increment_by
          ) VALUES ${tuples.join(', ')}`,
@@ -111,19 +192,34 @@ export class UsageCounter {
       );
     } catch (err) {
       for (const [key, entry] of draining) {
+        if (this.buffer.size >= UsageCounter.MAX_BUFFER_HARD_LIMIT && !this.buffer.has(key)) {
+          continue; // Respect hard cap on re-buffering
+        }
         const current = this.buffer.get(key);
         if (current) current.value += entry.value;
         else this.buffer.set(key, entry);
       }
-      this.log.warn({ err }, 'UsageCounter staging flush failed; counts re-buffered');
-    } finally {
-      this.flushing = false;
+      const bufferedEntries = this.buffer.size;
+      const isExpected = isExpectedServerlessDisconnect(err);
+      this.log[isExpected ? 'debug' : 'warn'](
+        {
+          err,
+          bufferedEntries,
+          bufferLimit: this.bufferLimit,
+          overLimitBy: Math.max(0, bufferedEntries - this.bufferLimit),
+        },
+        'UsageCounter staging flush failed; counts re-buffered',
+      );
+      // The rejection is intentional: stop() can retry once and, if the final
+      // drain still fails, propagate failure instead of claiming a clean drain.
+      throw err;
     }
+
     await this.runRollup();
   }
 
   private async ensureSchema(): Promise<void> {
-    this.schemaReady ??= this.pool.query(`
+    this.schemaReady ??= this.executeWithRetry(`
       CREATE UNLOGGED TABLE IF NOT EXISTS usage_counter_staging (
         id BIGSERIAL PRIMARY KEY,
         project_id UUID NOT NULL,
@@ -131,7 +227,7 @@ export class UsageCounter {
         api_key_id UUID,
         event_type TEXT NOT NULL DEFAULT 'all',
         counter_type VARCHAR(64) NOT NULL,
-        increment_by BIGINT NOT NULL DEFAULT 1 CHECK (increment_by > 0),
+        increment_by NUMERIC(14, 4) NOT NULL DEFAULT 1 CHECK (increment_by > 0),
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       );
 
@@ -159,7 +255,7 @@ export class UsageCounter {
     if (!this.driveRollup) return;
     try {
       for (let i = 0; i < 20; i++) {
-        const result = await this.pool.query<{ flushed_count: string }>(
+        const result = await this.executeWithRetry<{ flushed_count: string }>(
           'SELECT flushed_count FROM flush_usage_counters()',
         );
         if (result.rowCount === 0) break;
@@ -175,7 +271,7 @@ export class UsageCounter {
     const params: unknown[] = [projectId];
     const bucketClause = periodStart ? ' AND bucket = $2' : '';
     if (periodStart) params.push(periodStart);
-    const result = await this.pool.query<{ total_value: string }>(
+    const result = await this.executeWithRetry<{ total_value: string }>(
       `SELECT COALESCE(SUM(${column}), 0)::text AS total_value
          FROM project_usage_realtime
         WHERE project_id = $1${bucketClause}`,
@@ -189,6 +285,14 @@ export class UsageCounter {
     if (this.timer) {
       clearInterval(this.timer);
       this.timer = null;
+    }
+
+    // Join work already in flight. If it failed, flushOnce re-buffered every
+    // count; the final flush below is then a clean retry after the tracked
+    // promise has cleared.
+    if (this.flushPromise) {
+      this.flushRequested = true;
+      await this.flushPromise.catch(() => undefined);
     }
     await this.flush();
     this.log.info('UsageCounter stopped (final flush complete)');

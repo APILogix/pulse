@@ -3,6 +3,7 @@ import { AlertConflictError, AlertNotFoundError, } from '../types.js';
 function pgCode(e) {
     return typeof e === 'object' && e !== null ? e.code : undefined;
 }
+export const ALERT_METRICS_COLUMNS = 'id, organization_id, rule_id, metric_type, value, bucket_start, bucket_end, granularity, labels, created_at';
 export class MetricsRepository {
     db;
     /**
@@ -57,7 +58,7 @@ export class MetricsRepository {
             conditions.push(`bucket_start <= $${params.length}`);
         }
         params.push(filters.limit);
-        const r = await this.db.query(`SELECT * FROM alert_metrics WHERE ${conditions.join(' AND ')}
+        const r = await this.db.query(`SELECT ${ALERT_METRICS_COLUMNS} FROM alert_metrics WHERE ${conditions.join(' AND ')}
        ORDER BY bucket_start DESC LIMIT $${params.length}`, params);
         return r.rows;
     }

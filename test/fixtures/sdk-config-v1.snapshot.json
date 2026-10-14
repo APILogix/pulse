@@ -11,12 +11,12 @@
     "errors": true,
     "metrics": true,
     "logging": true,
-    "profiling": false,
-    "crons": false,
-    "sessionReplay": false,
-    "runtimeMetrics": false,
-    "eventLoopMonitoring": false,
-    "gcMonitoring": false
+    "profiling": true,
+    "crons": true,
+    "sessionReplay": true,
+    "runtimeMetrics": true,
+    "eventLoopMonitoring": true,
+    "gcMonitoring": true
   },
   "sampling": {
     "errors": 1,
@@ -27,22 +27,10 @@
     "logs": 1,
     "events": 1,
     "messages": 1,
-    "profiles": 0.1,
-    "replays": 0.1,
+    "profiles": 1,
+    "replays": 1,
     "crons": 1,
-    "routes": {
-      "/health": {
-        "traces": 0,
-        "requests": 0,
-        "spans": 0,
-        "metrics": 0,
-        "logs": 0
-      },
-      "/favicon.ico": {
-        "traces": 0,
-        "requests": 0
-      }
-    }
+    "routes": {}
   },
   "instrumentation": {
     "http": true,
@@ -51,13 +39,13 @@
     "axios": false,
     "fastify": true,
     "express": true,
-    "graphql": false,
-    "prisma": false,
-    "mongodb": false,
-    "redis": false,
-    "bullmq": false,
-    "pg": false,
-    "mysql2": false,
+    "graphql": true,
+    "prisma": true,
+    "mongodb": true,
+    "redis": true,
+    "bullmq": true,
+    "pg": true,
+    "mysql2": true,
     "eventEmitterPatch": true
   },
   "privacy": {
@@ -98,11 +86,11 @@
     }
   },
   "limits": {
-    "maxSpansPerTrace": 2000,
-    "maxSpanAttributes": 128,
-    "maxAttributeLength": 4096,
-    "maxPayloadSize": 1048576,
-    "maxQueueSize": 10000,
+    "maxSpansPerTrace": 5000,
+    "maxSpanAttributes": 200,
+    "maxAttributeLength": 8192,
+    "maxPayloadSize": 4194304,
+    "maxQueueSize": 100000,
     "maxMemoryMb": "auto",
     "tenantGovernance": {
       "enabled": false,
@@ -110,6 +98,11 @@
       "quotaPerWindow": 10000,
       "windowDurationMs": 60000,
       "criticalReserve": 100
+    },
+    "persistenceGovernance": {
+      "maxPersistPerMinute": 100000,
+      "adaptive": true,
+      "budgetExceededLogIntervalMs": 60000
     }
   },
   "killswitches": {
@@ -130,11 +123,11 @@
     },
     "queue": {
       "overflowStrategy": "drop_oldest",
-      "maxSize": 10000,
-      "criticalReserve": 1000
+      "maxSize": 100000,
+      "criticalReserve": 10000
     },
     "connections": {
-      "maxTotalConnections": 50,
+      "maxTotalConnections": 100,
       "acquireTimeoutMs": 5000
     },
     "keepAlive": true,
@@ -233,10 +226,10 @@
   "entitlements": {
     "customSpans": true,
     "customMetrics": true,
-    "profiling": false,
+    "profiling": true,
     "logging": true,
-    "sessionReplay": false,
-    "crons": false,
+    "sessionReplay": true,
+    "crons": true,
     "requestCapture": true,
     "tracing": true,
     "errors": true,

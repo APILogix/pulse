@@ -137,6 +137,25 @@ export interface AppendHistoryInput {
     changesSummary?: Record<string, unknown>;
     metadata?: Record<string, unknown>;
 }
+/**
+ * Canonical alerting -> automation domain event.
+ * See docs/automationv2/27-alerting-automation-event-contract.md for the full
+ * contract and field derivation.
+ */
+export interface AppendDomainOutboxInput {
+    organizationId: string;
+    projectId?: string | null;
+    environment?: string | null;
+    alertKey: string;
+    alertEventId: string;
+    eventType: 'alert.event.created' | 'alert.event.resolved';
+    /** `alert:{eventType}:{alert_events_v2.idempotency_key}` */
+    dedupeKey: string;
+    severity: LogDbSeverity;
+    occurredAt: Date;
+    payload: Record<string, unknown>;
+    metadata?: Record<string, unknown>;
+}
 export interface NotificationJobInsert {
     organizationId: string;
     projectId?: string | null;
@@ -251,12 +270,51 @@ export interface UpsertRuleEvalStateInput {
     firedAt?: Date | null;
     recoveredAt?: Date | null;
 }
+/** Scope identity for an atomic evaluation-state transition. */
+interface RuleEvalScopeIdentity {
+    scopeHash: string;
+    organizationId: string;
+    ruleId: string;
+    bindingId?: string | null;
+    projectId?: string | null;
+    environment?: string | null;
+    service?: string | null;
+    endpoint?: string | null;
+    evaluatedAt: Date;
+}
+export interface ClaimBreachDecisionInput extends RuleEvalScopeIdentity {
+    /** Effective `consecutiveBreaches` required before firing (>= 1). */
+    requiredBreaches: number;
+    /** Effective cooldown in seconds (0 disables cooldown gating). */
+    cooldownSeconds: number;
+}
+export interface ClaimRecoveryInput extends RuleEvalScopeIdentity {
+}
+/** A row resolved by the auto-resolve sweep. */
+export interface AutoResolvedAlertRow {
+    alert_key: string;
+    organization_id: string;
+    project_id: string | null;
+    latest_event_id: string;
+    severity: LogDbSeverity;
+}
+export interface BreachDecision {
+    consecutiveBreaches: number;
+    /** True for exactly one caller per cooldown window. Authoritative fire gate. */
+    fired: boolean;
+    lastFiredAt: Date | null;
+    /** True when state could not be determined; callers MUST NOT fire. */
+    indeterminate: boolean;
+}
 /** Throttle inputs derived from the append-only ledger (replaces alert_throttle_windows). */
 export interface ThrottleWindowState {
     ruleActionId: string;
     notificationCount: number;
     lastNotifiedAt: Date | null;
 }
+export declare const ALERT_EVENTS_V2_COLUMNS = "id, organization_id, project_id, environment, service, endpoint, rule_id, binding_id, rule_revision, kind, severity, priority, fingerprint, dedup_key, correlation_key, group_key, source, engine, idempotency_key, observed_value, threshold_value, evidence, policy_snapshot, labels, annotations, occurred_at, created_at";
+export declare const ALERT_EVENT_STATE_COLUMNS = "alert_key, organization_id, project_id, latest_event_id, state, severity, duplicate_count, first_seen_at, last_seen_at, last_notified_at, acknowledged_by, acknowledged_at, acknowledgment_expires_at, resolved_at, resolution_reason, auto_resolve_at, escalation_policy_id, escalation_step_number, escalation_repeat_count, next_escalation_at, incident_id, updated_at";
+export declare const ALERT_DELIVERY_ATTEMPTS_V2_COLUMNS = "id, organization_id, project_id, alert_event_id, notification_job_id, channel_kind, connector_id, route_id, recipient_user_id, attempt_number, status, response_status_code, external_message_id, error_category, error_message, latency_ms, created_at";
 export declare class AlertRuntimeRepository {
     private readonly db;
     /**
@@ -306,6 +364,32 @@ export declare class AlertRuntimeRepository {
     /** Fold a duplicate into the existing alert. Never billed (ADR-0010). */
     incrementDuplicate(alertKey: string, seenAt: Date, client?: PoolClient): Promise<AlertEventStateRow | null>;
     appendHistory(input: AppendHistoryInput, client?: PoolClient): Promise<void>;
+    /**
+     * Append a durable alert domain event for the automation bridge.
+     *
+     * Storage note: this reuses `telemetry_outbox` (`signal_kind =
+     * 'alert_domain_event'`, `fast_path = FALSE`) rather than a dedicated table.
+     * A dedicated table was the original design (see
+     * docs/automationv2/27-alerting-automation-event-contract.md) but the Log DB
+     * is currently at its storage quota and cannot allocate new relations;
+     * widening this table's existing CHECK constraint is a catalog-only change
+     * that does not require new storage. `fast_path = FALSE` means
+     * TelemetryOutboxRelay's own claim query (`WHERE fast_path = TRUE`) can never
+     * see these rows — AlertDomainOutboxRelay claims by `signal_kind` instead, so
+     * the two relays never compete for the same row.
+     *
+     * MUST be called with the same `client` as the enclosing
+     * AlertDecisionEngine.decide() transaction, so the outbox row commits
+     * atomically with alert_events_v2/alert_event_state/alert_event_history_v2.
+     *
+     * Idempotency: `event_id` carries the dedupe key (derived from
+     * alert_events_v2.idempotency_key by the caller), reserved through the same
+     * `alert_runtime_idempotency_keys` table telemetry_outbox already uses
+     * (namespace 'telemetry_outbox', consistent with how that table already
+     * dedupes on `signal_kind || ':' || event_id`) — so a re-delivered or
+     * accidentally-duplicated call is a safe no-op.
+     */
+    appendDomainOutbox(input: AppendDomainOutboxInput, client?: PoolClient): Promise<void>;
     listProjectAlertEvents(organizationId: string, projectId: string, query: {
         status?: string;
         severity?: string;
@@ -399,6 +483,58 @@ export declare class AlertRuntimeRepository {
      * write on a read-mostly CONFIG table in the control plane. At a 5s cadence that
      * is untenable, and it also violated ADR-0006.
      */
+    /**
+     * Atomically advance breach state and claim the right to fire for one evaluation scope.
+     *
+     * Correctness contract (ADR: alerting hardening):
+     *   - The consecutive-breach counter is incremented **in the database**, never
+     *     computed in the application from a stale read, so concurrent evaluations
+     *     of the same scope cannot lose updates.
+     *   - The cooldown gate is decided **in the same statement** from the row's
+     *     previous `last_fired_at`, while that row is locked by the upsert. Exactly
+     *     one concurrent evaluation can observe `fired = true` for a given cooldown
+     *     window, so duplicate alerts are impossible even when Redis is unavailable.
+     *
+     * Structure: the `locked` CTE upserts the row (taking a row lock) and returns its
+     * PREVIOUS counters; the outer UPDATE then applies the transition derived from
+     * those previous values. Because both run in one statement they share one
+     * transaction and one lock, eliminating the read-then-write race.
+     */
+    claimBreachDecision(input: ClaimBreachDecisionInput, client?: PoolClient): Promise<BreachDecision>;
+    /**
+     * Claim and resolve alerts whose `auto_resolve_at` deadline has passed.
+     *
+     * Semantics: this is a TIMEOUT-based resolution, not a verified recovery. The
+     * alert is closed because it stopped being re-asserted for the configured
+     * window, so `resolution_reason` is set to 'auto_resolved' to distinguish it
+     * from a real evaluated recovery (`recover` -> 'resolved').
+     *
+     * Correctness properties:
+     *   - Concurrency-safe: `FOR UPDATE SKIP LOCKED` means two sweep workers (or
+     *     two replicas) never claim the same row.
+     *   - Idempotent: the same statement both selects on `state = 'firing' AND
+     *     auto_resolve_at <= NOW()` and clears those predicates, so a replay
+     *     cannot resolve the same alert twice or emit a duplicate history row.
+     *   - Only `firing` alerts are eligible. An `acknowledged` alert is owned by a
+     *     human; auto-resolving it would hide it from whoever is handling it.
+     *   - Uses the existing partial index `idx_alert_event_state_autoresolve`
+     *     (`(auto_resolve_at) WHERE state = 'firing' AND auto_resolve_at IS NOT
+     *     NULL`) - the predicates below are chosen to match it, so no new index
+     *     is required.
+     *
+     * `organizationId` is optional: the scheduled sweep runs across tenants (like
+     * the escalation sweep), but callers may scope it for targeted use or tests.
+     */
+    claimAutoResolvableAlerts(limit: number, organizationId?: string | null, client?: PoolClient): Promise<AutoResolvedAlertRow[]>;
+    /**
+     * Atomically clear breach state for a scope and report whether this call is the
+     * one that observed the breach->healthy edge (so exactly one recovery alert is
+     * emitted even under concurrent evaluation).
+     */
+    claimRecovery(input: ClaimRecoveryInput, client?: PoolClient): Promise<{
+        recovered: boolean;
+    }>;
     upsertRuleEvalState(input: UpsertRuleEvalStateInput, client?: PoolClient): Promise<void>;
 }
+export {};
 //# sourceMappingURL=alert-runtime.repository.d.ts.map

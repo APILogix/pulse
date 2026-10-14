@@ -11,8 +11,8 @@ export declare const ConditionTypeSchema: z.ZodEnum<{
 }>;
 export type ConditionType = z.infer<typeof ConditionTypeSchema>;
 export declare const ConditionOperatorSchema: z.ZodEnum<{
-    in: "in";
     regex: "regex";
+    in: "in";
     gt: "gt";
     lt: "lt";
     gte: "gte";
@@ -43,8 +43,8 @@ export declare const RuleConditionSchema: z.ZodObject<{
     conditionGroupId: z.ZodOptional<z.ZodString>;
     fieldPath: z.ZodString;
     operator: z.ZodEnum<{
-        in: "in";
         regex: "regex";
+        in: "in";
         gt: "gt";
         lt: "lt";
         gte: "gte";
@@ -92,10 +92,10 @@ export declare const CreateRuleSchema: z.ZodObject<{
     name: z.ZodString;
     description: z.ZodOptional<z.ZodString>;
     severity: z.ZodDefault<z.ZodEnum<{
+        critical: "critical";
         error: "error";
         info: "info";
         warning: "warning";
-        critical: "critical";
     }>>;
     enabled: z.ZodDefault<z.ZodBoolean>;
     projectId: z.ZodOptional<z.ZodString>;
@@ -121,8 +121,8 @@ export declare const CreateRuleSchema: z.ZodObject<{
         conditionGroupId: z.ZodOptional<z.ZodString>;
         fieldPath: z.ZodString;
         operator: z.ZodEnum<{
-            in: "in";
             regex: "regex";
+            in: "in";
             gt: "gt";
             lt: "lt";
             gte: "gte";
@@ -169,14 +169,14 @@ export type CreateRuleBody = z.infer<typeof CreateRuleSchema>;
 export declare const UpdateRuleSchema: z.ZodObject<{
     enabled: z.ZodOptional<z.ZodDefault<z.ZodBoolean>>;
     projectId: z.ZodOptional<z.ZodOptional<z.ZodString>>;
-    description: z.ZodOptional<z.ZodOptional<z.ZodString>>;
     name: z.ZodOptional<z.ZodString>;
+    description: z.ZodOptional<z.ZodOptional<z.ZodString>>;
     metadata: z.ZodOptional<z.ZodDefault<z.ZodRecord<z.ZodString, z.ZodUnknown>>>;
     severity: z.ZodOptional<z.ZodDefault<z.ZodEnum<{
+        critical: "critical";
         error: "error";
         info: "info";
         warning: "warning";
-        critical: "critical";
     }>>>;
     labels: z.ZodOptional<z.ZodDefault<z.ZodRecord<z.ZodString, z.ZodUnknown>>>;
     annotations: z.ZodOptional<z.ZodDefault<z.ZodRecord<z.ZodString, z.ZodUnknown>>>;
@@ -199,8 +199,8 @@ export declare const UpdateRuleSchema: z.ZodObject<{
         conditionGroupId: z.ZodOptional<z.ZodString>;
         fieldPath: z.ZodString;
         operator: z.ZodEnum<{
-            in: "in";
             regex: "regex";
+            in: "in";
             gt: "gt";
             lt: "lt";
             gte: "gte";
@@ -254,16 +254,30 @@ export declare const ListRulesQuerySchema: z.ZodObject<{
     }>>;
     enabled: z.ZodOptional<z.ZodCoercedBoolean<unknown>>;
     severity: z.ZodOptional<z.ZodEnum<{
+        critical: "critical";
         error: "error";
         info: "info";
         warning: "warning";
-        critical: "critical";
     }>>;
     search: z.ZodOptional<z.ZodString>;
 }, z.core.$strip>;
 export type ListRulesQuery = z.infer<typeof ListRulesQuerySchema>;
+/**
+ * Optional evaluation scope for `POST /rules/:id/test`.
+ *
+ * When provided, the test exercises the BINDING-RESOLVED effective rule for that
+ * scope (see policy/resolve-rule.ts) instead of the raw stored conditions — so
+ * "testing" a rule can actually answer "what would fire for this project/
+ * environment/service/endpoint", including any threshold overrides, disables, or
+ * re-enables contributed by `alert_rule_bindings`. Omitting scope entirely
+ * preserves the original behaviour (test against the rule's own raw conditions).
+ */
 export declare const TestRuleSchema: z.ZodObject<{
     payload: z.ZodRecord<z.ZodString, z.ZodUnknown>;
+    projectId: z.ZodOptional<z.ZodString>;
+    environment: z.ZodOptional<z.ZodString>;
+    service: z.ZodOptional<z.ZodString>;
+    endpoint: z.ZodOptional<z.ZodString>;
 }, z.core.$strip>;
 export type TestRuleBody = z.infer<typeof TestRuleSchema>;
 export declare const RuleTemplateParamsSchema: z.ZodObject<{

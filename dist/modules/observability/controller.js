@@ -95,8 +95,12 @@ export class ObservabilityController {
     timeline = async (request, reply) => {
         const { resource } = ResourceParams.parse(request.params);
         const { interval } = TimelineQuery.parse(request.query ?? {});
+        // `interval` belongs to this endpoint only; the explorer query schema is
+        // strict, so it must be stripped before the shared filters are parsed.
+        const { interval: _interval, ...explorerQuery } = (request.query ?? {});
+        void _interval;
         const ctx = await this.context(request);
-        return reply.send({ success: true, data: await this.service.timeline(resource, ctx, request.query ?? {}, interval) });
+        return reply.send({ success: true, data: await this.service.timeline(resource, ctx, explorerQuery, interval) });
     };
     detail = async (request, reply) => {
         const { resource, id } = IdParams.parse(request.params);

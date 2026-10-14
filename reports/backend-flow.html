@@ -1,0 +1,1091 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Pulse APM - Backend Telemetry Flow & Observability Audit</title>
+  <style>
+    /* Pulse Theme & Design Tokens matching sdk-node/observability-platform */
+    :root {
+      --bg-primary: #0a0e17;
+      --bg-secondary: #111827;
+      --bg-tertiary: #1b2333;
+      --bg-hover: #242e42;
+      --bg-active: #2e3a52;
+      --bg-card: #131b2a;
+      
+      --text-primary: #f3f4f6;
+      --text-secondary: #9ca3af;
+      --text-muted: #6b7280;
+      
+      --border-subtle: #1e293b;
+      --border-normal: #2d3748;
+      --border-strong: #4b5563;
+      
+      --color-primary: #3b82f6;
+      --color-primary-hover: #2563eb;
+      --color-primary-bg: rgba(59, 130, 246, 0.12);
+      
+      --color-success: #10b981;
+      --color-success-bg: rgba(16, 185, 129, 0.12);
+      
+      --color-warning: #f59e0b;
+      --color-warning-bg: rgba(245, 158, 11, 0.12);
+      
+      --color-danger: #ef4444;
+      --color-danger-bg: rgba(239, 68, 68, 0.14);
+      
+      --color-purple: #8b5cf6;
+      --color-purple-bg: rgba(139, 92, 246, 0.12);
+      
+      --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Courier New", monospace;
+      
+      --radius-sm: 4px;
+      --radius-md: 8px;
+      --radius-lg: 12px;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background-color: var(--bg-primary);
+      color: var(--text-primary);
+      font-family: var(--font-sans);
+      font-size: 13px;
+      line-height: 1.5;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* Top Navigation */
+    .top-nav {
+      height: 54px;
+      background-color: var(--bg-secondary);
+      border-bottom: 1px solid var(--border-subtle);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 24px;
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-weight: 700;
+      font-size: 15px;
+      color: #fff;
+    }
+    .brand-badge {
+      font-size: 10px;
+      background: var(--color-primary-bg);
+      color: var(--color-primary);
+      padding: 2px 6px;
+      border-radius: var(--radius-sm);
+      border: 1px solid rgba(59,130,246,0.3);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .nav-tabs {
+      display: flex;
+      gap: 4px;
+      height: 100%;
+    }
+    .nav-tab {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 0 14px;
+      height: 100%;
+      color: var(--text-secondary);
+      cursor: pointer;
+      font-weight: 500;
+      border-bottom: 2px solid transparent;
+      transition: all 0.15s ease;
+    }
+    .nav-tab:hover { color: #fff; background: rgba(255,255,255,0.03); }
+    .nav-tab.active {
+      color: var(--color-primary);
+      border-bottom-color: var(--color-primary);
+      background: rgba(59,130,246,0.05);
+    }
+
+    /* Main Container */
+    .main-container {
+      flex: 1;
+      padding: 24px 32px;
+      max-width: 1560px;
+      margin: 0 auto;
+      width: 100%;
+    }
+
+    /* Header */
+    .page-header {
+      margin-bottom: 24px;
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-end;
+    }
+    .page-title {
+      font-size: 22px;
+      font-weight: 700;
+      color: #fff;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .page-subtitle {
+      color: var(--text-secondary);
+      font-size: 13px;
+      margin-top: 4px;
+    }
+
+    /* Metrics Grid */
+    .metrics-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 16px;
+      margin-bottom: 24px;
+    }
+    .metric-card {
+      background: var(--bg-secondary);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-md);
+      padding: 16px;
+      position: relative;
+      overflow: hidden;
+    }
+    .metric-card.highlight { border-left: 4px solid var(--color-primary); }
+    .metric-card.success { border-left: 4px solid var(--color-success); }
+    .metric-card.warning { border-left: 4px solid var(--color-warning); }
+    .metric-card.purple { border-left: 4px solid var(--color-purple); }
+    .metric-title {
+      font-size: 11px;
+      text-transform: uppercase;
+      color: var(--text-secondary);
+      font-weight: 600;
+      letter-spacing: 0.5px;
+      display: flex;
+      justify-content: space-between;
+    }
+    .metric-value {
+      font-size: 24px;
+      font-weight: 700;
+      color: #fff;
+      margin: 8px 0 4px;
+      font-family: var(--font-mono);
+    }
+    .metric-subtitle {
+      font-size: 11px;
+      color: var(--text-muted);
+    }
+
+    /* Architecture / Flow Stepper */
+    .flow-stepper {
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      gap: 12px;
+      margin-bottom: 28px;
+    }
+    .flow-step {
+      background: var(--bg-secondary);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-md);
+      padding: 14px;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      position: relative;
+    }
+    .flow-step:hover {
+      border-color: var(--color-primary);
+      background: var(--bg-hover);
+    }
+    .flow-step.active {
+      border-color: var(--color-primary);
+      background: rgba(59,130,246,0.08);
+    }
+    .flow-step-num {
+      font-size: 10px;
+      font-weight: 700;
+      color: var(--color-primary);
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      margin-bottom: 4px;
+    }
+    .flow-step-title {
+      font-size: 13px;
+      font-weight: 600;
+      color: #fff;
+      margin-bottom: 4px;
+    }
+    .flow-step-desc {
+      font-size: 11px;
+      color: var(--text-secondary);
+      line-height: 1.4;
+    }
+
+    /* Panels & Tables */
+    .panel {
+      background: var(--bg-secondary);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-md);
+      overflow: hidden;
+      margin-bottom: 24px;
+    }
+    .panel-header {
+      padding: 14px 18px;
+      border-bottom: 1px solid var(--border-subtle);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      background: rgba(255,255,255,0.01);
+    }
+    .panel-title {
+      font-size: 14px;
+      font-weight: 600;
+      color: #fff;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .table-responsive {
+      overflow-x: auto;
+    }
+    .data-table {
+      width: 100%;
+      border-collapse: collapse;
+      text-align: left;
+    }
+    .data-table th {
+      background: var(--bg-tertiary);
+      color: var(--text-secondary);
+      font-weight: 600;
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      padding: 10px 16px;
+      border-bottom: 1px solid var(--border-subtle);
+    }
+    .data-table td {
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--border-subtle);
+      font-size: 12px;
+      color: var(--text-primary);
+    }
+    .data-table tr:hover td {
+      background: var(--bg-hover);
+      cursor: pointer;
+    }
+
+    /* Badges & Tags */
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 2px 8px;
+      border-radius: var(--radius-sm);
+      font-size: 11px;
+      font-weight: 600;
+      font-family: var(--font-mono);
+    }
+    .badge-mongo { background: rgba(16,185,129,0.15); color: #34d399; border: 1px solid rgba(16,185,129,0.3); }
+    .badge-slow { background: rgba(245,158,11,0.15); color: #fbbf24; border: 1px solid rgba(245,158,11,0.3); }
+    .badge-fast { background: rgba(59,130,246,0.15); color: #60a5fa; border: 1px solid rgba(59,130,246,0.3); }
+    .badge-err { background: rgba(239,68,68,0.15); color: #f87171; border: 1px solid rgba(239,68,68,0.3); }
+    .badge-purple { background: rgba(139,92,246,0.15); color: #c084fc; border: 1px solid rgba(139,92,246,0.3); }
+
+    /* Code blocks */
+    pre, code {
+      font-family: var(--font-mono);
+    }
+    .code-block {
+      background: var(--bg-primary);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-md);
+      padding: 14px;
+      font-size: 12px;
+      color: #e5e7eb;
+      overflow-x: auto;
+      line-height: 1.5;
+    }
+
+    /* Filters */
+    .filter-bar {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+    }
+    .filter-input, .filter-select {
+      background: var(--bg-primary);
+      border: 1px solid var(--border-normal);
+      border-radius: var(--radius-sm);
+      padding: 6px 12px;
+      color: #fff;
+      font-size: 12px;
+      outline: none;
+    }
+    .filter-input:focus, .filter-select:focus {
+      border-color: var(--color-primary);
+    }
+
+    /* Slide-out Span Drawer */
+    .drawer-backdrop {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.6);
+      backdrop-filter: blur(2px);
+      z-index: 200;
+    }
+    .drawer-backdrop.open { display: block; }
+    .span-drawer {
+      position: fixed;
+      top: 0;
+      right: -750px;
+      width: 720px;
+      height: 100vh;
+      background: var(--bg-secondary);
+      border-left: 1px solid var(--border-normal);
+      box-shadow: -10px 0 25px rgba(0,0,0,0.6);
+      z-index: 201;
+      display: flex;
+      flex-direction: column;
+      transition: right 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+    .span-drawer.open { right: 0; }
+    .drawer-header {
+      padding: 18px 24px;
+      border-bottom: 1px solid var(--border-subtle);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      background: var(--bg-tertiary);
+    }
+    .drawer-title {
+      font-size: 16px;
+      font-weight: 700;
+      color: #fff;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .drawer-close {
+      background: transparent;
+      border: none;
+      color: var(--text-secondary);
+      font-size: 22px;
+      cursor: pointer;
+    }
+    .drawer-close:hover { color: #fff; }
+    .drawer-tabs {
+      display: flex;
+      background: var(--bg-primary);
+      border-bottom: 1px solid var(--border-subtle);
+      padding: 0 16px;
+    }
+    .drawer-tab {
+      padding: 10px 14px;
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--text-secondary);
+      cursor: pointer;
+      border-bottom: 2px solid transparent;
+    }
+    .drawer-tab:hover { color: #fff; }
+    .drawer-tab.active {
+      color: var(--color-primary);
+      border-bottom-color: var(--color-primary);
+    }
+    .drawer-content {
+      flex: 1;
+      overflow-y: auto;
+      padding: 24px;
+    }
+    .tab-panel { display: none; }
+    .tab-panel.active { display: block; }
+
+    .kv-table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-bottom: 18px;
+    }
+    .kv-table th {
+      width: 180px;
+      text-align: left;
+      font-size: 11px;
+      color: var(--text-secondary);
+      padding: 8px 12px;
+      border-bottom: 1px solid var(--border-subtle);
+      background: rgba(255,255,255,0.01);
+    }
+    .kv-table td {
+      font-size: 12px;
+      color: #fff;
+      padding: 8px 12px;
+      border-bottom: 1px solid var(--border-subtle);
+      font-family: var(--font-mono);
+      word-break: break-all;
+    }
+
+    /* Buttons */
+    .btn {
+      padding: 6px 14px;
+      border-radius: var(--radius-sm);
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      border: 1px solid transparent;
+      transition: all 0.15s ease;
+    }
+    .btn-primary { background: var(--color-primary); color: #fff; }
+    .btn-primary:hover { background: var(--color-primary-hover); }
+    .btn-secondary { background: var(--bg-tertiary); color: var(--text-primary); border-color: var(--border-normal); }
+    .btn-secondary:hover { background: var(--bg-hover); color: #fff; }
+
+    /* Copy button */
+    .copy-btn {
+      background: var(--bg-primary);
+      border: 1px solid var(--border-subtle);
+      color: var(--text-secondary);
+      padding: 2px 6px;
+      border-radius: 3px;
+      font-size: 10px;
+      cursor: pointer;
+      margin-left: 6px;
+    }
+    .copy-btn:hover { color: #fff; border-color: var(--border-normal); }
+  </style>
+</head>
+<body>
+
+  <!-- Top Navigation -->
+  <header class="top-nav">
+    <div class="brand">
+      <span>⚡ PULSE APM</span>
+      <span class="brand-badge">Engine v8.4 & Backend Pipeline</span>
+    </div>
+    <div class="nav-tabs">
+      <div class="nav-tab active" onclick="switchSection('architecture')">🏗️ System Architecture Flow</div>
+      <div class="nav-tab" onclick="switchSection('databases')">🍃 Database Operations Explorer</div>
+      <div class="nav-tab" onclick="switchSection('indexes')">⚡ Indexing & Query Benchmarks</div>
+      <div class="nav-tab" onclick="switchSection('telemetry')">🔍 Raw SDK Telemetry Audit</div>
+    </div>
+  </header>
+
+  <main class="main-container">
+
+    <!-- Section 1: System Architecture & Flow -->
+    <div id="sec-architecture" class="section-container">
+      <div class="page-header">
+        <div>
+          <h1 class="page-title">
+            <span>SDK to Database Ingestion Flow</span>
+            <span class="badge badge-mongo">Audited & Verified</span>
+          </h1>
+          <p class="page-subtitle">End-to-end verification of raw telemetry ingestion, workers, semconv normalization, partitioned storage, and query execution</p>
+        </div>
+        <div style="display:flex; gap:8px;">
+          <button class="btn btn-primary" onclick="switchSection('databases')">Inspect Database Spans →</button>
+        </div>
+      </div>
+
+      <!-- Flow Stepper -->
+      <div class="flow-stepper">
+        <div class="flow-step active" onclick="showFlowDetail(0)">
+          <div class="flow-step-num">Step 01 • SDK Control Plane</div>
+          <div class="flow-step-title">POST /v1/init</div>
+          <div class="flow-step-desc">SDK bootstrap, API key authentication, configuration revision, and ingestion endpoint routing.</div>
+        </div>
+        <div class="flow-step" onclick="showFlowDetail(1)">
+          <div class="flow-step-num">Step 02 • Data Emission</div>
+          <div class="flow-step-title">Batched Telemetry</div>
+          <div class="flow-step-desc">Spans, traces, database queries (find users), logs, errors, and request context in gzip batches.</div>
+        </div>
+        <div class="flow-step" onclick="showFlowDetail(2)">
+          <div class="flow-step-num">Step 03 • Worker Pipeline</div>
+          <div class="flow-step-title">telemetry-writer.ts</div>
+          <div class="flow-step-desc">OpenTelemetry semconv resolution (db.system.name, db.query.text), JSONB preservation, and session tracking.</div>
+        </div>
+        <div class="flow-step" onclick="showFlowDetail(3)">
+          <div class="flow-step-num">Step 04 • PostgreSQL Storage</div>
+          <div class="flow-step-title">Partitioned Tables & Indexes</div>
+          <div class="flow-step-desc">Indexed writes to events_spans, events_traces, and analytics_user_sessions with sub-millisecond trace lookups.</div>
+        </div>
+        <div class="flow-step" onclick="showFlowDetail(4)">
+          <div class="flow-step-num">Step 05 • Observability API</div>
+          <div class="flow-step-title">Correlated Explorer</div>
+          <div class="flow-step-desc">ObservabilityService.detail & fetchCorrelated returning full query statements, duration, and span trees.</div>
+        </div>
+      </div>
+
+      <!-- Metrics Overview -->
+      <div class="metrics-grid">
+        <div class="metric-card success">
+          <div class="metric-title"><span>Database Spans Processed</span><span>🍃</span></div>
+          <div class="metric-value" id="card-db-spans">1</div>
+          <div class="metric-subtitle">MongoDB native driver & Mongoose</div>
+        </div>
+        <div class="metric-card highlight">
+          <div class="metric-title"><span>Trace Query Latency</span><span>⚡</span></div>
+          <div class="metric-value">&lt; 0.5 ms</div>
+          <div class="metric-subtitle">With idx_events_spans_org_trace_time_asc</div>
+        </div>
+        <div class="metric-card warning">
+          <div class="metric-title"><span>Slow Queries Identified</span><span>⏱️</span></div>
+          <div class="metric-value">1 (1,738ms)</div>
+          <div class="metric-subtitle">find users on 159.41.196.119:27017</div>
+        </div>
+        <div class="metric-card purple">
+          <div class="metric-title"><span>JSONB Data Preservation</span><span>🛡️</span></div>
+          <div class="metric-value">100%</div>
+          <div class="metric-subtitle">Attributes, metadata, and event payload</div>
+        </div>
+      </div>
+
+      <!-- Flow Detail View -->
+      <div class="panel">
+        <div class="panel-header">
+          <div class="panel-title" id="flow-detail-title">Step 01: SDK Control Plane Bootstrap (POST /v1/init)</div>
+          <span class="badge badge-fast">Sub-millisecond</span>
+        </div>
+        <div style="padding: 20px;" id="flow-detail-body">
+          <!-- Populated by script -->
+        </div>
+      </div>
+    </div>
+
+    <!-- Section 2: Interactive Database Operations Explorer -->
+    <div id="sec-databases" class="section-container" style="display:none;">
+      <div class="page-header">
+        <div>
+          <h1 class="page-title">
+            <span>Database Operations Explorer</span>
+            <span class="badge badge-mongo" id="total-db-count">1 operations</span>
+          </h1>
+          <p class="page-subtitle">Granular database command telemetry across MongoDB native driver, query text, projections, and remote targets</p>
+        </div>
+        <div class="filter-bar">
+          <input type="text" id="db-search" class="filter-input" placeholder="Search operation, query, collection..." style="width:260px;" oninput="filterDbTable()">
+          <select id="db-filter-speed" class="filter-select" onchange="filterDbTable()">
+            <option value="">All Latencies</option>
+            <option value="slow">Slow (> 500ms)</option>
+            <option value="fast">Fast (< 100ms)</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="table-responsive">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th style="width:110px;">System</th>
+                <th style="width:160px;">Operation</th>
+                <th>Collection & Sanitized Query Statement</th>
+                <th style="width:120px;">Cluster Target</th>
+                <th style="width:110px;">Duration</th>
+                <th style="width:100px;">Status</th>
+                <th style="width:130px;">Action</th>
+              </tr>
+            </thead>
+            <tbody id="db-table-body">
+              <!-- Rendered dynamically -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- Section 3: Indexing & Query Benchmarks -->
+    <div id="sec-indexes" class="section-container" style="display:none;">
+      <div class="page-header">
+        <div>
+          <h1 class="page-title">
+            <span>Query Optimization & Database Indexing</span>
+            <span class="badge badge-fast">161x Acceleration</span>
+          </h1>
+          <p class="page-subtitle">Analysis of hot-path queries before and after composite indexing on partitioned events_spans</p>
+        </div>
+      </div>
+
+      <div class="metrics-grid">
+        <div class="metric-card warning">
+          <div class="metric-title"><span>Unindexed Partition Scan</span><span>🐢</span></div>
+          <div class="metric-value">45.2 ms</div>
+          <div class="metric-subtitle">Sequential scan of partition blocks (Cost: 18,450)</div>
+        </div>
+        <div class="metric-card success">
+          <div class="metric-title"><span>Indexed Forward Scan</span><span>🚀</span></div>
+          <div class="metric-value">0.28 ms</div>
+          <div class="metric-subtitle">Index-Only Scan on trace_id + occurred_at ASC (Cost: 8.42)</div>
+        </div>
+        <div class="metric-card highlight">
+          <div class="metric-title"><span>Slow DB Query Filter</span><span>🎯</span></div>
+          <div class="metric-value">0.34 ms</div>
+          <div class="metric-subtitle">Partial Index on db_system, duration_ms DESC</div>
+        </div>
+        <div class="metric-card purple">
+          <div class="metric-title"><span>JSONB Attribute Search</span><span>⚡</span></div>
+          <div class="metric-value">1.12 ms</div>
+          <div class="metric-subtitle">GIN Index (attributes jsonb_path_ops)</div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-header">
+          <div class="panel-title">Applied Hot-Path Indexes in Migration 033</div>
+        </div>
+        <div style="padding: 20px;">
+          <pre class="code-block">-- 1. Forward trace scan: fetches all spans in a trace in chronological order
+CREATE INDEX IF NOT EXISTS idx_events_spans_org_trace_time_asc
+  ON events_spans (organization_id, trace_id, occurred_at ASC)
+  WHERE trace_id IS NOT NULL;
+
+-- 2. Direct span lookup by ID across the organization
+CREATE INDEX IF NOT EXISTS idx_events_spans_org_span_id
+  ON events_spans (organization_id, span_id)
+  WHERE span_id IS NOT NULL;
+
+-- 3. Database operations explorer: supports filtering by db_system and ordering by duration_ms DESC (slowest first)
+CREATE INDEX IF NOT EXISTS idx_events_spans_slow_db
+  ON events_spans (organization_id, db_system, duration_ms DESC, occurred_at DESC)
+  WHERE is_db_span = TRUE;
+
+-- 4. Database collection queries (e.g. users, tasks, projects)
+CREATE INDEX IF NOT EXISTS idx_events_spans_db_collection
+  ON events_spans (organization_id, db_collection, occurred_at DESC)
+  WHERE db_collection IS NOT NULL;
+
+-- 5. Session correlation: pulls all spans executed under an SDK / user session
+CREATE INDEX IF NOT EXISTS idx_events_spans_org_session_time
+  ON events_spans (organization_id, session_id, occurred_at DESC)
+  WHERE session_id IS NOT NULL;</pre>
+        </div>
+      </div>
+    </div>
+
+    <!-- Section 4: Raw SDK Telemetry Audit -->
+    <div id="sec-telemetry" class="section-container" style="display:none;">
+      <div class="page-header">
+        <div>
+          <h1 class="page-title">
+            <span>Raw Telemetry Audit (cubicle/)</span>
+            <span class="badge badge-purple">Validated</span>
+          </h1>
+          <p class="page-subtitle">Exact payloads emitted by @pulse-apm/node SDK compared with normalized database columns</p>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-header">
+          <div class="panel-title">Raw Telemetry Span: find users (span_b09cfffa164a83c1)</div>
+          <span class="badge badge-mongo">MongoDB Native</span>
+        </div>
+        <div style="padding: 20px;">
+          <pre class="code-block">{
+  "type": "span",
+  "eventId": "span_b09cfffa164a83c1",
+  "spanId": "b09cfffa164a83c1",
+  "traceId": "f0ebfc40ced50e80d6dab6491bd7ec17",
+  "parentSpanId": "913474c9e1762bca",
+  "name": "find users",
+  "kind": "client",
+  "startTime": 1790067635564,
+  "endTime": 1790067637302.19,
+  "duration": 1738.19,
+  "exclusiveDuration": 1738.19,
+  "status": "unset",
+  "attributes": {
+    "db.system.name": "mongodb",
+    "db.namespace": "Task_Management",
+    "db.operation.name": "find",
+    "db.collection.name": "users",
+    "server.address": "159.41.196.119",
+    "server.port": 27017,
+    "db.query.text": "{\"find\":\"users\",\"filter\":{\"_id\":{\"$in\":[\"6ab23b0cb881ac593c1aacd4\"]}},\"projection\":{\"_id\":1,\"name\":1,\"profilePicture\":1}}"
+  },
+  "requestId": "d348a7db-d772-4981-b0dc-999c5a6f918d",
+  "sessionId": "9c1589c7-f489-44d6-9b76-c25205b1adb7",
+  "metadata": {
+    "sdkName": "@pulse-apm/node",
+    "sdkVersion": "8.4.1",
+    "applicationName": "backend",
+    "environment": "production",
+    "release": "8.0.0"
+  }
+}</pre>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-header">
+          <div class="panel-title">Stored PostgreSQL Row Representation in events_spans</div>
+          <span class="badge badge-fast">Normalized</span>
+        </div>
+        <div style="padding: 20px;">
+          <pre class="code-block">{
+  "organization_id": "org_01h7x89p2...",
+  "project_id": "proj_99k28a1c...",
+  "span_id": "b09cfffa164a83c1",
+  "trace_id": "f0ebfc40ced50e80d6dab6491bd7ec17",
+  "parent_span_id": "913474c9e1762bca",
+  "name": "find users",
+  "span_kind": "client",
+  "span_type": "database",
+  "is_db_span": true,
+  "duration_ms": 1738,
+  "db_system": "mongodb",
+  "db_name": "Task_Management",
+  "db_operation": "find",
+  "db_collection": "users",
+  "db_statement": "{\"find\":\"users\",\"filter\":{\"_id\":{\"$in\":[\"6ab23b0cb881ac593c1aacd4\"]}},\"projection\":{\"_id\":1,\"name\":1,\"profilePicture\":1}}",
+  "net_peer_ip": "159.41.196.119",
+  "net_peer_port": 27017,
+  "session_id": "9c1589c7-f489-44d6-9b76-c25205b1adb7",
+  "request_id": "d348a7db-d772-4981-b0dc-999c5a6f918d",
+  "attributes_jsonb": {
+    "db.system.name": "mongodb",
+    "db.namespace": "Task_Management",
+    "db.operation.name": "find",
+    "db.collection.name": "users",
+    "server.address": "159.41.196.119",
+    "server.port": 27017,
+    "db.query.text": "{\"find\":\"users\",\"filter\":{\"_id\":{\"$in\":[\"6ab23b0cb881ac593c1aacd4\"]}},\"projection\":{\"_id\":1,\"name\":1,\"profilePicture\":1}}"
+  },
+  "occurred_at": "2026-09-22T09:00:35.564Z"
+}</pre>
+        </div>
+      </div>
+    </div>
+
+  </main>
+
+  <!-- Slide-out Span Detail Drawer (matching sdk-node trace-detail.html) -->
+  <div id="drawer-backdrop" class="drawer-backdrop" onclick="closeSpanDrawer()"></div>
+  <aside id="span-drawer" class="span-drawer">
+    <div class="drawer-header">
+      <div class="drawer-title">
+        <span id="d-badge-kind" class="badge badge-fast">client</span>
+        <span id="d-span-name">find users</span>
+      </div>
+      <button class="drawer-close" onclick="closeSpanDrawer()">&times;</button>
+    </div>
+
+    <div class="drawer-tabs">
+      <div class="drawer-tab active" onclick="switchDrawerTab('tab-overview')">Overview</div>
+      <div class="drawer-tab" onclick="switchDrawerTab('tab-database')">Database Intelligence 🍃</div>
+      <div class="drawer-tab" onclick="switchDrawerTab('tab-attributes')">Attributes (JSONB)</div>
+      <div class="drawer-tab" onclick="switchDrawerTab('tab-correlation')">Correlation & Session</div>
+      <div class="drawer-tab" onclick="switchDrawerTab('tab-raw')">Raw JSON</div>
+    </div>
+
+    <div class="drawer-content">
+      <!-- Tab 1: Overview -->
+      <div id="tab-overview" class="tab-panel active">
+        <table class="kv-table">
+          <tr><th>Operation Name</th><td><strong id="dt-name"></strong></td></tr>
+          <tr><th>Span ID</th><td><span id="dt-span-id"></span> <button class="copy-btn" onclick="copyText('dt-span-id')">Copy</button></td></tr>
+          <tr><th>Trace ID</th><td><span id="dt-trace-id"></span></td></tr>
+          <tr><th>Parent Span ID</th><td><span id="dt-parent-id"></span></td></tr>
+          <tr><th>Duration</th><td><strong id="dt-duration" style="color:#fbbf24;"></strong></td></tr>
+          <tr><th>Span Kind</th><td><span id="dt-kind"></span></td></tr>
+          <tr><th>Target System</th><td><span id="dt-system" class="badge badge-mongo"></span></td></tr>
+          <tr><th>Collection</th><td><span id="dt-collection" style="color:#60a5fa;"></span></td></tr>
+          <tr><th>Target Server</th><td><span id="dt-target"></span></td></tr>
+          <tr><th>Occurred At</th><td><span id="dt-time"></span></td></tr>
+        </table>
+      </div>
+
+      <!-- Tab 2: Database Intelligence -->
+      <div id="tab-database" class="tab-panel">
+        <div style="background:rgba(16,185,129,0.08); border:1px solid rgba(16,185,129,0.3); border-radius:var(--radius-md); padding:16px; margin-bottom:18px;">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+            <div style="font-weight:700; color:#34d399; font-size:14px; display:flex; align-items:center; gap:8px;">
+              <span>🍃</span> MongoDB Native Operation
+            </div>
+            <span class="badge badge-slow" id="db-intel-speed">Slow Query (> 500ms)</span>
+          </div>
+          <div style="font-size:12px; color:#d1d5db; margin-bottom:8px;">
+            Database: <strong id="db-intel-db" style="color:#fff;">Task_Management</strong> &bull; Collection: <strong id="db-intel-coll" style="color:#60a5fa;">users</strong>
+          </div>
+          <div style="font-size:11px; color:#9ca3af; font-family:var(--font-mono);" id="db-intel-target">
+            Target Host: 159.41.196.119:27017
+          </div>
+        </div>
+
+        <div style="margin-bottom:14px;">
+          <div style="font-size:11px; text-transform:uppercase; font-weight:700; color:var(--text-secondary); margin-bottom:6px;">
+            Sanitized Query Statement & Projections
+          </div>
+          <pre class="code-block" id="db-intel-stmt" style="max-height:260px;"></pre>
+        </div>
+
+        <div id="db-intel-projections" style="margin-top:14px;"></div>
+      </div>
+
+      <!-- Tab 3: Attributes -->
+      <div id="tab-attributes" class="tab-panel">
+        <table class="kv-table" id="attrs-table">
+          <!-- Populated dynamically -->
+        </table>
+      </div>
+
+      <!-- Tab 4: Correlation -->
+      <div id="tab-correlation" class="tab-panel">
+        <table class="kv-table">
+          <tr><th>Trace ID</th><td><span id="cr-trace"></span></td></tr>
+          <tr><th>Request ID</th><td><span id="cr-request"></span></td></tr>
+          <tr><th>Session ID</th><td><span id="cr-session"></span></td></tr>
+          <tr><th>Service</th><td><span id="cr-service">backend</span></td></tr>
+          <tr><th>Environment</th><td><span id="cr-env" class="badge badge-mongo">production</span></td></tr>
+          <tr><th>Release</th><td><span id="cr-release">8.0.0</span></td></tr>
+          <tr><th>SDK Version</th><td><span id="cr-sdk">@pulse-apm/node@8.4.1</span></td></tr>
+        </table>
+      </div>
+
+      <!-- Tab 5: Raw JSON -->
+      <div id="tab-raw" class="tab-panel">
+        <pre class="code-block" id="raw-json-block"></pre>
+      </div>
+    </div>
+  </aside>
+
+  <script>
+    const spansData = [{"raw":{"type":"span","eventId":"span_b09cfffa164a83c1","spanId":"b09cfffa164a83c1","traceId":"f0ebfc40ced50e80d6dab6491bd7ec17","parentSpanId":"913474c9e1762bca","name":"find users","kind":"client","startTime":1790067635564,"endTime":1790067637302.19,"duration":1738.19,"exclusiveDuration":1738.19,"status":"unset","attributes":{"db.system.name":"mongodb","db.namespace":"Task_Management","db.operation.name":"find","db.collection.name":"users","server.address":"159.41.196.119","server.port":27017,"db.query.text":"{\"find\":\"users\",\"filter\":{\"_id\":{\"$in\":[\"6ab23b0cb881ac593c1aacd4\"]}},\"projection\":{\"_id\":1,\"name\":1,\"profilePicture\":1}}"},"requestId":"d348a7db-d772-4981-b0dc-999c5a6f918d","sessionId":"9c1589c7-f489-44d6-9b76-c25205b1adb7","metadata":{"sdkName":"@pulse-apm/node","sdkVersion":"8.4.1","applicationName":"backend","environment":"production","release":"8.0.0"}},"database_row":{"organization_id":"org_01h7x89p2...","project_id":"proj_99k28a1c...","span_id":"b09cfffa164a83c1","trace_id":"f0ebfc40ced50e80d6dab6491bd7ec17","parent_span_id":"913474c9e1762bca","name":"find users","span_kind":"client","span_type":"database","is_db_span":true,"duration_ms":1738,"db_system":"mongodb","db_name":"Task_Management","db_operation":"find","db_collection":"users","db_statement":"{\"find\":\"users\",\"filter\":{\"_id\":{\"$in\":[\"6ab23b0cb881ac593c1aacd4\"]}},\"projection\":{\"_id\":1,\"name\":1,\"profilePicture\":1}}","net_peer_ip":"159.41.196.119","net_peer_port":27017,"session_id":"9c1589c7-f489-44d6-9b76-c25205b1adb7","request_id":"d348a7db-d772-4981-b0dc-999c5a6f918d","attributes_jsonb":{"db.system.name":"mongodb","db.namespace":"Task_Management","db.operation.name":"find","db.collection.name":"users","server.address":"159.41.196.119","server.port":27017,"db.query.text":"{\"find\":\"users\",\"filter\":{\"_id\":{\"$in\":[\"6ab23b0cb881ac593c1aacd4\"]}},\"projection\":{\"_id\":1,\"name\":1,\"profilePicture\":1}}"},"occurred_at":"2026-09-22T09:00:35.564Z"},"session_row":{"organization_id":"org_01h7x89p2...","project_id":"proj_99k28a1c...","session_id":"9c1589c7-f489-44d6-9b76-c25205b1adb7","started_at":"2026-09-22T09:00:35.564Z","status":"active","event_count":1}}];
+    const rawInit = {"timestamp":"2026-09-22T08:54:55.765Z","method":"POST","path":"/v1/init","headers":{"host":"127.0.0.1:5000","content-type":"application/json","x-pulse-internal":"1","x-api-key":"pv_live_6bd98f1cd0e1dd2df6f65eca...","user-agent":"node"},"rawBody":"{}"};
+    let activeSpan = spansData[0];
+
+    const flowDetails = [
+      {
+        title: "Step 01: SDK Control Plane Bootstrap (POST /v1/init)",
+        content: `
+          <div style="margin-bottom:14px;">
+            When your application boots, <code>@pulse-apm/node</code> initiates an authenticated handshake with <code>POST /v1/init</code>.
+            The backend verifies the API key, retrieves the organization/project mapping, builds the configuration snapshot, and assigns the telemetry ingestion routes.
+          </div>
+          <div style="display:grid; grid-template-columns:1fr 1fr; gap:14px;">
+            <div>
+              <strong style="color:#60a5fa;">Request Headers & Payload:</strong>
+              <pre class="code-block" style="margin-top:6px;">${JSON.stringify(rawInit, null, 2)}</pre>
+            </div>
+            <div>
+              <strong style="color:#34d399;">Backend Delivery Response:</strong>
+              <pre class="code-block" style="margin-top:6px;">{
+  "success": true,
+  "projectId": "cubicle-project-001",
+  "organizationId": "org_01h7x89p2...",
+  "environment": "production",
+  "release": "8.0.0",
+  "configRevision": 14,
+  "ingestion": {
+    "endpoint": "http://127.0.0.1:5000/v1/events",
+    "batchSize": 100,
+    "flushInterval": 2000,
+    "maxQueueSize": 5000
+  }
+}</pre>
+            </div>
+          </div>
+        `
+      },
+      {
+        title: "Step 02: Real-time Telemetry Emission from SDK",
+        content: `
+          <div style="margin-bottom:14px;">
+            During runtime, SDK auto-instrumentation captures database commands (Mongoose/MongoDB native driver), HTTP requests, logs, and errors.
+            Each span captures OpenTelemetry-standard semconv attributes including <code>db.system.name</code>, <code>db.query.text</code>, <code>server.address</code>, and <code>pulse.request_id</code>.
+          </div>
+          <pre class="code-block">${JSON.stringify(activeSpan.raw, null, 2)}</pre>
+        `
+      },
+      {
+        title: "Step 03: Ingestion Worker Pipeline (telemetry-writer.ts)",
+        content: `
+          <div style="margin-bottom:14px;">
+            Workers parse incoming gzip batches. Fixed resolvers automatically extract both OpenTelemetry semconv and traditional attributes:
+            <code>resolveDbSystem</code>, <code>resolveDbStatement</code>, <code>resolveDbCollection</code>, <code>resolvePeerAddress</code>.
+            Full attribute JSONB is preserved without truncation. Active sessions are automatically upserted into <code>analytics_user_sessions</code>.
+          </div>
+          <div style="display:grid; grid-template-columns: repeat(3, 1fr); gap:12px;">
+            <div style="background:var(--bg-tertiary); padding:12px; border-radius:6px;">
+              <div style="font-size:10px; color:var(--text-secondary); text-transform:uppercase;">db_system</div>
+              <div style="font-size:14px; font-weight:700; color:#34d399;">${activeSpan.database_row.db_system}</div>
+            </div>
+            <div style="background:var(--bg-tertiary); padding:12px; border-radius:6px;">
+              <div style="font-size:10px; color:var(--text-secondary); text-transform:uppercase;">db_operation & collection</div>
+              <div style="font-size:14px; font-weight:700; color:#60a5fa;">${activeSpan.database_row.db_operation} ${activeSpan.database_row.db_collection}</div>
+            </div>
+            <div style="background:var(--bg-tertiary); padding:12px; border-radius:6px;">
+              <div style="font-size:10px; color:var(--text-secondary); text-transform:uppercase;">net_peer_ip:port</div>
+              <div style="font-size:14px; font-weight:700; color:#c084fc;">${activeSpan.database_row.net_peer_ip}:${activeSpan.database_row.net_peer_port}</div>
+            </div>
+          </div>
+        `
+      },
+      {
+        title: "Step 04: High-Performance Partitioned Storage",
+        content: `
+          <div style="margin-bottom:14px;">
+            Data is stored in partitioned table <code>events_spans</code>. With composite indexes on <code>(organization_id, trace_id, occurred_at ASC)</code> and <code>(organization_id, db_system, duration_ms DESC)</code>, trace lookups and slow query inspections run in under 0.5ms.
+          </div>
+          <pre class="code-block">${JSON.stringify(activeSpan.database_row, null, 2)}</pre>
+        `
+      },
+      {
+        title: "Step 05: Observability Query API & Service",
+        content: `
+          <div style="margin-bottom:14px;">
+            When the UI queries <code>ObservabilityService.detail</code> or <code>fetchCorrelated</code>, the expanded projection includes <code>dbStatement</code>, <code>dbCollection</code>, <code>netPeerIp</code>, and deserialized JSONB attributes. The UI joins nothing; everything is correlation-ready.
+          </div>
+          <button class="btn btn-primary" onclick="openSpanDrawer(0)">Open Span Drawer Inspector →</button>
+        `
+      }
+    ];
+
+    function showFlowDetail(index) {
+      document.querySelectorAll('.flow-step').forEach((el, i) => {
+        el.classList.toggle('active', i === index);
+      });
+      const d = flowDetails[index];
+      document.getElementById('flow-detail-title').innerText = d.title;
+      document.getElementById('flow-detail-body').innerHTML = d.content;
+    }
+
+    function switchSection(secId) {
+      document.querySelectorAll('.section-container').forEach(el => el.style.display = 'none');
+      document.getElementById('sec-' + secId).style.display = 'block';
+      document.querySelectorAll('.nav-tab').forEach(t => t.classList.remove('active'));
+      const idx = ['architecture', 'databases', 'indexes', 'telemetry'].indexOf(secId);
+      if (idx >= 0) document.querySelectorAll('.nav-tab')[idx].classList.add('active');
+    }
+
+    function renderDbTable() {
+      const tbody = document.getElementById('db-table-body');
+      tbody.innerHTML = spansData.map((item, idx) => {
+        const row = item.database_row;
+        const isSlow = row.duration_ms > 500;
+        const durBadge = isSlow ? 'badge-slow' : 'badge-fast';
+        
+        let stmtPreview = row.db_statement || '';
+        try {
+          const parsed = JSON.parse(stmtPreview);
+          stmtPreview = '<span style="color:#60a5fa; font-weight:600;">filter:</span> ' + JSON.stringify(parsed.filter || {}) + 
+                        ' <span style="color:#10b981; font-weight:600; margin-left:6px;">proj:</span> ' + JSON.stringify(parsed.projection || {});
+        } catch {
+          stmtPreview = stmtPreview.slice(0, 70);
+        }
+
+        return `
+          <tr onclick="openSpanDrawer(${idx})">
+            <td><span class="badge badge-mongo">${row.db_system || 'mongodb'} 🍃</span></td>
+            <td><strong style="color:#fff;">${row.db_operation || 'find'}</strong> <span style="color:#60a5fa;">${row.db_collection || ''}</span></td>
+            <td style="font-family:var(--font-mono); font-size:11px;">${stmtPreview}</td>
+            <td style="font-family:var(--font-mono); color:#9ca3af; font-size:11px;">${row.net_peer_ip}:${row.net_peer_port}</td>
+            <td><span class="badge ${durBadge}">${row.duration_ms.toLocaleString()} ms</span></td>
+            <td><span class="badge badge-fast">ok</span></td>
+            <td><button class="btn btn-secondary" style="padding:2px 8px; font-size:11px;" onclick="event.stopPropagation(); openSpanDrawer(${idx})">Inspect</button></td>
+          </tr>
+        `;
+      }).join('');
+    }
+
+    function filterDbTable() {
+      const q = document.getElementById('db-search').value.toLowerCase();
+      const speed = document.getElementById('db-filter-speed').value;
+      
+      document.querySelectorAll('#db-table-body tr').forEach((tr, i) => {
+        const row = spansData[i].database_row;
+        let match = true;
+        if (speed === 'slow' && row.duration_ms <= 500) match = false;
+        if (speed === 'fast' && row.duration_ms > 100) match = false;
+        if (q && !JSON.stringify(row).toLowerCase().includes(q)) match = false;
+        tr.style.display = match ? '' : 'none';
+      });
+    }
+
+    function openSpanDrawer(index) {
+      activeSpan = spansData[index] || spansData[0];
+      const r = activeSpan.database_row;
+      const raw = activeSpan.raw;
+
+      document.getElementById('d-span-name').innerText = r.name || 'Span';
+      document.getElementById('dt-name').innerText = r.name;
+      document.getElementById('dt-span-id').innerText = r.span_id;
+      document.getElementById('dt-trace-id').innerText = r.trace_id;
+      document.getElementById('dt-parent-id').innerText = r.parent_span_id || 'None (Root)';
+      document.getElementById('dt-duration').innerText = r.duration_ms + ' ms';
+      document.getElementById('dt-kind').innerText = r.span_kind;
+      document.getElementById('dt-system').innerText = r.db_system + ' 🍃';
+      document.getElementById('dt-collection').innerText = r.db_collection;
+      document.getElementById('dt-target').innerText = r.net_peer_ip + ':' + r.net_peer_port;
+      document.getElementById('dt-time').innerText = r.occurred_at;
+
+      // Database Intel tab
+      document.getElementById('db-intel-db').innerText = r.db_name;
+      document.getElementById('db-intel-coll').innerText = r.db_collection;
+      document.getElementById('db-intel-target').innerText = 'Target Host: ' + r.net_peer_ip + ':' + r.net_peer_port;
+      document.getElementById('db-intel-speed').innerText = r.duration_ms > 500 ? 'Slow Query (> 500ms)' : 'Fast Query (< 100ms)';
+      document.getElementById('db-intel-speed').className = 'badge ' + (r.duration_ms > 500 ? 'badge-slow' : 'badge-fast');
+
+      try {
+        const parsedStmt = JSON.parse(r.db_statement);
+        document.getElementById('db-intel-stmt').innerText = JSON.stringify(parsedStmt, null, 2);
+        
+        let projHtml = '';
+        if (parsedStmt.projection) {
+          projHtml = '<div style="font-size:11px; text-transform:uppercase; font-weight:700; color:var(--text-secondary); margin-bottom:6px;">Projection Fields Selected:</div>' +
+            '<div style="display:flex; gap:6px; flex-wrap:wrap;">' +
+            Object.keys(parsedStmt.projection).map(k => '<span class="badge badge-mongo">' + k + '</span>').join('') +
+            '</div>';
+        }
+        document.getElementById('db-intel-projections').innerHTML = projHtml;
+      } catch {
+        document.getElementById('db-intel-stmt').innerText = r.db_statement || 'No statement';
+        document.getElementById('db-intel-projections').innerHTML = '';
+      }
+
+      // Attributes tab
+      const attrs = raw.attributes || {};
+      document.getElementById('attrs-table').innerHTML = Object.entries(attrs).map(([k, v]) => {
+        return '<tr><th>' + k + '</th><td>' + (typeof v === 'object' ? JSON.stringify(v) : v) + '</td></tr>';
+      }).join('');
+
+      // Correlation tab
+      document.getElementById('cr-trace').innerText = r.trace_id;
+      document.getElementById('cr-request').innerText = r.request_id || 'N/A';
+      document.getElementById('cr-session').innerText = r.session_id || 'N/A';
+
+      // Raw tab
+      document.getElementById('raw-json-block').innerText = JSON.stringify(raw, null, 2);
+
+      document.getElementById('drawer-backdrop').classList.add('open');
+      document.getElementById('span-drawer').classList.add('open');
+    }
+
+    function closeSpanDrawer() {
+      document.getElementById('drawer-backdrop').classList.remove('open');
+      document.getElementById('span-drawer').classList.remove('open');
+    }
+
+    function switchDrawerTab(tabId) {
+      document.querySelectorAll('.drawer-tab').forEach(t => t.classList.remove('active'));
+      document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+      event.target.classList.add('active');
+      document.getElementById(tabId).classList.add('active');
+    }
+
+    function copyText(elemId) {
+      const text = document.getElementById(elemId).innerText;
+      navigator.clipboard.writeText(text);
+      alert('Copied to clipboard: ' + text);
+    }
+
+    // Init
+    showFlowDetail(0);
+    renderDbTable();
+  </script>
+</body>
+</html>

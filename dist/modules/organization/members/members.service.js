@@ -22,7 +22,10 @@ export class MembersService {
     }
     async addMember(meta, orgId, userId, role, method = "api") {
         await this.deps.requireMutableOrg(orgId);
-        await this.requireMember(orgId, meta.actorUserId, "admin");
+        const actorMember = await this.requireMember(orgId, meta.actorUserId, "admin");
+        if (role === "owner" && actorMember.role !== "owner") {
+            throw new ForbiddenError("Only organization owners can grant the owner role");
+        }
         await this.deps.enforceBillingLimit(orgId, "member");
         const existing = await this.deps.repository.findMember(orgId, userId);
         if (existing && existing.status === "active")
@@ -34,13 +37,16 @@ export class MembersService {
     }
     async removeMember(meta, orgId, targetUserId, reason) {
         await this.deps.requireMutableOrg(orgId);
-        await this.requireMember(orgId, meta.actorUserId, "admin");
+        const actorMember = await this.requireMember(orgId, meta.actorUserId, "admin");
         if (meta.actorUserId === targetUserId)
             throw new ValidationError("Cannot remove yourself. Use leave organization endpoint instead.");
         const target = await this.deps.repository.findMember(orgId, targetUserId);
         if (!target)
             throw new ValidationError("User is not a member of this organization");
         if (target.role === "owner") {
+            if (actorMember.role !== "owner") {
+                throw new ForbiddenError("Only organization owners can remove another owner");
+            }
             const ownerCount = await this.deps.repository.countActiveOwners(orgId);
             if (ownerCount <= 1)
                 throw new ValidationError("Cannot remove the last owner of the organization");

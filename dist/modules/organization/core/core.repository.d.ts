@@ -5,12 +5,7 @@ import type { OrganizationRow, OrgSettingsRow, OrganizationProvisioningResult } 
 export declare class CoreRepository extends BaseRepository {
     createOrg(client: PoolClient, name: string, ownerUserId: string, data: {
         slug?: string | null;
-        description?: string | null;
-        industry?: string | null;
-        companySize?: string | null;
-        country?: string | null;
         timezone?: string;
-        billingEmail?: string | null;
     }, status?: 'active' | 'trialing'): Promise<OrganizationProvisioningResult>;
     setUserCurrentOrg(userId: string, orgId: string): Promise<void>;
     findOrgById(id: string, includeDeleted?: boolean): Promise<OrganizationRow | null>;

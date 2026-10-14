@@ -10,8 +10,8 @@ import type { DeliveryResult } from "../delivery/delivery.types.js";
 import { z } from 'zod';
 import { AppError } from '../../../shared/errors/app-error.js';
 export declare const ConnectorTypeSchema: z.ZodEnum<{
-    sms: "sms";
     email: "email";
+    sms: "sms";
     webhook: "webhook";
     slack: "slack";
     discord: "discord";
@@ -32,10 +32,10 @@ export declare const ConnectorStatusSchema: z.ZodEnum<{
 }>;
 export type ConnectorStatus = z.infer<typeof ConnectorStatusSchema>;
 export declare const NotificationSeveritySchema: z.ZodEnum<{
+    critical: "critical";
     error: "error";
     info: "info";
     warning: "warning";
-    critical: "critical";
 }>;
 export type NotificationSeverity = z.infer<typeof NotificationSeveritySchema>;
 export declare const ConnectorRouteEnvironmentSchema: z.ZodEnum<{
@@ -261,8 +261,8 @@ export declare const ConnectorRouteParamsSchema: z.ZodObject<{
 export declare const CreateConnectorSchema: z.ZodObject<{
     name: z.ZodString;
     type: z.ZodEnum<{
-        sms: "sms";
         email: "email";
+        sms: "sms";
         webhook: "webhook";
         slack: "slack";
         discord: "discord";
@@ -304,8 +304,8 @@ export declare const UpdateConnectorSchema: z.ZodObject<{
 export type UpdateConnectorBody = z.infer<typeof UpdateConnectorSchema>;
 export declare const ListConnectorsQuerySchema: z.ZodObject<{
     type: z.ZodOptional<z.ZodEnum<{
-        sms: "sms";
         email: "email";
+        sms: "sms";
         webhook: "webhook";
         slack: "slack";
         discord: "discord";
@@ -331,10 +331,10 @@ export type ListConnectorsQuery = z.infer<typeof ListConnectorsQuerySchema>;
 export declare const SendTestNotificationSchema: z.ZodObject<{
     notificationType: z.ZodDefault<z.ZodString>;
     severity: z.ZodDefault<z.ZodEnum<{
+        critical: "critical";
         error: "error";
         info: "info";
         warning: "warning";
-        critical: "critical";
     }>>;
     title: z.ZodDefault<z.ZodString>;
     body: z.ZodDefault<z.ZodString>;
@@ -352,8 +352,8 @@ export declare const RotateSecretSchema: z.ZodObject<{
 export type RotateSecretBody = z.infer<typeof RotateSecretSchema>;
 export declare const ValidateConfigurationSchema: z.ZodObject<{
     type: z.ZodEnum<{
-        sms: "sms";
         email: "email";
+        sms: "sms";
         webhook: "webhook";
         slack: "slack";
         discord: "discord";
@@ -366,10 +366,10 @@ export type ValidateConfigurationBody = z.infer<typeof ValidateConfigurationSche
 export declare const PreviewNotificationSchema: z.ZodObject<{
     notificationType: z.ZodDefault<z.ZodString>;
     severity: z.ZodDefault<z.ZodEnum<{
+        critical: "critical";
         error: "error";
         info: "info";
         warning: "warning";
-        critical: "critical";
     }>>;
     title: z.ZodDefault<z.ZodString>;
     body: z.ZodDefault<z.ZodString>;
@@ -391,10 +391,10 @@ export declare const CreateConnectorRouteSchema: z.ZodObject<{
     }>>>;
     eventType: z.ZodString;
     severity: z.ZodNullable<z.ZodOptional<z.ZodEnum<{
+        critical: "critical";
         error: "error";
         info: "info";
         warning: "warning";
-        critical: "critical";
     }>>>;
     enabled: z.ZodDefault<z.ZodBoolean>;
 }, z.core.$strict>;
@@ -408,10 +408,10 @@ export declare const UpdateConnectorRouteSchema: z.ZodObject<{
     }>>>;
     eventType: z.ZodOptional<z.ZodString>;
     severity: z.ZodNullable<z.ZodOptional<z.ZodEnum<{
+        critical: "critical";
         error: "error";
         info: "info";
         warning: "warning";
-        critical: "critical";
     }>>>;
     enabled: z.ZodOptional<z.ZodBoolean>;
 }, z.core.$strict>;

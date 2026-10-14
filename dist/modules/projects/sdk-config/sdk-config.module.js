@@ -8,31 +8,69 @@ import { SdkConfigError } from "./errors.js";
 import { registerSdkDeliveryRoutes } from "./sdk-config.delivery.routes.js";
 import { acceptEmptyJsonBodyAsObject } from "../../../shared/http/empty-json-body.js";
 import { entitlementsService } from "../../billing/entitlements/service.js";
+import { redisLookupCache } from "../../../db/redis/lookup-cache.js";
 const moduleLogger = logger.child({ component: "sdk-config-delivery-module" });
+// Invalidate Redis entitlement override and project remote configs when billing or subscriptions change
+entitlementsService.onOrgInvalidate((orgId) => {
+    void redisLookupCache.invalidateOrgOverride(orgId);
+    pool.query("SELECT id FROM projects WHERE org_id = $1 AND deleted_at IS NULL", [orgId]).then((res) => {
+        for (const row of res.rows) {
+            void redisLookupCache.invalidateRemoteConfig(row.id);
+        }
+    }).catch((err) => {
+        moduleLogger.debug({ err, orgId }, "Failed to sweep remote-config on org invalidate");
+    });
+});
 /** Trusted ingest origin used to derive protected route URLs. */
 function ingestBaseUrl() {
     return env.BACKEND_URL;
 }
-const SDK_FEATURE_GATES = {
-    "tracing.enabled": "tracing", "error_tracking.enabled": "errors",
-    "metrics.enabled": "metrics", "logging.enabled": "logging",
-    "profiling.enabled": "profiling", "uptime_cron.enabled": "crons",
-    "session_replay.enabled": "sessionReplay",
+const SDK_PERSISTENCE_BUDGET_FEATURE = "quota.sdk_persistence_per_minute";
+const SDK_PERSISTENCE_BUDGET_DEFAULT = 100_000;
+const SDK_PERSISTENCE_BUDGET_BY_PLAN = {
+    free: SDK_PERSISTENCE_BUDGET_DEFAULT,
+    starter: 100_000,
+    growth: 100_000,
+    business: 250_000,
+    enterprise: 1_000_000,
 };
+function resolvePersistenceBudget(planTier, entitlementValue) {
+    if (typeof entitlementValue === "number" && Number.isFinite(entitlementValue) && entitlementValue > 0) {
+        return Math.min(Math.trunc(entitlementValue), 1_000_000);
+    }
+    return SDK_PERSISTENCE_BUDGET_BY_PLAN[planTier ?? ""] ?? SDK_PERSISTENCE_BUDGET_DEFAULT;
+}
 async function resolveSdkEntitlementOverride(organizationId) {
+    // 1. Fast-Path: Check Redis Cache
+    const cached = await redisLookupCache.getOrgEntitlementOverride(organizationId);
+    if (cached !== null) {
+        return cached;
+    }
+    // 2. Slow-Path: Query Entitlements & Subscription Services
+    // getEffectiveEntitlements caches both the map and subscription state internally,
+    // so getSubscriptionState resolves instantly from in-memory cache.
     const map = await entitlementsService.getEffectiveEntitlements(organizationId);
+    const subscription = await entitlementsService.getSubscriptionState(organizationId);
     const remoteConfigEntitled = map["sdk.remote_config"]?.booleanValue;
     if (remoteConfigEntitled === false) {
         throw new SdkConfigError("policy_violation", "Remote SDK configuration is not included in this organization’s plan", 403);
     }
-    if (remoteConfigEntitled === undefined)
+    if (remoteConfigEntitled === undefined) {
+        void redisLookupCache.setOrgEntitlementOverride(organizationId, undefined);
         return undefined;
-    const features = {};
-    for (const [billingFeature, sdkFeature] of Object.entries(SDK_FEATURE_GATES)) {
-        if (map[billingFeature]?.booleanValue !== true)
-            features[sdkFeature] = false;
     }
-    return { features };
+    const persistenceBudget = resolvePersistenceBudget(subscription?.planTier ?? subscription?.planKey, map[SDK_PERSISTENCE_BUDGET_FEATURE]?.integerValue);
+    const override = {
+        limits: {
+            persistenceGovernance: {
+                maxPersistPerMinute: persistenceBudget,
+                adaptive: true,
+                budgetExceededLogIntervalMs: 60_000,
+            },
+        },
+    };
+    void redisLookupCache.setOrgEntitlementOverride(organizationId, override);
+    return override;
 }
 async function sdkConfigDeliveryModule(fastify, _options) {
     const store = new PgConfigStore();

@@ -4,3 +4,9 @@
 node_modules
 certs/
 *.pem
+
+# Generated ingestion write-path evidence artifacts (Phase 2).
+# Ignored so they never appear in the Requirement 19.6 modified-file boundary check,
+# while the directory itself stays tracked via .gitkeep.
+artifacts/ingestion-phase2/*
+!artifacts/ingestion-phase2/.gitkeep

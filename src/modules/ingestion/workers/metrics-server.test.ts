@@ -198,4 +198,91 @@ describe('WorkerMetrics', () => {
       'ingest_queue_oldest_pending_job_age_ms_per_queue{queue="ingest.trace",state="retry"} 4000',
     );
   });
+
+  it('renders database pool acquisition latency and timeout metrics', () => {
+    const metrics = new WorkerMetrics();
+
+    metrics.recordPoolAcquire('write_pool', 5);
+    metrics.recordPoolAcquire('write_pool', 15);
+    metrics.recordPoolAcquireTimeout('write_pool');
+
+    const output = metrics.render(null);
+
+    expect(output).toContain('ingest_db_pool_acquire_duration_ms_count{pool="write_pool"} 2');
+    expect(output).toContain('ingest_db_pool_acquire_duration_ms_max{pool="write_pool"} 15');
+    expect(output).toContain('ingest_db_pool_acquire_timeout_total{pool="write_pool"} 1');
+  });
+
+  it('renders transaction latency, commit duration, rollbacks, and long transactions', () => {
+    const metrics = new WorkerMetrics();
+
+    metrics.recordTransaction('batch_write', 120, true, 10);
+    metrics.recordTransaction('batch_write', 1500, true, 25);
+    metrics.recordTransaction('batch_write', 50, false);
+
+    const output = metrics.render(null);
+
+    expect(output).toContain('ingest_db_transaction_duration_ms_count{op="batch_write"} 3');
+    expect(output).toContain('ingest_db_transaction_commit_duration_ms_count{op="batch_write"} 2');
+    expect(output).toContain('ingest_db_transaction_rollbacks_total{op="batch_write"} 1');
+    expect(output).toContain('ingest_db_long_transactions_total{op="batch_write"} 1');
+  });
+
+  it('renders slow query and query error counters', () => {
+    const metrics = new WorkerMetrics();
+
+    metrics.recordDbQuery('error_groups_update', 1200, true);
+    metrics.recordDbQueryError('events_requests_insert', 'statement_timeout');
+
+    const output = metrics.render(null);
+
+    expect(output).toContain('ingest_db_slow_queries_total{op="error_groups_update"} 1');
+    expect(output).toContain('ingest_db_query_errors_total{op="events_requests_insert",reason="statement_timeout"} 1');
+  });
+
+  it('renders lock wait and deadlock metrics', () => {
+    const metrics = new WorkerMetrics();
+
+    metrics.recordLockWait('error_groups', 45);
+    metrics.recordDeadlock('error_groups');
+
+    const output = metrics.render(null);
+
+    expect(output).toContain('ingest_db_lock_waits_total{table="error_groups"} 1');
+    expect(output).toContain('ingest_db_lock_wait_duration_ms_max{table="error_groups"} 45');
+    expect(output).toContain('ingest_db_deadlocks_total{table="error_groups"} 1');
+  });
+
+  it('renders queue poll duration, messages fetched, empty polls, and visibility timeout failures', () => {
+    const metrics = new WorkerMetrics();
+
+    metrics.recordQueuePoll('ingest.error', 15, 10);
+    metrics.recordQueuePoll('ingest.error', 5, 0);
+    metrics.recordVisibilityTimeoutFailure('ingest.error');
+
+    const output = metrics.render(null);
+
+    expect(output).toContain('ingest_queue_poll_duration_ms_count{queue="ingest.error"} 2');
+    expect(output).toContain('ingest_queue_messages_fetched_total{queue="ingest.error"} 10');
+    expect(output).toContain('ingest_queue_empty_polls_total{queue="ingest.error"} 1');
+    expect(output).toContain('ingest_queue_visibility_timeout_failures_total{queue="ingest.error"} 1');
+  });
+
+  it('renders startup phase timing gauges', () => {
+    const metrics = new WorkerMetrics();
+
+    metrics.recordStartupPhase('migrations', 1200);
+    metrics.recordStartupPhase('queue_registration', 350);
+    metrics.recordStartupPhase('worker_init', 400);
+    metrics.recordStartupPhase('outbox', 150);
+    metrics.recordStartupPhase('total', 2100);
+
+    const output = metrics.render(null);
+
+    expect(output).toContain('ingest_startup_phase_duration_ms{phase="migrations"} 1200');
+    expect(output).toContain('ingest_startup_phase_duration_ms{phase="queue_registration"} 350');
+    expect(output).toContain('ingest_startup_phase_duration_ms{phase="worker_init"} 400');
+    expect(output).toContain('ingest_startup_phase_duration_ms{phase="outbox"} 150');
+    expect(output).toContain('ingest_startup_phase_duration_ms{phase="total"} 2100');
+  });
 });

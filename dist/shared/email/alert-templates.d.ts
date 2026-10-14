@@ -7,23 +7,29 @@
  *
  *   1. **No greeting.** An alert is machine-to-human. It leads with the fact,
  *      not with "Hi,". Every word before the verdict is a word in the way.
- *   2. **Subject is the alert.** `[FIRING · CRITICAL] rule — project (env)`
- *      follows the convention on-call engineers already have inbox rules and
- *      pager integrations for. State first, severity second, identity third.
- *   3. **Severity is pre-verbal.** The 3px top rail and the eyebrow dot carry
- *      the verdict in the truth channel, so severity registers before a single
- *      word is parsed — and survives in a plaintext-only client via the
- *      subject prefix.
- *   4. **Numbers before prose.** Observed value against threshold, in mono at
- *      30px, above any sentence explaining it.
- *   5. **Two paths, always.** "View alert" plus a mitigation
- *      ("Acknowledge", "Silence") — the reader is deciding, not reading.
+ *   2. **Subject is the alert.** A bracketed state tag comes first, so inbox
+ *      rules, pager bridges and mobile previews can classify the message from
+ *      its first few characters.
+ *   3. **Severity is pre-verbal.** The state line under the header strip is a
+ *      tinted band with a drawn status dot, so the verdict registers before a
+ *      word is parsed — and survives a plaintext-only client via the subject.
+ *   4. **Numbers before prose.** The readout band sets the observed value
+ *      against its threshold in mono, and the meter beneath draws the
+ *      crossing: the stretch past the threshold is the only saturated colour
+ *      in the band.
+ *   5. **Action before evidence.** One white button, a ghost secondary and
+ *      quiet text links sit above the fact sections, so a reader who has
+ *      already decided never scrolls past tables to act.
  *   6. **Cyan means a model said it.** AI insight cards are the only cyan in
- *      the email (§2.4). If cyan appears, inference produced that sentence, and
- *      it arrives with a confidence score attached.
+ *      the email. If cyan appears, inference produced that sentence, and it
+ *      arrives with a confidence score attached.
  *   7. **Every alert is identifiable.** Fingerprint and event id ship in the
  *      body so an email can be correlated with the audit log and the dedupe
  *      chain without opening the app.
+ *
+ * Every rule-based notice shares one anatomy: the state line names the event
+ * (firing, resolved, escalated), the headline names the rule, and the facts
+ * below are grouped the way the console's detail sheet groups them.
  */
 import { type DataRow } from './components.js';
 import { type AlertSeverity } from './theme.js';
@@ -111,7 +117,10 @@ export interface AlertFiringInput extends AlertScope {
 }
 /**
  * The core alert notification: a rule crossed its threshold and is firing.
- * Enhanced with developer triage sections: Metric Compare, Route context, Trace correlation, and Actions.
+ *
+ * Reading order: the verdict band, the rule, the crossing (readout + meter),
+ * the summary and any model insight, the decision, then the evidence grouped
+ * as request, incident and correlation facts.
  */
 export declare function alertFiringTemplate(input: AlertFiringInput): EmailTemplate;
 export interface AlertResolvedInput extends AlertScope {
@@ -163,6 +172,9 @@ export interface AlertEscalatedInput extends AlertScope {
 }
 /**
  * Escalation notice — an alert went unanswered and the policy advanced.
+ *
+ * The readout shows how far the policy has advanced, and the step track draws
+ * it: taken steps fill red, the steps still to come wait on the track.
  */
 export declare function alertEscalatedTemplate(input: AlertEscalatedInput): EmailTemplate;
 export interface AlertSilencedInput extends AlertScope {
@@ -178,7 +190,8 @@ export interface AlertSilencedInput extends AlertScope {
     matchedRules?: number | undefined;
 }
 /**
- * Silence-created notice.
+ * Silence-created notice. The readout states the size of the coverage gap:
+ * how long, and how many rules it swallows.
  */
 export declare function alertSilencedTemplate(input: AlertSilencedInput): EmailTemplate;
 export interface DigestAlertEntry {
@@ -208,7 +221,8 @@ export interface AlertDigestInput extends AlertScope {
  *
  * The antidote to per-event noise: batch low-severity alerts into one scannable
  * digest so the real-time channel stays trustworthy for things that actually
- * need waking someone up.
+ * need waking someone up. Counts read as a readout band; a zero stays muted,
+ * because colour on a zero is decoration, not a verdict.
  */
 export declare function alertDigestTemplate(input: AlertDigestInput): EmailTemplate;
 export interface AnomalyDetectedInput extends AlertScope {
@@ -237,8 +251,9 @@ export interface AnomalyDetectedInput extends AlertScope {
  *
  * The one template where cyan is the dominant channel, because the entire
  * message is model output — there is no threshold, only inference. Baseline and
- * deviation are shown beside the observed value so the reader can judge the
- * claim instead of taking it on trust.
+ * deviation sit beside the observed value, and the meter draws the distance
+ * from the baseline, so the reader can judge the claim instead of taking it on
+ * trust.
  */
 export declare function anomalyDetectedTemplate(input: AnomalyDetectedInput): EmailTemplate;
 export interface LatencyAlertInput extends AlertScope {
@@ -329,7 +344,11 @@ export interface ErrorAlertInput extends AlertScope {
     requestUrl?: string | undefined;
 }
 /**
- * Developer-focused error alert — identity, normalized stack frame, source excerpt, impact.
+ * Developer-focused error alert.
+ *
+ * The readout band reads like the top of a stack trace — the exception type in
+ * the verdict colour, the message, and the `at fn (file:line:col)` frame — so
+ * the reader knows what broke and where before any table.
  */
 export declare function errorAlertTemplate(input: ErrorAlertInput): EmailTemplate;
 export interface ErrorSpikeInput extends AlertScope {
@@ -365,8 +384,9 @@ export interface ErrorSpikeInput extends AlertScope {
     requestUrl?: string | undefined;
 }
 /**
- * Error-rate spike.
- * Rate and absolute count are both shown with full developer context.
+ * Error-rate spike. The rate carries the readout; the absolute count leads the
+ * impact facts, because a rate alone hides whether this is 50% of 2 requests
+ * or of 2 million.
  */
 export declare function errorSpikeTemplate(input: ErrorSpikeInput): EmailTemplate;
 export type ServiceHealthStatus = 'down' | 'degraded' | 'recovered';
@@ -411,7 +431,8 @@ export interface QuotaAlertInput extends AlertScope {
     usageUrl?: string | undefined;
 }
 /**
- * Usage-quota warning.
+ * Usage-quota warning. The meter shows consumption against the plan limit:
+ * under the limit the fill carries the tone, past it only the overage does.
  */
 export declare function quotaAlertTemplate(input: QuotaAlertInput): EmailTemplate;
 export interface DeliveryFailureInput extends AlertScope {
@@ -434,7 +455,9 @@ export interface DeliveryFailureInput extends AlertScope {
     connectorUrl?: string | undefined;
 }
 /**
- * Meta-alert: the alerting system itself could not deliver.
+ * Meta-alert: the alerting system itself could not deliver. The connector's
+ * own response is shown verbatim in a code well, because it is usually the
+ * whole diagnosis ("invalid_auth", "channel_not_found").
  */
 export declare function deliveryFailureTemplate(input: DeliveryFailureInput): EmailTemplate;
 export interface RuleChangedInput extends AlertScope {
@@ -447,7 +470,8 @@ export interface RuleChangedInput extends AlertScope {
     ruleUrl?: string | undefined;
 }
 /**
- * Alert-rule audit notice.
+ * Alert-rule audit notice. Field-level changes are listed one per hairline row
+ * in mono, so `Threshold: 800 ms → 1500 ms` reads like a diff.
  */
 export declare function ruleChangedTemplate(input: RuleChangedInput): EmailTemplate;
 //# sourceMappingURL=alert-templates.d.ts.map

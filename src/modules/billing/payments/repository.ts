@@ -30,6 +30,14 @@ export interface PaymentRow {
   updated_at: Date;
 }
 
+export const PAYMENT_COLUMNS = `
+  id, organization_id, invoice_id, subscription_id, provider, provider_payment_id,
+  status, currency, amount, fee_amount, tax_amount, refunded_amount,
+  payment_method, payment_method_last4, initiated_at, authorized_at,
+  captured_at, failed_at, refunded_at, failure_code, failure_reason,
+  created_at, updated_at
+`;
+
 export class PaymentsRepository {
   constructor(private readonly db: Pool = pool) {}
 
@@ -71,7 +79,7 @@ export class PaymentsRepository {
     const limitOffsetParams = options.status ? `LIMIT $3 OFFSET $4` : `LIMIT $2 OFFSET $3`;
 
     const result = await db.query(
-      `SELECT * FROM payments WHERE ${whereClause} ORDER BY created_at DESC ${limitOffsetParams}`,
+      `SELECT ${PAYMENT_COLUMNS} FROM payments WHERE ${whereClause} ORDER BY created_at DESC ${limitOffsetParams}`,
       dataValues
     );
 
@@ -80,7 +88,7 @@ export class PaymentsRepository {
 
   async getPaymentForUpdate(orgId: string, paymentId: string, db: PoolClient): Promise<PaymentRow | null> {
     const result = await db.query(
-      `SELECT * FROM payments
+      `SELECT ${PAYMENT_COLUMNS} FROM payments
        WHERE id = $1 AND organization_id = $2 AND deleted_at IS NULL
        FOR UPDATE`,
       [paymentId, orgId]
@@ -104,7 +112,7 @@ export class PaymentsRepository {
            metadata = metadata || jsonb_build_object('last_refund_reason', $4::text),
            updated_at = NOW()
        WHERE id = $1 AND organization_id = $2
-       RETURNING *`,
+       RETURNING ${PAYMENT_COLUMNS}`,
       [payment.id, payment.organization_id, amount, reason ?? null]
     );
 

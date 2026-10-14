@@ -127,4 +127,23 @@ describe('ErrorRepository', () => {
     expect(queries[0]?.sql).toContain('SET error_group_id = v.group_id::uuid');
     expect(queries[0]?.values).toHaveLength(8);
   });
+
+  it('findByGroup resolves both direct events and merged groups via subquery', async () => {
+    const queries: Array<{ sql: string; values: unknown[] }> = [];
+    const pool = {
+      query: vi.fn(async (sql: string, values?: unknown[]) => {
+        queries.push({ sql, values: values ?? [] });
+        return { rows: [{ id: 'evt-1' }] };
+      }),
+    } as unknown as Pool;
+
+    const repository = new ErrorRepository(pool);
+    const results = await repository.findByGroup('22222222-2222-4222-8222-222222222222', '33333333-3333-4333-8333-333333333333', 50);
+
+    expect(pool.query).toHaveBeenCalledTimes(1);
+    expect(queries[0]?.sql).toContain('error_group_id = $2');
+    expect(queries[0]?.sql).toContain('SELECT id FROM error_groups WHERE project_id = $1 AND merged_into = $2');
+    expect(queries[0]?.values).toEqual(['22222222-2222-4222-8222-222222222222', '33333333-3333-4333-8333-333333333333', 50]);
+    expect(results).toHaveLength(1);
+  });
 });

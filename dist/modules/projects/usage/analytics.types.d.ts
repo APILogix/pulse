@@ -52,10 +52,10 @@ export declare const TopListQuerySchema: z.ZodPipe<z.ZodTransform<unknown, unkno
         release: "release";
         service: "service";
         device: "device";
-        country: "country";
         endpoint: "endpoint";
         sdkVersion: "sdkVersion";
         errorGroup: "errorGroup";
+        country: "country";
         browser: "browser";
         os: "os";
     }>;

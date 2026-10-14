@@ -18,8 +18,6 @@ function logDatabase() {
 
 describe('alert worker process lifecycle', () => {
   it('starts both alert delivery groups before readiness and shuts down once', async () => {
-    const startQueue = vi.fn().mockResolvedValue(undefined);
-    const stopQueue = vi.fn().mockResolvedValue(undefined);
     const registerConnectors = vi.fn().mockResolvedValue({ stop: vi.fn().mockResolvedValue(undefined) });
     const registerAlerting = vi.fn().mockResolvedValue({ stop: vi.fn().mockResolvedValue(undefined) });
     const exit = vi.fn((code: number) => {
@@ -31,8 +29,6 @@ describe('alert worker process lifecycle', () => {
       logDatabase: logDatabase(),
       assertRuntimePool: vi.fn().mockResolvedValue(undefined),
       assertConfigPool: vi.fn().mockResolvedValue(undefined),
-      startQueue,
-      stopQueue,
       registerConnectors,
       registerAlerting,
       exit,
@@ -41,15 +37,19 @@ describe('alert worker process lifecycle', () => {
 
     await processWorker.start();
 
-    expect(startQueue).toHaveBeenCalledOnce();
-    expect(registerConnectors).toHaveBeenCalledWith(expect.anything(), {
-      group: 'alert-delivery',
-      strictQueueCreation: true,
-    });
+    expect(registerConnectors).toHaveBeenCalledWith(
+      expect.anything(),
+      {
+        group: 'alert-delivery',
+        strictQueueCreation: true,
+      },
+      expect.anything(),
+    );
     expect(registerAlerting).toHaveBeenCalledWith(
       expect.anything(),
       { group: 'alert-delivery', strictQueueCreation: true },
       undefined,
+      expect.anything(),
       expect.anything(),
     );
     expect(ready).toHaveBeenCalledWith('ready');
@@ -57,7 +57,6 @@ describe('alert worker process lifecycle', () => {
     const shutdown = processWorker.shutdown('SIGTERM');
     await expect(processWorker.shutdown('SIGINT')).resolves.toBeUndefined();
     await expect(shutdown).rejects.toThrow('exit:0');
-    expect(stopQueue).toHaveBeenCalledOnce();
     expect(exit).toHaveBeenCalledOnce();
     ready.mockRestore();
   });
@@ -70,9 +69,8 @@ describe('alert worker process lifecycle', () => {
     const processWorker = new AlertWorkerProcess({
       primaryPool: pool(),
       logDatabase: logDatabase(),
-      assertRuntimePool: vi.fn().mockResolvedValue(undefined),
+      assertRuntimePool: vi.fn().mockRejectedValue(new Error('runtime pool failure')),
       assertConfigPool: vi.fn().mockResolvedValue(undefined),
-      startQueue: vi.fn().mockRejectedValue(new Error('queue unavailable')),
       exit,
       installSignalHandlers: false,
     });

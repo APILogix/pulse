@@ -2,6 +2,8 @@
  * Summarize ingestion_profile JSON logs into worker hot-path evidence.
  */
 import { readFile, writeFile } from 'fs/promises';
+import { resolve } from 'path';
+import { fileURLToPath } from 'url';
 
 type OutputFormat = 'markdown' | 'json';
 
@@ -36,6 +38,7 @@ interface WorkerProfile {
   dbQueries?: number;
   dbQueryMs?: number;
   queueWaitMs?: number;
+  writeAdmissionWaitMs?: number;
   dbConnectionWaitMs?: number;
   beginMs?: number;
   insertMs?: number;
@@ -282,12 +285,13 @@ function sum(profiles: WorkerProfile[], field: keyof WorkerProfile): number {
   return values(profiles, field).reduce((total, value) => total + value, 0);
 }
 
-function summarize(profiles: WorkerProfile[]): WorkerSummary {
+export function summarize(profiles: WorkerProfile[]): WorkerSummary {
   const successful = profiles.filter((profile) => profile.phase === 'ingestion_profile');
   const failed = profiles.filter((profile) => profile.phase === 'ingestion_profile_failed');
   const successStages = stageStats(successful, [
     'totalProcessingMs',
     'queueWaitMs',
+    'writeAdmissionWaitMs',
     'dbConnectionWaitMs',
     'beginMs',
     'insertMs',
@@ -303,6 +307,7 @@ function summarize(profiles: WorkerProfile[]): WorkerSummary {
   const failedStages = stageStats(failed, [
     'totalProcessingMs',
     'queueWaitMs',
+    'writeAdmissionWaitMs',
     'dbConnectionWaitMs',
     'beginMs',
     'insertMs',
@@ -336,6 +341,12 @@ function summarize(profiles: WorkerProfile[]): WorkerSummary {
 
   const requestRows = eventTypes.filter((row) => row.eventType === 'request');
   const requestInsertP95 = requestRows[0]?.insertMs.p95 ?? 0;
+  const successfulWriteAdmissionWaitP95 = successStages.writeAdmissionWaitMs?.p95 ?? 0;
+  const failedWriteAdmissionWaitP95 = failedStages.writeAdmissionWaitMs?.p95 ?? 0;
+  const writeAdmissionWaitP95 = Math.max(
+    successfulWriteAdmissionWaitP95,
+    failedWriteAdmissionWaitP95,
+  );
   const dbConnectionWaitP95 = successStages.dbConnectionWaitMs?.p95 ?? 0;
   const commitP95 = successStages.commitMs?.p95 ?? 0;
   const insertP95 = successStages.insertMs?.p95 ?? 0;
@@ -349,8 +360,11 @@ function summarize(profiles: WorkerProfile[]): WorkerSummary {
   if (totalP95 > 1000 && transactionP95 > Math.max(1000, totalP95 * 0.7)) {
     diagnosticClassification.push(`Transaction-bound worker latency: transaction p95 ${transactionP95}ms accounts for most of total p95 ${totalP95}ms.`);
   }
+  if (writeAdmissionWaitP95 > 100) {
+    diagnosticClassification.push(`Write-admission saturation: admission wait p95 ${writeAdmissionWaitP95}ms is high; compare queued permits, worker demand, and the configured Log DB write capacity before increasing concurrency.`);
+  }
   if (dbConnectionWaitP95 > 100) {
-    diagnosticClassification.push(`Log DB pool acquisition pressure: DB connection wait p95 ${dbConnectionWaitP95}ms is high and must be compared with worker concurrency and pool capacity.`);
+    diagnosticClassification.push(`Log DB pool acquisition pressure: DB connection wait p95 ${dbConnectionWaitP95}ms remains high after admission and must be compared with pool health and non-ingestion pool users.`);
   }
   if (diagnosticClassification.length === 0 && profiles.length > 0) {
     diagnosticClassification.push('No single worker bottleneck classification crossed the built-in thresholds; inspect stage tables and runtime DB evidence.');
@@ -360,6 +374,9 @@ function summarize(profiles: WorkerProfile[]): WorkerSummary {
   }
   if (commitP95 > 1000) {
     findings.push(`Commit p95 is ${commitP95}ms; capture WAL/fsync/checkpoint evidence with ingestion:db:runtime before changing synchronous_commit.`);
+  }
+  if (writeAdmissionWaitP95 > 100) {
+    findings.push(`Write admission wait p95 is ${writeAdmissionWaitP95}ms; workers are queueing before pool checkout, so this is admission-capacity pressure rather than pool acquisition time.`);
   }
   if (dbConnectionWaitP95 > 100) {
     findings.push(`DB connection wait p95 is ${dbConnectionWaitP95}ms; compare worker concurrency against Log DB pool capacity.`);
@@ -403,7 +420,7 @@ function renderPercentileRow(label: string, stats: Percentiles): string {
   return `| ${label} | ${stats.count} | ${renderNumber(stats.min)} | ${renderNumber(stats.p50)} | ${renderNumber(stats.p95)} | ${renderNumber(stats.p99)} | ${renderNumber(stats.max)} |`;
 }
 
-function renderMarkdown(summary: WorkerSummary): string {
+export function renderMarkdown(summary: WorkerSummary): string {
   return [
     '# Ingestion Worker Profile Summary',
     '',
@@ -477,7 +494,10 @@ async function main(): Promise<void> {
   process.stdout.write(output);
 }
 
-main().catch((err) => {
-  console.error(err);
-  process.exit(1);
-});
+const entrypoint = process.argv[1] ? resolve(process.argv[1]) : null;
+if (entrypoint === fileURLToPath(import.meta.url)) {
+  main().catch((err) => {
+    console.error(err);
+    process.exit(1);
+  });
+}

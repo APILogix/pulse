@@ -22,7 +22,7 @@
  *     email tokens) is the cross-process source of truth.
  *   - Email via the Postgres-backed auth outbox worker (queue-only).
  */
-import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'crypto';
+import { createHash, randomBytes, timingSafeEqual } from 'crypto';
 import { promisify } from 'util';
 
 import bcrypt from 'bcrypt';
@@ -187,8 +187,26 @@ export async function generateBackupCodes(): Promise<{
 }
 
 export function verifyBackupCodeHash(plain: string, hashed: string): boolean {
-  // BUG-012 FIX: delegate to bcrypt.compare for constant-time verification.
+  // Synchronous fallback: delegate to bcrypt.compareSync
   return bcrypt.compareSync(plain, hashed);
+}
+
+export async function verifyBackupCodeHashAsync(plain: string, hashed: string): Promise<boolean> {
+  if (!hashed) return false;
+  // If the hash is a 64-character SHA-256 hex string (legacy WebAuthn fallback)
+  if (hashed.length === 64 && !hashed.startsWith('$2')) {
+    const candidateHash = createHash('sha256').update(plain).digest('hex');
+    try {
+      return timingSafeEqual(Buffer.from(candidateHash), Buffer.from(hashed));
+    } catch {
+      return false;
+    }
+  }
+  try {
+    return await bcrypt.compare(plain, hashed);
+  } catch {
+    return false;
+  }
 }
 
 
@@ -372,12 +390,20 @@ export async function consumeBackupCode(
   code: string,
   ipAddress = '0.0.0.0',
 ): Promise<boolean> {
-  const normalized = code.toLowerCase();
+  const trimmed = code.trim();
+  const upperCode = trimmed.toUpperCase();
+  const lowerCode = trimmed.toLowerCase();
   const codes = await repository.getUnusedBackupCodes(userId);
 
   for (const backupCode of codes) {
     const hashedCode = typeof backupCode.code_hash === 'string' ? backupCode.code_hash : '';
-    if (verifyBackupCodeHash(normalized, hashedCode)) {
+    // Check uppercase first (matches DB function upper(encode(...))), then lowercase, then raw trimmed
+    const match =
+      (await verifyBackupCodeHashAsync(upperCode, hashedCode)) ||
+      (await verifyBackupCodeHashAsync(lowerCode, hashedCode)) ||
+      (await verifyBackupCodeHashAsync(trimmed, hashedCode));
+
+    if (match) {
       await repository.markBackupCodeUsed(backupCode.id, userId, ipAddress);
       return true;
     }

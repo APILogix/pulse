@@ -12,7 +12,6 @@ export interface UserAccountRow {
   locale: string;
   marketing_emails: boolean | null;
   product_updates: boolean | null;
-  password_hash: string | null;
   mfa_enabled: boolean;
 }
 
@@ -35,13 +34,21 @@ export async function getUserAccount(userId: string): Promise<UserAccountRow | n
   const result = await pool.query<UserAccountRow>(
     `SELECT id, display_name, full_name, email, email_verified, email_verified_at,
             avatar_url, timezone, locale, marketing_emails, product_updates,
-            password_hash, mfa_enabled
+            mfa_enabled
        FROM users
       WHERE id = $1 AND deleted_at IS NULL`,
     [userId],
   );
   return result.rows[0] ?? null;
 }
+export async function getUserPasswordHash(userId: string): Promise<string | null> {
+  const result = await pool.query<{ password_hash: string | null }>(
+    `SELECT password_hash FROM users WHERE id = $1 AND deleted_at IS NULL`,
+    [userId],
+  );
+  return result.rows[0]?.password_hash ?? null;
+}
+
 
 export async function getVerifiedMfaDevices(userId: string): Promise<MfaSummaryRow[]> {
   const result = await pool.query<MfaSummaryRow>(
@@ -108,6 +115,40 @@ export async function countPasskeys(userId: string): Promise<number> {
   return Number.parseInt(result.rows[0]?.count ?? '0', 10);
 }
 
+export interface AccountSecurityCounts {
+  backupCodesRemaining: number;
+  activeSessions: number;
+  trustedDevices: number;
+  passkeys: number;
+}
+
+/**
+ * Consolidates security overview counts into a single database query to prevent
+ * connection pool exhaustion spikes on account settings views (USR-Q021).
+ */
+export async function getAccountSecurityCounts(userId: string): Promise<AccountSecurityCounts> {
+  const result = await pool.query<{
+    backup_codes_remaining: number;
+    active_sessions_count: number;
+    trusted_devices_count: number;
+    passkeys_count: number;
+  }>(
+    `SELECT
+       (SELECT COUNT(*)::int FROM user_backup_codes WHERE user_id = $1 AND used_at IS NULL) AS backup_codes_remaining,
+       (SELECT COUNT(*)::int FROM user_sessions WHERE user_id = $1 AND status = 'active' AND expires_at > now() AND absolute_expires_at > now()) AS active_sessions_count,
+       (SELECT COUNT(*)::int FROM user_trusted_devices WHERE user_id = $1 AND revoked_at IS NULL) AS trusted_devices_count,
+       (SELECT COUNT(*)::int FROM user_mfa_devices WHERE user_id = $1 AND is_active = TRUE AND is_verified = TRUE AND type::text = 'webauthn') AS passkeys_count`,
+    [userId],
+  );
+  const row = result.rows[0];
+  return {
+    backupCodesRemaining: Number(row?.backup_codes_remaining ?? 0),
+    activeSessions: Number(row?.active_sessions_count ?? 0),
+    trustedDevices: Number(row?.trusted_devices_count ?? 0),
+    passkeys: Number(row?.passkeys_count ?? 0),
+  };
+}
+
 export async function getRecentActivity(userId: string): Promise<SecurityActivityRow[]> {
   const result = await pool.query<SecurityActivityRow>(
     `SELECT event_type, description, location, ip_address::text, created_at
@@ -147,7 +188,7 @@ export async function updateUserProfile(
       WHERE id = $1 AND deleted_at IS NULL
       RETURNING id, display_name, full_name, email, email_verified, email_verified_at,
                 avatar_url, timezone, locale, marketing_emails, product_updates,
-                password_hash, mfa_enabled`,
+                mfa_enabled`,
     [
       userId,
       data.display_name,
@@ -169,7 +210,7 @@ export async function removeAvatar(userId: string): Promise<UserAccountRow | nul
       WHERE id = $1 AND deleted_at IS NULL
       RETURNING id, display_name, full_name, email, email_verified, email_verified_at,
                 avatar_url, timezone, locale, marketing_emails, product_updates,
-                password_hash, mfa_enabled`,
+                mfa_enabled`,
     [userId],
   );
   return result.rows[0] ?? null;
@@ -180,10 +221,9 @@ export async function scheduleAccountDeletion(userId: string): Promise<{ deleted
     `UPDATE users
         SET deletion_requested_at = now(),
             deletion_scheduled_at = now() + interval '30 days',
-            deleted_at = now() + interval '30 days',
             updated_at = now()
       WHERE id = $1 AND deleted_at IS NULL
-      RETURNING deleted_at`,
+      RETURNING deletion_scheduled_at AS deleted_at`,
     [userId],
   );
   return result.rows[0] ?? null;
@@ -194,7 +234,6 @@ export async function cancelAccountDeletion(userId: string): Promise<boolean> {
     `UPDATE users
         SET deletion_requested_at = NULL,
             deletion_scheduled_at = NULL,
-            deleted_at = NULL,
             updated_at = now()
       WHERE id = $1 AND deletion_requested_at IS NOT NULL`,
     [userId],
@@ -222,7 +261,7 @@ export async function getUserDataExport(userId: string): Promise<Record<string, 
     pool.query(`SELECT event_type, description, device_info, ip_address::text, location, metadata, created_at FROM user_security_events WHERE user_id = $1 ORDER BY created_at DESC`, [userId]),
     pool.query(`SELECT id, device_name, device_type, os, browser, ip_address::text, location, trusted_at, last_used_at, revoked_at FROM user_trusted_devices WHERE user_id = $1`, [userId]),
     pool.query(`SELECT COUNT(*)::int AS total, COUNT(*) FILTER (WHERE used_at IS NULL)::int AS unused FROM user_backup_codes WHERE user_id = $1`, [userId]),
-    pool.query(`SELECT id, provider, provider_user_id, linked_at FROM user_linked_identities WHERE user_id = $1 AND unlinked_at IS NULL`, [userId]).catch(() => ({ rows: [] })),
+    pool.query(`SELECT id, provider, provider_subject, provider_email, linked_at FROM user_linked_identities WHERE user_id = $1 AND revoked_at IS NULL`, [userId]).catch(() => ({ rows: [] })),
   ]);
 
   return {

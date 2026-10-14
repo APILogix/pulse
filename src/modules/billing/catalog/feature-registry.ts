@@ -2,7 +2,7 @@
  * Canonical Feature Registry & Definitions
  *
  * Defines all billable, gated, and metered capabilities across the Pulse platform.
- * Auto-generated from catalog version 2.0.
+ * Auto-generated from canonical catalog version 2.0.
  */
 
 export enum FeatureCategory {
@@ -57,12 +57,6 @@ export type FeatureKey =
   | 'uptime.enabled'
   | 'cron_monitoring.enabled'
   | 'quota.retention_days'
-  | 'quota.log_retention_days'
-  | 'quota.metric_retention_days'
-  | 'quota.profile_retention_days'
-  | 'quota.replay_retention_days'
-  | 'quota.trace_retention_days'
-  | 'quota.audit_log_retention_days'
   | 'alerting.enabled'
   | 'alerting.rules'
   | 'alerting.routing.enabled'
@@ -75,7 +69,6 @@ export type FeatureKey =
   | 'quota.alert_rules'
   | 'quota.project_alert_rules'
   | 'quota.alert_channels'
-  | 'quota.notification_channels'
   | 'quota.project_notification_channels'
   | 'quota.routing_rules'
   | 'quota.project_routing_rules'
@@ -86,12 +79,7 @@ export type FeatureKey =
   | 'quota.automation_rules'
   | 'dashboards.enabled'
   | 'dashboards.custom_dashboards'
-  | 'dashboards.custom_widgets'
-  | 'dashboards.embeds'
-  | 'dashboards.public_links'
-  | 'dashboards.scheduled_reports'
   | 'quota.dashboards'
-  | 'quota.monthly_reports'
   | 'analytics.explorer'
   | 'analytics.query_builder'
   | 'ai.enabled'
@@ -104,7 +92,6 @@ export type FeatureKey =
   | 'integrations.enabled'
   | 'integrations.rest_api'
   | 'quota.connectors'
-  | 'quota.integrations'
   | 'integrations.email'
   | 'integrations.webhook'
   | 'integrations.slack'
@@ -112,11 +99,6 @@ export type FeatureKey =
   | 'integrations.microsoft_teams'
   | 'integrations.pagerduty'
   | 'integrations.sms'
-  | 'integrations.github'
-  | 'integrations.gitlab'
-  | 'integrations.bitbucket'
-  | 'integrations.jira'
-  | 'integrations.terraform'
   | 'security.enabled'
   | 'security.audit_logs'
   | 'security.sso'
@@ -166,7 +148,7 @@ export const SUPPORTED_CONNECTOR_PROVIDERS = [
 ] as const;
 
 /**
- * Authoritative canonical feature registry containing all 102 platform features.
+ * Authoritative canonical feature registry containing all 84 platform features.
  */
 export const FEATURE_REGISTRY: Readonly<Record<FeatureKey, FeatureDefinition>> = {
   /** Create and manage your organization workspace */
@@ -253,17 +235,17 @@ export const FEATURE_REGISTRY: Readonly<Record<FeatureKey, FeatureDefinition>> =
     supportsUnlimited: true,
     description: "Maximum number of API keys per project for ingestion authentication",
   },
-  /** Total number of events that can be ingested per month */
+  /** Maximum billable credits consumed per calendar month */
   'quota.monthly_events': {
     key: 'quota.monthly_events',
-    name: "Monthly Ingested Events",
+    name: "Monthly Billable Credits",
     type: "integer",
     category: 'quota' as FeatureCategory,
     scope: 'organization' as FeatureScope,
-    unit: "events",
+    unit: "credits",
     enforcementType: 'overage' as EnforcementType,
-    supportsUnlimited: true,
-    description: "Total number of events that can be ingested per month",
+    supportsUnlimited: false,
+    description: "Maximum billable credits consumed per calendar month",
     overageRate: 50,
     overageUnit: 1000,
     gracePercent: 10,
@@ -303,7 +285,6 @@ export const FEATURE_REGISTRY: Readonly<Record<FeatureKey, FeatureDefinition>> =
     enforcementType: 'none' as EnforcementType,
     supportsUnlimited: false,
     description: "Update SDK behavior remotely without redeploying",
-    dependencies: ['sdk.enabled'],
   },
   /** Automatic retry with exponential backoff on failed ingestion */
   'sdk.retry': {
@@ -316,7 +297,6 @@ export const FEATURE_REGISTRY: Readonly<Record<FeatureKey, FeatureDefinition>> =
     enforcementType: 'none' as EnforcementType,
     supportsUnlimited: false,
     description: "Automatic retry with exponential backoff on failed ingestion",
-    dependencies: ['sdk.enabled'],
   },
   /** Batch multiple events into a single network request for efficiency */
   'sdk.batching': {
@@ -329,7 +309,6 @@ export const FEATURE_REGISTRY: Readonly<Record<FeatureKey, FeatureDefinition>> =
     enforcementType: 'none' as EnforcementType,
     supportsUnlimited: false,
     description: "Batch multiple events into a single network request for efficiency",
-    dependencies: ['sdk.enabled'],
   },
   /** Queue events locally when network is unavailable and send when back online */
   'sdk.offline_queue': {
@@ -342,7 +321,6 @@ export const FEATURE_REGISTRY: Readonly<Record<FeatureKey, FeatureDefinition>> =
     enforcementType: 'none' as EnforcementType,
     supportsUnlimited: false,
     description: "Queue events locally when network is unavailable and send when back online",
-    dependencies: ['sdk.enabled'],
   },
   /** Dynamically adjust sampling rates based on server-side configuration */
   'sdk.dynamic_sampling': {
@@ -355,7 +333,6 @@ export const FEATURE_REGISTRY: Readonly<Record<FeatureKey, FeatureDefinition>> =
     enforcementType: 'none' as EnforcementType,
     supportsUnlimited: false,
     description: "Dynamically adjust sampling rates based on server-side configuration",
-    dependencies: ['sdk.enabled', 'sdk.remote_config'],
   },
   /** Maximum number of events the SDK will hold in memory before flushing */
   'quota.sdk_batch_queue_size': {
@@ -368,7 +345,6 @@ export const FEATURE_REGISTRY: Readonly<Record<FeatureKey, FeatureDefinition>> =
     enforcementType: 'hard_limit' as EnforcementType,
     supportsUnlimited: true,
     description: "Maximum number of events the SDK will hold in memory before flushing",
-    dependencies: ['sdk.batching'],
   },
   /** Maximum number of events the SDK will queue when offline */
   'quota.sdk_offline_queue_limit': {
@@ -381,7 +357,6 @@ export const FEATURE_REGISTRY: Readonly<Record<FeatureKey, FeatureDefinition>> =
     enforcementType: 'hard_limit' as EnforcementType,
     supportsUnlimited: true,
     description: "Maximum number of events the SDK will queue when offline",
-    dependencies: ['sdk.offline_queue'],
   },
   /** Automatically scrub personally identifiable information from events */
   'privacy.data_scrubbing': {
@@ -526,7 +501,6 @@ export const FEATURE_REGISTRY: Readonly<Record<FeatureKey, FeatureDefinition>> =
     enforcementType: 'none' as EnforcementType,
     supportsUnlimited: false,
     description: "Dedicated cron job heartbeat monitoring with alerting on missed runs",
-    dependencies: ['uptime.enabled'],
   },
   /** Default data retention period for all event types */
   'quota.retention_days': {
@@ -539,82 +513,6 @@ export const FEATURE_REGISTRY: Readonly<Record<FeatureKey, FeatureDefinition>> =
     enforcementType: 'hard_limit' as EnforcementType,
     supportsUnlimited: true,
     description: "Default data retention period for all event types",
-  },
-  /** Retention period for structured log data */
-  'quota.log_retention_days': {
-    key: 'quota.log_retention_days',
-    name: "Log Retention Days",
-    type: "integer",
-    category: 'quota' as FeatureCategory,
-    scope: 'organization' as FeatureScope,
-    unit: "days",
-    enforcementType: 'hard_limit' as EnforcementType,
-    supportsUnlimited: true,
-    description: "Retention period for structured log data",
-  },
-  /** Retention period for custom metrics */
-  'quota.metric_retention_days': {
-    key: 'quota.metric_retention_days',
-    name: "Metric Retention Days",
-    type: "integer",
-    category: 'quota' as FeatureCategory,
-    scope: 'organization' as FeatureScope,
-    unit: "days",
-    enforcementType: 'hard_limit' as EnforcementType,
-    supportsUnlimited: true,
-    description: "Retention period for custom metrics",
-  },
-  /** Retention period for continuous profiling data */
-  'quota.profile_retention_days': {
-    key: 'quota.profile_retention_days',
-    name: "Profile Retention Days",
-    type: "integer",
-    category: 'quota' as FeatureCategory,
-    scope: 'organization' as FeatureScope,
-    unit: "days",
-    enforcementType: 'hard_limit' as EnforcementType,
-    supportsUnlimited: true,
-    description: "Retention period for continuous profiling data",
-    dependencies: ['profiling.enabled'],
-  },
-  /** Retention period for session replay recordings */
-  'quota.replay_retention_days': {
-    key: 'quota.replay_retention_days',
-    name: "Session Replay Retention Days",
-    type: "integer",
-    category: 'quota' as FeatureCategory,
-    scope: 'organization' as FeatureScope,
-    unit: "days",
-    enforcementType: 'hard_limit' as EnforcementType,
-    supportsUnlimited: true,
-    description: "Retention period for session replay recordings",
-    dependencies: ['replay.enabled'],
-  },
-  /** Retention period for distributed trace data */
-  'quota.trace_retention_days': {
-    key: 'quota.trace_retention_days',
-    name: "Trace Retention Days",
-    type: "integer",
-    category: 'quota' as FeatureCategory,
-    scope: 'organization' as FeatureScope,
-    unit: "days",
-    enforcementType: 'hard_limit' as EnforcementType,
-    supportsUnlimited: true,
-    description: "Retention period for distributed trace data",
-    dependencies: ['tracing.enabled'],
-  },
-  /** Retention period for security audit logs */
-  'quota.audit_log_retention_days': {
-    key: 'quota.audit_log_retention_days',
-    name: "Audit Log Retention Days",
-    type: "integer",
-    category: 'quota' as FeatureCategory,
-    scope: 'organization' as FeatureScope,
-    unit: "days",
-    enforcementType: 'hard_limit' as EnforcementType,
-    supportsUnlimited: true,
-    description: "Retention period for security audit logs",
-    dependencies: ['security.audit_logs'],
   },
   /** Create and manage alerts based on metric thresholds and event patterns */
   'alerting.enabled': {
@@ -639,7 +537,6 @@ export const FEATURE_REGISTRY: Readonly<Record<FeatureKey, FeatureDefinition>> =
     enforcementType: 'none' as EnforcementType,
     supportsUnlimited: false,
     description: "Define alert rules with custom conditions and thresholds",
-    dependencies: ['alerting.enabled'],
   },
   /** Route alerts to different teams or channels based on severity or source */
   'alerting.routing.enabled': {
@@ -652,7 +549,6 @@ export const FEATURE_REGISTRY: Readonly<Record<FeatureKey, FeatureDefinition>> =
     enforcementType: 'none' as EnforcementType,
     supportsUnlimited: false,
     description: "Route alerts to different teams or channels based on severity or source",
-    dependencies: ['alerting.enabled'],
   },
   /** Combine multiple conditions into a single composite alert */
   'alerting.composite': {
@@ -665,7 +561,6 @@ export const FEATURE_REGISTRY: Readonly<Record<FeatureKey, FeatureDefinition>> =
     enforcementType: 'none' as EnforcementType,
     supportsUnlimited: false,
     description: "Combine multiple conditions into a single composite alert",
-    dependencies: ['alerting.enabled', 'alerting.rules'],
   },
   /** Automatically escalate unacknowledged alerts through predefined chains */
   'alerting.escalation_policies': {
@@ -678,7 +573,6 @@ export const FEATURE_REGISTRY: Readonly<Record<FeatureKey, FeatureDefinition>> =
     enforcementType: 'none' as EnforcementType,
     supportsUnlimited: false,
     description: "Automatically escalate unacknowledged alerts through predefined chains",
-    dependencies: ['alerting.enabled'],
   },
   /** Manage on-call rotations and schedules for incident response */
   'alerting.on_call': {
@@ -691,7 +585,6 @@ export const FEATURE_REGISTRY: Readonly<Record<FeatureKey, FeatureDefinition>> =
     enforcementType: 'none' as EnforcementType,
     supportsUnlimited: false,
     description: "Manage on-call rotations and schedules for incident response",
-    dependencies: ['alerting.enabled'],
   },
   /** Track incident lifecycle from detection to resolution with timeline view */
   'alerting.incident_timeline': {
@@ -704,7 +597,6 @@ export const FEATURE_REGISTRY: Readonly<Record<FeatureKey, FeatureDefinition>> =
     enforcementType: 'none' as EnforcementType,
     supportsUnlimited: false,
     description: "Track incident lifecycle from detection to resolution with timeline view",
-    dependencies: ['alerting.enabled'],
   },
   /** Send alert notifications via managed email delivery when primary channels fail */
   'alerting.managed_email_fallback': {
@@ -717,7 +609,6 @@ export const FEATURE_REGISTRY: Readonly<Record<FeatureKey, FeatureDefinition>> =
     enforcementType: 'none' as EnforcementType,
     supportsUnlimited: false,
     description: "Send alert notifications via managed email delivery when primary channels fail",
-    dependencies: ['alerting.enabled'],
   },
   /** AI-powered alert correlation, noise reduction, and intelligent grouping */
   'alerting.ai_alert': {
@@ -730,7 +621,6 @@ export const FEATURE_REGISTRY: Readonly<Record<FeatureKey, FeatureDefinition>> =
     enforcementType: 'none' as EnforcementType,
     supportsUnlimited: false,
     description: "AI-powered alert correlation, noise reduction, and intelligent grouping",
-    dependencies: ['alerting.enabled', 'ai.enabled'],
   },
   /** Maximum number of alert rules at organization level */
   'quota.alert_rules': {
@@ -743,7 +633,6 @@ export const FEATURE_REGISTRY: Readonly<Record<FeatureKey, FeatureDefinition>> =
     enforcementType: 'hard_limit' as EnforcementType,
     supportsUnlimited: true,
     description: "Maximum number of alert rules at organization level",
-    dependencies: ['alerting.rules'],
   },
   /** Maximum number of alert rules per project */
   'quota.project_alert_rules': {
@@ -756,7 +645,6 @@ export const FEATURE_REGISTRY: Readonly<Record<FeatureKey, FeatureDefinition>> =
     enforcementType: 'hard_limit' as EnforcementType,
     supportsUnlimited: true,
     description: "Maximum number of alert rules per project",
-    dependencies: ['alerting.rules'],
   },
   /** Maximum number of alert notification channels */
   'quota.alert_channels': {
@@ -769,20 +657,6 @@ export const FEATURE_REGISTRY: Readonly<Record<FeatureKey, FeatureDefinition>> =
     enforcementType: 'hard_limit' as EnforcementType,
     supportsUnlimited: true,
     description: "Maximum number of alert notification channels",
-    dependencies: ['alerting.enabled'],
-  },
-  /** Maximum number of general notification channels */
-  'quota.notification_channels': {
-    key: 'quota.notification_channels',
-    name: "Notification Channels Quota",
-    type: "integer",
-    category: 'quota' as FeatureCategory,
-    scope: 'organization' as FeatureScope,
-    unit: "channels",
-    enforcementType: 'hard_limit' as EnforcementType,
-    supportsUnlimited: true,
-    description: "Maximum number of general notification channels",
-    dependencies: ['alerting.enabled'],
   },
   /** Maximum number of notification channels per project */
   'quota.project_notification_channels': {
@@ -795,7 +669,6 @@ export const FEATURE_REGISTRY: Readonly<Record<FeatureKey, FeatureDefinition>> =
     enforcementType: 'hard_limit' as EnforcementType,
     supportsUnlimited: true,
     description: "Maximum number of notification channels per project",
-    dependencies: ['alerting.enabled'],
   },
   /** Maximum number of alert routing rules at organization level */
   'quota.routing_rules': {
@@ -808,7 +681,6 @@ export const FEATURE_REGISTRY: Readonly<Record<FeatureKey, FeatureDefinition>> =
     enforcementType: 'hard_limit' as EnforcementType,
     supportsUnlimited: true,
     description: "Maximum number of alert routing rules at organization level",
-    dependencies: ['alerting.routing.enabled'],
   },
   /** Maximum number of routing rules per project */
   'quota.project_routing_rules': {
@@ -821,7 +693,6 @@ export const FEATURE_REGISTRY: Readonly<Record<FeatureKey, FeatureDefinition>> =
     enforcementType: 'hard_limit' as EnforcementType,
     supportsUnlimited: true,
     description: "Maximum number of routing rules per project",
-    dependencies: ['alerting.routing.enabled'],
   },
   /** Maximum number of alert notifications sent per day */
   'quota.daily_alerts': {
@@ -834,7 +705,6 @@ export const FEATURE_REGISTRY: Readonly<Record<FeatureKey, FeatureDefinition>> =
     enforcementType: 'hard_limit' as EnforcementType,
     supportsUnlimited: true,
     description: "Maximum number of alert notifications sent per day",
-    dependencies: ['alerting.enabled'],
   },
   /** Maximum number of alert notifications sent per month */
   'quota.monthly_alerts': {
@@ -847,7 +717,6 @@ export const FEATURE_REGISTRY: Readonly<Record<FeatureKey, FeatureDefinition>> =
     enforcementType: 'overage' as EnforcementType,
     supportsUnlimited: true,
     description: "Maximum number of alert notifications sent per month",
-    dependencies: ['alerting.enabled'],
     overageRate: 10,
     overageUnit: 100,
     gracePercent: 5,
@@ -890,7 +759,6 @@ export const FEATURE_REGISTRY: Readonly<Record<FeatureKey, FeatureDefinition>> =
     enforcementType: 'hard_limit' as EnforcementType,
     supportsUnlimited: true,
     description: "Maximum number of automation rules",
-    dependencies: ['automation.enabled'],
   },
   /** Create and share dashboards to visualize metrics and logs */
   'dashboards.enabled': {
@@ -915,59 +783,6 @@ export const FEATURE_REGISTRY: Readonly<Record<FeatureKey, FeatureDefinition>> =
     enforcementType: 'none' as EnforcementType,
     supportsUnlimited: false,
     description: "Build fully custom dashboards with drag-and-drop widgets",
-    dependencies: ['dashboards.enabled'],
-  },
-  /** Create custom visualization widgets for dashboards */
-  'dashboards.custom_widgets': {
-    key: 'dashboards.custom_widgets',
-    name: "Custom Widgets",
-    type: "boolean",
-    category: 'feature' as FeatureCategory,
-    scope: 'organization' as FeatureScope,
-    unit: "boolean",
-    enforcementType: 'none' as EnforcementType,
-    supportsUnlimited: false,
-    description: "Create custom visualization widgets for dashboards",
-    dependencies: ['dashboards.custom_dashboards'],
-  },
-  /** Embed dashboards in external applications via iframe */
-  'dashboards.embeds': {
-    key: 'dashboards.embeds',
-    name: "Dashboard Embeds",
-    type: "boolean",
-    category: 'feature' as FeatureCategory,
-    scope: 'organization' as FeatureScope,
-    unit: "boolean",
-    enforcementType: 'none' as EnforcementType,
-    supportsUnlimited: false,
-    description: "Embed dashboards in external applications via iframe",
-    dependencies: ['dashboards.custom_dashboards'],
-  },
-  /** Share dashboards via public read-only URLs without authentication */
-  'dashboards.public_links': {
-    key: 'dashboards.public_links',
-    name: "Public Dashboard Links",
-    type: "boolean",
-    category: 'feature' as FeatureCategory,
-    scope: 'organization' as FeatureScope,
-    unit: "boolean",
-    enforcementType: 'none' as EnforcementType,
-    supportsUnlimited: false,
-    description: "Share dashboards via public read-only URLs without authentication",
-    dependencies: ['dashboards.custom_dashboards'],
-  },
-  /** Schedule automated dashboard report generation and delivery */
-  'dashboards.scheduled_reports': {
-    key: 'dashboards.scheduled_reports',
-    name: "Scheduled Reports",
-    type: "boolean",
-    category: 'feature' as FeatureCategory,
-    scope: 'organization' as FeatureScope,
-    unit: "boolean",
-    enforcementType: 'none' as EnforcementType,
-    supportsUnlimited: false,
-    description: "Schedule automated dashboard report generation and delivery",
-    dependencies: ['dashboards.custom_dashboards'],
   },
   /** Maximum number of custom dashboards */
   'quota.dashboards': {
@@ -980,20 +795,6 @@ export const FEATURE_REGISTRY: Readonly<Record<FeatureKey, FeatureDefinition>> =
     enforcementType: 'hard_limit' as EnforcementType,
     supportsUnlimited: true,
     description: "Maximum number of custom dashboards",
-    dependencies: ['dashboards.custom_dashboards'],
-  },
-  /** Maximum number of scheduled reports generated per month */
-  'quota.monthly_reports': {
-    key: 'quota.monthly_reports',
-    name: "Monthly Report Generation Limit",
-    type: "integer",
-    category: 'quota' as FeatureCategory,
-    scope: 'organization' as FeatureScope,
-    unit: "reports",
-    enforcementType: 'hard_limit' as EnforcementType,
-    supportsUnlimited: true,
-    description: "Maximum number of scheduled reports generated per month",
-    dependencies: ['dashboards.scheduled_reports'],
   },
   /** Ad-hoc query interface for exploring events and logs */
   'analytics.explorer': {
@@ -1018,7 +819,6 @@ export const FEATURE_REGISTRY: Readonly<Record<FeatureKey, FeatureDefinition>> =
     enforcementType: 'none' as EnforcementType,
     supportsUnlimited: false,
     description: "Visual query builder for complex analytics without writing code",
-    dependencies: ['analytics.explorer'],
   },
   /** AI-powered analysis and insights across your observability data */
   'ai.enabled': {
@@ -1043,7 +843,6 @@ export const FEATURE_REGISTRY: Readonly<Record<FeatureKey, FeatureDefinition>> =
     enforcementType: 'none' as EnforcementType,
     supportsUnlimited: false,
     description: "Auto-generate human-readable summaries of incidents and log patterns",
-    dependencies: ['ai.enabled'],
   },
   /** AI-assisted identification of incident root causes across traces and logs */
   'ai.root_cause_analysis': {
@@ -1056,7 +855,6 @@ export const FEATURE_REGISTRY: Readonly<Record<FeatureKey, FeatureDefinition>> =
     enforcementType: 'none' as EnforcementType,
     supportsUnlimited: false,
     description: "AI-assisted identification of incident root causes across traces and logs",
-    dependencies: ['ai.enabled', 'error_tracking.enabled', 'tracing.enabled'],
   },
   /** Automatically detect anomalous patterns in metrics and logs */
   'ai.anomaly_detection': {
@@ -1069,7 +867,6 @@ export const FEATURE_REGISTRY: Readonly<Record<FeatureKey, FeatureDefinition>> =
     enforcementType: 'none' as EnforcementType,
     supportsUnlimited: false,
     description: "Automatically detect anomalous patterns in metrics and logs",
-    dependencies: ['ai.enabled', 'metrics.enabled'],
   },
   /** Predict future metric trends and capacity needs using historical data */
   'ai.forecasting': {
@@ -1082,7 +879,6 @@ export const FEATURE_REGISTRY: Readonly<Record<FeatureKey, FeatureDefinition>> =
     enforcementType: 'none' as EnforcementType,
     supportsUnlimited: false,
     description: "Predict future metric trends and capacity needs using historical data",
-    dependencies: ['ai.enabled', 'metrics.enabled'],
   },
   /** Real-time AI assistant during incident response with suggested actions */
   'ai.incident_copilot': {
@@ -1095,7 +891,6 @@ export const FEATURE_REGISTRY: Readonly<Record<FeatureKey, FeatureDefinition>> =
     enforcementType: 'none' as EnforcementType,
     supportsUnlimited: false,
     description: "Real-time AI assistant during incident response with suggested actions",
-    dependencies: ['ai.enabled', 'alerting.enabled'],
   },
   /** Monthly quota of AI processing credits for insights, summaries, and analysis */
   'quota.ai_credits': {
@@ -1108,7 +903,6 @@ export const FEATURE_REGISTRY: Readonly<Record<FeatureKey, FeatureDefinition>> =
     enforcementType: 'hard_limit' as EnforcementType,
     supportsUnlimited: true,
     description: "Monthly quota of AI processing credits for insights, summaries, and analysis",
-    dependencies: ['ai.enabled'],
   },
   /** Connect external tools and services to your observability data */
   'integrations.enabled': {
@@ -1145,20 +939,6 @@ export const FEATURE_REGISTRY: Readonly<Record<FeatureKey, FeatureDefinition>> =
     enforcementType: 'hard_limit' as EnforcementType,
     supportsUnlimited: true,
     description: "Maximum number of active connector instances",
-    dependencies: ['integrations.enabled'],
-  },
-  /** Maximum number of third-party integrations configured */
-  'quota.integrations': {
-    key: 'quota.integrations',
-    name: "Integrations Quota",
-    type: "integer",
-    category: 'quota' as FeatureCategory,
-    scope: 'organization' as FeatureScope,
-    unit: "integrations",
-    enforcementType: 'hard_limit' as EnforcementType,
-    supportsUnlimited: true,
-    description: "Maximum number of third-party integrations configured",
-    dependencies: ['integrations.enabled'],
   },
   /** Send notifications and reports via email */
   'integrations.email': {
@@ -1244,66 +1024,6 @@ export const FEATURE_REGISTRY: Readonly<Record<FeatureKey, FeatureDefinition>> =
     supportsUnlimited: false,
     description: "Send critical alert notifications via SMS",
   },
-  /** Link errors to GitHub issues and track code changes */
-  'integrations.github': {
-    key: 'integrations.github',
-    name: "GitHub Integration",
-    type: "boolean",
-    category: 'integration' as FeatureCategory,
-    scope: 'organization' as FeatureScope,
-    unit: "boolean",
-    enforcementType: 'none' as EnforcementType,
-    supportsUnlimited: false,
-    description: "Link errors to GitHub issues and track code changes",
-  },
-  /** Link errors to GitLab issues and track merge requests */
-  'integrations.gitlab': {
-    key: 'integrations.gitlab',
-    name: "GitLab Integration",
-    type: "boolean",
-    category: 'integration' as FeatureCategory,
-    scope: 'organization' as FeatureScope,
-    unit: "boolean",
-    enforcementType: 'none' as EnforcementType,
-    supportsUnlimited: false,
-    description: "Link errors to GitLab issues and track merge requests",
-  },
-  /** Link errors to Bitbucket issues and track commits */
-  'integrations.bitbucket': {
-    key: 'integrations.bitbucket',
-    name: "Bitbucket Integration",
-    type: "boolean",
-    category: 'integration' as FeatureCategory,
-    scope: 'organization' as FeatureScope,
-    unit: "boolean",
-    enforcementType: 'none' as EnforcementType,
-    supportsUnlimited: false,
-    description: "Link errors to Bitbucket issues and track commits",
-  },
-  /** Create and update Jira tickets from alerts and incidents */
-  'integrations.jira': {
-    key: 'integrations.jira',
-    name: "Jira Integration",
-    type: "boolean",
-    category: 'integration' as FeatureCategory,
-    scope: 'organization' as FeatureScope,
-    unit: "boolean",
-    enforcementType: 'none' as EnforcementType,
-    supportsUnlimited: false,
-    description: "Create and update Jira tickets from alerts and incidents",
-  },
-  /** Manage resources via official Terraform provider */
-  'integrations.terraform': {
-    key: 'integrations.terraform',
-    name: "Terraform Provider",
-    type: "boolean",
-    category: 'integration' as FeatureCategory,
-    scope: 'organization' as FeatureScope,
-    unit: "boolean",
-    enforcementType: 'none' as EnforcementType,
-    supportsUnlimited: false,
-    description: "Manage resources via official Terraform provider",
-  },
   /** Enterprise-grade security controls and compliance features */
   'security.enabled': {
     key: 'security.enabled',
@@ -1327,7 +1047,6 @@ export const FEATURE_REGISTRY: Readonly<Record<FeatureKey, FeatureDefinition>> =
     enforcementType: 'none' as EnforcementType,
     supportsUnlimited: false,
     description: "Immutable audit logs of all administrative actions",
-    dependencies: ['security.enabled'],
   },
   /** Single sign-on via SAML 2.0 and OpenID Connect */
   'security.sso': {
@@ -1340,7 +1059,6 @@ export const FEATURE_REGISTRY: Readonly<Record<FeatureKey, FeatureDefinition>> =
     enforcementType: 'none' as EnforcementType,
     supportsUnlimited: false,
     description: "Single sign-on via SAML 2.0 and OpenID Connect",
-    dependencies: ['security.enabled'],
   },
   /** Automated user provisioning and deprovisioning via SCIM */
   'security.scim': {
@@ -1353,7 +1071,6 @@ export const FEATURE_REGISTRY: Readonly<Record<FeatureKey, FeatureDefinition>> =
     enforcementType: 'none' as EnforcementType,
     supportsUnlimited: false,
     description: "Automated user provisioning and deprovisioning via SCIM",
-    dependencies: ['security.enabled', 'security.sso'],
   },
   /** Define custom role-based access control policies */
   'security.custom_roles': {
@@ -1366,7 +1083,6 @@ export const FEATURE_REGISTRY: Readonly<Record<FeatureKey, FeatureDefinition>> =
     enforcementType: 'none' as EnforcementType,
     supportsUnlimited: false,
     description: "Define custom role-based access control policies",
-    dependencies: ['security.enabled'],
   },
   /** Maximum number of API service accounts for automated access */
   'quota.service_accounts': {
@@ -1379,7 +1095,6 @@ export const FEATURE_REGISTRY: Readonly<Record<FeatureKey, FeatureDefinition>> =
     enforcementType: 'hard_limit' as EnforcementType,
     supportsUnlimited: true,
     description: "Maximum number of API service accounts for automated access",
-    dependencies: ['security.enabled'],
   },
   /** Maximum number of custom RBAC roles */
   'quota.custom_roles': {
@@ -1392,7 +1107,6 @@ export const FEATURE_REGISTRY: Readonly<Record<FeatureKey, FeatureDefinition>> =
     enforcementType: 'hard_limit' as EnforcementType,
     supportsUnlimited: true,
     description: "Maximum number of custom RBAC roles",
-    dependencies: ['security.custom_roles'],
   },
   /** Access to dedicated customer success manager and priority support queue */
   'support.dedicated': {
@@ -1469,6 +1183,11 @@ export function getFeatureByKey(key: FeatureKey): FeatureDefinition {
   }
   return feat;
 }
+
+/**
+ * Backwards compatibility alias for getFeatureByKey.
+ */
+export const getFeatureDefinition = getFeatureByKey;
 
 /**
  * Helper to list all feature definitions belonging to a category.

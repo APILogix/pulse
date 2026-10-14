@@ -19,33 +19,14 @@ import { applyMigrationSql } from './lib/migrations.js';
 
 const BILLING_SEED_DIR = path.resolve(
   process.cwd(),
-  'src/db/postgres/canonical_migrations_draft/11_billing/seeder',
+  'database/primarydbv2/seeds',
 );
 
 const BILLING_PLAN_SEEDS = [
-  '026_seed_plans.sql',
-  '027_seed_plan_prices.sql',
-  '028a_seed_billing_features_core.sql',
-  '028a2_seed_billing_features_projects.sql',
-  '028a3_seed_billing_features_sdk.sql',
-  '028b1_seed_billing_features_error_tracking.sql',
-  '028b2_seed_billing_features_tracing.sql',
-  '028b3_seed_billing_features_logging.sql',
-  '028b4_seed_billing_features_metrics.sql',
-  '028b5_seed_billing_features_profiling.sql',
-  '028b6_seed_billing_features_session_replay.sql',
-  '028b7_seed_billing_features_uptime_cron.sql',
-  '028c1_seed_billing_features_alerting.sql',
-  '028c2_seed_billing_features_dashboards.sql',
-  '028c3_seed_billing_features_integrations.sql',
-  '028c4_seed_billing_features_ai.sql',
-  '028d1_seed_billing_features_enterprise_security.sql',
-  '029b_seed_feature_dependencies_canonical.sql',
-  '030a_seed_plan_entitlements_core.sql',
-  '030b_seed_plan_entitlements_observability.sql',
-  '030c_seed_plan_entitlements_platform.sql',
-  '030d_seed_plan_quota_values.sql',
-  '031b_seed_addon_catalog_canonical.sql',
+  '004_11_billing_catalog_plans_and_prices.sql',
+  '005_11_billing_catalog_features.sql',
+  '006_11_billing_catalog_plan_entitlements.sql',
+  '007_11_billing_event_credit_weights.sql',
 ] as const;
 
 let currentFilename: string | undefined;

@@ -9,6 +9,7 @@ import type { FastifyBaseLogger } from "fastify";
 import { z } from "zod";
 import type { OrgStatus, OrgRole } from "./shared/types.js";
 export * from "./shared/types.js";
+export { ORGANIZATION_DEFAULTS } from "./shared/constants.js";
 export declare const JoinMethodSchema: z.ZodEnum<{
     scim: "scim";
     invite: "invite";

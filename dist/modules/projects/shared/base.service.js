@@ -1,3 +1,18 @@
+/**
+ * Project business service.
+ *
+ * Flow:
+ * 1. Authorize via organization membership before any read/mutation (tenant
+ *    isolation root check). Role gating is centralized in requireProjectAccess.
+ * 2. Enforce project status transitions, API-key limits, and key lifecycle.
+ * 3. Mint key material in memory; persist only hash + prefix; return the full
+ *    key exactly once.
+ * 4. Warm/evict the in-process LRU (config/lrucashe.ts, 30-min TTL) so ingestion
+ *    resolves keys without a Postgres round trip. NO Redis.
+ * 5. Write every sensitive lifecycle event to organization_audit_logs (projects
+ *    and API keys are org-owned resources, so they share the org audit trail).
+ */
+import { randomBytes } from "crypto";
 import { apiKeyCache } from "../../../config/lrucashe.js";
 import { entitlementsService } from "../../billing/entitlements/service.js";
 import { ProjectMemberRole } from "../types.js";
@@ -190,8 +205,13 @@ export class BaseProjectService {
         let suffix = 1;
         while (isReservedProjectSlug(candidate) ||
             (await this.repository.findProjectBySlug(orgId, candidate))) {
-            candidate = `${baseSlug}-${suffix}`;
-            suffix += 1;
+            if (suffix <= 3) {
+                candidate = `${baseSlug}-${suffix}`;
+                suffix += 1;
+            }
+            else {
+                candidate = `${baseSlug}-${randomBytes(3).toString("hex")}`;
+            }
         }
         return candidate;
     }

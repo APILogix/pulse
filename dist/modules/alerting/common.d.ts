@@ -2,10 +2,10 @@ import { z } from 'zod';
 /** Schemas shared by alerting submodules without importing the barrel module. */
 export declare const UuidSchema: z.ZodString;
 export declare const AlertSeveritySchema: z.ZodEnum<{
+    critical: "critical";
     error: "error";
     info: "info";
     warning: "warning";
-    critical: "critical";
 }>;
 export type AlertSeverity = z.infer<typeof AlertSeveritySchema>;
 export declare const PaginationSchema: z.ZodObject<{

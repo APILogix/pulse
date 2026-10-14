@@ -38,6 +38,7 @@ export interface PlanFeatureEntitlementRow {
     decimal_value: number | null;
     string_value: string | null;
 }
+export declare const PLAN_COLUMNS = "\n  id, key, version, name, tier, description, trial_days, is_active, is_public, sort_order, created_at, updated_at\n";
 export declare class PlansRepository {
     private readonly db;
     constructor(db?: Pool);

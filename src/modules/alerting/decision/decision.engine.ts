@@ -12,7 +12,16 @@ import {
 import { NotificationRoutingService } from '../runtime/notification-routing.service.js';
 import { transitionAlert, type AlertActorType, type AlertLifecycleState, type AlertTransition } from './state-machine.js';
 import { normalizeRoute } from '../runtime/route-normalizer.js';
+import { alertIdentityHash } from '../runtime/alert-fingerprint.js';
 import { buildAlertNotificationPayload } from '../runtime/alert-notification-formatter.js';
+import { IncidentsRepository } from '../incidents/incidents.repository.js';
+import {
+  recordIncidentOpened,
+  recordIncidentPersistFailed,
+  recordIncidentResolved,
+  recordIncidentReused,
+} from '../runtime/alert-runtime-metrics.js';
+import type { AlertSeverity } from '../types.js';
 
 export interface AlertDecisionCandidate {
   organizationId: string;
@@ -33,6 +42,13 @@ export interface AlertDecisionCandidate {
   annotations?: Record<string, unknown>;
   category?: string;
   conditionFieldPaths?: string[];
+  /**
+   * Canonical alert identity precomputed by the caller (runtime engines compute
+   * this via `computeAlertFingerprint` for the cooldown gate). When present it is
+   * used verbatim, guaranteeing the cooldown key and the durable dedup key are
+   * the same value. Omit only for callers with no grouping context.
+   */
+  alertKey?: string;
 }
 
 export interface AlertDecisionResult {
@@ -44,17 +60,50 @@ export interface AlertDecisionResult {
   notificationJobs: NotificationJobRow[];
 }
 
-export function alertFingerprint(candidate: Pick<AlertDecisionCandidate, 'organizationId' | 'projectId' | 'policy' | 'environment' | 'service' | 'endpoint' | 'dimension'>): string {
-  const normalizedEndpoint = candidate.endpoint ? normalizeRoute(candidate.endpoint) : 'all';
-  return hash([
-    candidate.organizationId,
-    candidate.projectId ?? 'organization',
-    candidate.policy.policyId,
-    candidate.environment ?? 'all',
-    candidate.service ?? 'all',
-    normalizedEndpoint,
-    candidate.dimension ?? 'all',
-  ].join(':'));
+/**
+ * Derive the canonical alert identity for a decision candidate.
+ *
+ * This is a THIN ADAPTER over `alertIdentityHash` - the one canonical identity
+ * function (see runtime/alert-fingerprint.ts). It exists only for callers that
+ * do not already hold a computed fingerprint. Callers that DO have one (the
+ * runtime engines, which computed it via `computeAlertFingerprint` for the
+ * cooldown gate) must pass `candidate.alertKey` so that the cooldown key and the
+ * durable dedup key are guaranteed to be byte-identical.
+ *
+ * The dimension key is normalized the same way here as in the grouping path:
+ * when the engine supplies a pre-joined `dimension` we use it verbatim;
+ * otherwise we build a sorted `k=v` key from service/endpoint so an ungrouped
+ * alert still lands on a stable identity.
+ */
+export function alertFingerprint(
+  candidate: Pick<AlertDecisionCandidate, 'organizationId' | 'projectId' | 'policy' | 'environment' | 'service' | 'endpoint' | 'dimension'>,
+): string {
+  return alertIdentityHash({
+    organizationId: candidate.organizationId,
+    projectId: candidate.projectId ?? 'organization',
+    environment: candidate.environment ?? 'all',
+    ruleId: candidate.policy.ruleId,
+    policyId: candidate.policy.policyId,
+    dimensionKey: decisionDimensionKey(candidate),
+  });
+}
+
+/**
+ * Build a stable, sorted dimension key from a decision candidate.
+ *
+ * Every scope component contributes to identity: two different services (or
+ * endpoints) breaching the same rule are genuinely different alerts and must not
+ * collapse onto one dedup key. The engine-supplied grouping `dimension` is an
+ * ADDITIONAL discriminator, not a replacement for scope.
+ */
+function decisionDimensionKey(
+  candidate: Pick<AlertDecisionCandidate, 'service' | 'endpoint' | 'dimension'>,
+): string {
+  const pairs: string[] = [];
+  if (candidate.service) pairs.push(`service=${String(candidate.service).trim().toLowerCase().slice(0, 64)}`);
+  if (candidate.endpoint) pairs.push(`route=${normalizeRoute(candidate.endpoint)}`);
+  if (candidate.dimension) pairs.push(`dim=${String(candidate.dimension)}`);
+  return pairs.length > 0 ? pairs.sort((a, b) => a.localeCompare(b)).join('|') : 'global';
 }
 
 export class AlertDecisionEngine {
@@ -62,15 +111,138 @@ export class AlertDecisionEngine {
   private readonly log: FastifyBaseLogger;
 
   private readonly routing: NotificationRoutingService;
+  private readonly incidents: IncidentsRepository | undefined;
 
   constructor(
     logDb: Pool,
     logger: FastifyBaseLogger,
-    deps: { routing?: NotificationRoutingService } = {},
+    deps: {
+      routing?: NotificationRoutingService;
+      /**
+       * PRIMARY-db incident repository. Optional so existing tests and any
+       * caller that only needs alert-event facts keep working; when omitted,
+       * incident persistence is skipped and alert delivery is unaffected.
+       */
+      incidents?: IncidentsRepository;
+    } = {},
   ) {
     this.runtime = new AlertRuntimeRepository(logDb);
     this.routing = deps.routing ?? new NotificationRoutingService({ logger });
+    this.incidents = deps.incidents;
     this.log = logger.child({ component: 'alert-decision-engine' });
+  }
+
+  /**
+   * Persist the durable incident for a decision.
+   *
+   * INGESTION SAFETY: this runs inside `decide()`, which executes only in the
+   * alert worker process (driven by the telemetry outbox relay / evaluation
+   * crons). It is never on the ingestion request path, and it adds no per-event
+   * work - one statement per *matched* evaluation, deduplicated onto an existing
+   * active incident by the partial unique index.
+   *
+   * FAILURE POLICY: incident persistence is deliberately non-fatal. Notifying an
+   * on-call engineer matters more than recording the incident row, so a primary-db
+   * outage degrades bookkeeping rather than suppressing the page. The failure is
+   * counted and logged, never swallowed silently.
+   */
+  private async persistIncident(
+    candidate: AlertDecisionCandidate,
+    alertKey: string,
+    kind: 'fired' | 'recovered',
+  ): Promise<{ incidentId: string | null; occurrenceCount: number | null; startedAt: Date | null }> {
+    if (!this.incidents) return { incidentId: null, occurrenceCount: null, startedAt: null };
+    const tier = typeof candidate.labels?.tier === 'string' ? candidate.labels.tier : 'unknown';
+
+    try {
+      if (kind === 'recovered') {
+        const resolved = await this.incidents.resolveByFingerprint(
+          candidate.organizationId,
+          alertKey,
+          candidate.observedAt,
+          'condition_recovered',
+        );
+        if (resolved) {
+          recordIncidentResolved('recovery');
+          await this.incidents
+            .appendEvent({
+              incidentId: resolved.id,
+              organizationId: resolved.organization_id,
+              projectId: resolved.project_id,
+              kind: 'incident_resolved',
+              actorType: 'worker',
+              detail: { reason: 'condition_recovered', verifiedRecovery: true },
+              occurredAt: candidate.observedAt,
+            })
+            .catch((err: unknown) => {
+              this.log.warn(
+                { err, incidentId: resolved.id },
+                'incident lifecycle event append failed; resolution already committed',
+              );
+            });
+        }
+        return {
+          incidentId: resolved?.id ?? null,
+          occurrenceCount: resolved?.occurrence_count ?? null,
+          startedAt: resolved?.started_at ?? null,
+        };
+      }
+
+      const incidents = this.incidents;
+      const { incident, created } = await incidents.openOrReuse({
+        organizationId: candidate.organizationId,
+        projectId: candidate.projectId ?? null,
+        environment: candidate.environment ?? null,
+        ruleId: candidate.policy.ruleId,
+        ruleRevision: candidate.ruleRevision,
+        bindingId: candidate.policy.bindingId,
+        fingerprint: alertKey,
+        dimensionKey: candidate.dimension ?? 'global',
+        severity: toIncidentSeverity(candidate.policy.severity),
+        title: incidentTitle(candidate),
+        service: candidate.service ?? null,
+        route: candidate.endpoint ?? null,
+        observedValue: candidate.observedValue ?? null,
+        thresholdValue: candidate.thresholdValue ?? null,
+        observedAt: candidate.observedAt,
+        labels: (candidate.labels ?? {}) as Record<string, unknown>,
+      });
+      if (created) recordIncidentOpened(tier);
+      else recordIncidentReused(tier);
+
+      // Durable lifecycle timeline. Best-effort: the incident row is already
+      // committed, so a failed audit append must not fail the decision.
+      await incidents
+        .appendEvent({
+          incidentId: incident.id,
+          organizationId: incident.organization_id,
+          projectId: incident.project_id,
+          kind: created ? 'incident_opened' : 'condition_still_breaching',
+          actorType: 'worker',
+          detail: {
+            tier,
+            observedValue: candidate.observedValue ?? null,
+            thresholdValue: candidate.thresholdValue ?? null,
+            occurrenceCount: incident.occurrence_count,
+          },
+          occurredAt: candidate.observedAt,
+        })
+        .catch((err: unknown) => {
+          this.log.warn(
+            { err, incidentId: incident.id },
+            'incident lifecycle event append failed; incident row already committed',
+          );
+        });
+
+      return { incidentId: incident.id, occurrenceCount: incident.occurrence_count, startedAt: incident.started_at };
+    } catch (err) {
+      recordIncidentPersistFailed(kind === 'recovered' ? 'resolve' : 'open');
+      this.log.error(
+        { err, alertKey, organizationId: candidate.organizationId, kind },
+        'incident persistence failed; alert delivery continues',
+      );
+      return { incidentId: null, occurrenceCount: null, startedAt: null };
+    }
   }
 
   async decide(candidate: AlertDecisionCandidate): Promise<AlertDecisionResult> {
@@ -90,10 +262,28 @@ export class AlertDecisionEngine {
       };
     }
     const kind = candidate.kind ?? 'fired';
-    const alertKey = alertFingerprint(candidate);
+    // Prefer the caller's canonical key; fall back to deriving it identically.
+    const alertKey = candidate.alertKey ?? alertFingerprint(candidate);
     const idempotencyKey = hash(`${alertKey}:${kind}:${candidate.observedAt.toISOString()}`);
 
-    console.log(`\n[ALERT_DECISION] ⚙️ Processing alert decision | Rule: "${candidate.policy.ruleId}" | Kind: ${kind.toUpperCase()} | Severity: ${candidate.policy.severity} | Org: ${candidate.organizationId} | Project: ${candidate.projectId ?? 'all'} | AlertKey: ${alertKey}`);
+    // Durable incident lifecycle in the PRIMARY db. Done before the Log DB
+    // transaction so the incident id can be attached to alert_event_state, and
+    // kept outside that transaction because the two live in different databases -
+    // there is no distributed transaction, and incident persistence must never be
+    // able to roll back or block notification creation.
+    const { incidentId, occurrenceCount, startedAt } = await this.persistIncident(candidate, alertKey, kind);
+
+    this.log.debug(
+      {
+        ruleId: candidate.policy.ruleId,
+        organizationId: candidate.organizationId,
+        projectId: candidate.projectId ?? null,
+        kind,
+        severity: candidate.policy.severity,
+        alertKey,
+      },
+      'processing alert decision',
+    );
 
     const result = await this.runtime.withTransaction(async (client) => {
       const previous = await this.runtime.lockState(client, alertKey);
@@ -126,7 +316,7 @@ export class AlertDecisionEngine {
 
       if (!event) {
         const duplicateState = await this.runtime.incrementDuplicate(alertKey, candidate.observedAt, client);
-        console.log(`[ALERT_DECISION] 🔁 Duplicate alert suppressed (AlertKey: ${alertKey}, DedupKey: ${alertKey}:${kind})`);
+        this.log.debug({ alertKey, kind, ruleId: candidate.policy.ruleId }, 'duplicate alert collapsed by idempotency key');
         return {
           alertKey,
           duplicate: true,
@@ -158,16 +348,36 @@ export class AlertDecisionEngine {
       const transition: AlertTransition = kind === 'recovered' ? 'recover' : 'trigger';
       const nextState = transitionAlert(previousState, transition, 'worker');
 
-      console.log(`[ALERT_DECISION] 🔄 State Machine: "${previousState}" ➡️ "${nextState}" (Transition: "${transition}", Actor: worker) | AlertKey: ${alertKey}`);
+      this.log.debug(
+        { alertKey, previousState, nextState, transition, actor: 'worker' },
+        'alert state transition',
+      );
 
       if (routingDecision) {
         if (routingDecision.suppressed) {
-          console.log(`[ALERT_ROUTING] 🚫 Notification routing suppressed: ${routingDecision.suppressionReason} (Mode: ${routingDecision.deliveryMode})`);
+          this.log.info(
+            {
+              alertKey,
+              organizationId: candidate.organizationId,
+              reason: routingDecision.suppressionReason,
+              deliveryMode: routingDecision.deliveryMode,
+            },
+            'notification routing suppressed',
+          );
         } else {
-          console.log(`[ALERT_ROUTING] 🎯 Resolved ${routingDecision.targets.length} notification target(s) for Org: ${candidate.organizationId} (Mode: ${routingDecision.deliveryMode})`);
-          for (const target of routingDecision.targets) {
-            console.log(`[ALERT_ROUTING]   👉 Target: Provider=${target.provider} | ChannelKind=${target.channelKind} | Mode=${target.deliveryMode} | RecipientType=${target.recipientType} | Recipient=${target.recipientRef ?? target.recipientUserId ?? 'N/A'}`);
-          }
+          // Do NOT log recipient addresses - that is PII. Counts and channel
+          // kinds are sufficient to debug routing; the notification job row
+          // carries the recipient for audit.
+          this.log.debug(
+            {
+              alertKey,
+              organizationId: candidate.organizationId,
+              deliveryMode: routingDecision.deliveryMode,
+              targetCount: routingDecision.targets.length,
+              channelKinds: [...new Set(routingDecision.targets.map((t) => t.channelKind))],
+            },
+            'notification targets resolved',
+          );
         }
       }
 
@@ -184,6 +394,9 @@ export class AlertDecisionEngine {
           ? new Date(candidate.observedAt.getTime() + candidate.policy.autoResolveAfterMinutes * 60_000)
           : null,
         escalationPolicyId: candidate.policy.escalationPolicyId,
+        // Cross-database reference by identifier only (never an FK): links the
+        // Log DB runtime state to the authoritative primary-db incident.
+        ...(incidentId ? { incidentId } : {}),
       }, client);
       await this.runtime.appendHistory({
         organizationId: candidate.organizationId,
@@ -200,6 +413,39 @@ export class AlertDecisionEngine {
           routingDecisionHash: routingDecision?.decisionHash ?? null,
           notificationSuppressed: routingDecision?.suppressed ?? false,
           suppressionReason: routingDecision?.suppressionReason ?? null,
+        },
+      }, client);
+
+      // Publish the alerting -> automation domain event in the SAME transaction
+      // as the alert commit above (see appendDomainOutbox's doc comment for why
+      // this is an outbox row, not a direct cross-database write). Published for
+      // both 'fired' and 'recovered' kinds — including suppressed/no-routing
+      // fired events, because automation rule matching is independent of whether
+      // a human notification was routed. Only genuinely duplicate/collapsed
+      // decisions (handled by the `if (!event)` branch earlier) produce no event.
+      await this.runtime.appendDomainOutbox({
+        organizationId: candidate.organizationId,
+        projectId: candidate.projectId ?? null,
+        environment: candidate.environment ?? null,
+        alertKey,
+        alertEventId: event.id,
+        eventType: kind === 'fired' ? 'alert.event.created' : 'alert.event.resolved',
+        dedupeKey: `alert:${kind === 'fired' ? 'alert.event.created' : 'alert.event.resolved'}:${idempotencyKey}`,
+        severity: toSeverity(candidate.policy.severity),
+        occurredAt: candidate.observedAt,
+        payload: buildAlertAutomationEventPayload({
+          alertKey,
+          kind,
+          candidate,
+          incidentId,
+          occurrenceCount,
+          startedAt,
+        }),
+        metadata: {
+          ruleId: candidate.policy.ruleId,
+          bindingId: candidate.policy.bindingId,
+          engine: 'fast',
+          source: candidate.source,
         },
       }, client);
 
@@ -264,10 +510,16 @@ export class AlertDecisionEngine {
         notificationJobId: job.id,
       })), client);
 
-      console.log(`[ALERT_DECISION] 📋 Created ${jobs.length} notification job(s) for Event ID: ${event.id}:`);
-      for (const job of jobs) {
-        console.log(`[ALERT_DECISION]   📌 Job ID: ${job.id} | Channel: ${job.channel_kind} | Status: ${job.status} | Recipient User: ${job.recipient_user_id ?? 'N/A'}`);
-      }
+      this.log.info(
+        {
+          alertKey,
+          alertEventId: event.id,
+          organizationId: candidate.organizationId,
+          notificationJobCount: jobs.length,
+          jobIds: jobs.map((job) => job.id),
+        },
+        'notification jobs created',
+      );
 
       return { alertKey, duplicate: false, suppressed: false, state: state.state, event, notificationJobs: jobs } satisfies AlertDecisionResult;
     });
@@ -286,8 +538,72 @@ function toSeverity(value: string): LogDbSeverity {
   return 'error';
 }
 
+/**
+ * Build the canonical alerting -> automation event payload.
+ *
+ * See docs/automationv2/27-alerting-automation-event-contract.md for the full
+ * contract and field derivation. Fields are FLAT at the top level (not nested
+ * under a `data`/`resource` envelope) because automation's condition evaluator
+ * reads them directly as `$.service`, `$.severity`, etc. — six already-seeded
+ * automation templates depend on this exact flat shape.
+ */
+function buildAlertAutomationEventPayload(input: {
+  alertKey: string;
+  kind: 'fired' | 'recovered';
+  candidate: AlertDecisionCandidate;
+  incidentId: string | null;
+  occurrenceCount: number | null;
+  startedAt: Date | null;
+}): Record<string, unknown> {
+  const { alertKey, kind, candidate, incidentId, occurrenceCount, startedAt } = input;
+  const durationMinutes = kind === 'recovered' && startedAt
+    ? Math.max(0, Math.round((candidate.observedAt.getTime() - startedAt.getTime()) / 60_000))
+    : null;
+  return {
+    alert_key: alertKey,
+    // occurrence_count is null only if no incidents repository is configured or
+    // incident persistence failed (both already logged elsewhere); 1 is the
+    // correct floor for "this fingerprint has fired at least once".
+    fingerprint_count: occurrenceCount ?? 1,
+    service: candidate.service ?? null,
+    severity: toSeverity(candidate.policy.severity),
+    status: kind === 'fired' ? 'firing' : 'resolved',
+    incident_id: incidentId,
+    duration_minutes: durationMinutes,
+    environment: candidate.environment ?? null,
+    project_id: candidate.projectId ?? null,
+    rule_id: candidate.policy.ruleId,
+    observed_value: candidate.observedValue ?? null,
+    threshold_value: candidate.thresholdValue ?? null,
+    labels: candidate.labels ?? {},
+    occurred_at: candidate.observedAt.toISOString(),
+  };
+}
+
 function severityPriority(value: string): number {
   return { debug: 0, info: 10, warning: 30, error: 70, critical: 90, fatal: 100 }[value] ?? 70;
+}
+
+/**
+ * Map the alert severity vocabulary onto the incident one.
+ *
+ * `alert_incidents.severity` uses the primary-db `alert_severity` enum, which has
+ * no 'debug'/'fatal'. Collapse them to the nearest meaningful incident severity
+ * rather than dropping the incident.
+ */
+function toIncidentSeverity(value: string): AlertSeverity {
+  if (value === 'fatal' || value === 'critical') return 'critical';
+  if (value === 'error') return 'error';
+  if (value === 'warning') return 'warning';
+  return 'info';
+}
+
+/** Human-readable incident title, derived from the annotation the engine already builds. */
+function incidentTitle(candidate: AlertDecisionCandidate): string {
+  const annotated = candidate.annotations?.title;
+  if (typeof annotated === 'string' && annotated.trim() !== '') return annotated.trim();
+  const dimension = candidate.dimension ? ` (${candidate.dimension})` : '';
+  return `Alert: ${candidate.policy.ruleId}${dimension}`;
 }
 
 function toRoutingSeverity(value: string): 'info' | 'warning' | 'error' | 'critical' {

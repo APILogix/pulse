@@ -41,6 +41,8 @@ export interface UsageLimitSnapshot {
     modules: Record<string, unknown>;
     entitlements: Record<string, unknown>;
 }
+export declare const SUBSCRIPTION_COLUMNS = "\n  id, organization_id, plan_id, status, provider, billing_interval,\n  provider_customer_id, provider_subscription_id, current_period_start,\n  current_period_end, trial_start, trial_end, cancel_at_period_end,\n  cancelled_at, modules, addons, metadata, created_at, updated_at, deleted_at\n";
+export declare const SUBSCRIPTION_EVENT_COLUMNS = "\n  id, organization_id, subscription_id, event_type, actor,\n  actor_user_id, old_plan_id, new_plan_id, metadata, created_at\n";
 export declare class SubscriptionsRepository {
     private readonly db;
     constructor(db?: Pool);
@@ -52,7 +54,7 @@ export declare class SubscriptionsRepository {
     upsertUsageCurrentPeriod(orgId: string, subscription: Pick<SubscriptionRow, 'id' | 'current_period_start' | 'current_period_end'>, limits: UsageLimitSnapshot, db?: Db): Promise<void>;
     updateSubscription(id: string, updates: Partial<SubscriptionRow>, db?: Db): Promise<SubscriptionRow>;
     logEvent(event: Omit<SubscriptionEventRow, 'id' | 'created_at'>, db?: Db): Promise<void>;
-    getSubscriptionHistory(orgId: string, db?: Db): Promise<SubscriptionEventRow[]>;
+    getSubscriptionHistory(orgId: string, limit?: number, db?: Db): Promise<SubscriptionEventRow[]>;
     getSubscriptionSummary(orgId: string, db?: Db): Promise<Record<string, unknown>>;
 }
 export {};

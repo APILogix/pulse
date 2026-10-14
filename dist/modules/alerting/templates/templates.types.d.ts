@@ -6,10 +6,10 @@ export declare const CreateTemplateSchema: z.ZodObject<{
     content: z.ZodString;
     variablesSchema: z.ZodDefault<z.ZodArray<z.ZodUnknown>>;
     defaultForSeverity: z.ZodOptional<z.ZodEnum<{
+        critical: "critical";
         error: "error";
         info: "info";
         warning: "warning";
-        critical: "critical";
     }>>;
     connectorType: z.ZodOptional<z.ZodString>;
     isDefault: z.ZodDefault<z.ZodBoolean>;
@@ -22,10 +22,10 @@ export declare const UpdateTemplateSchema: z.ZodObject<{
     content: z.ZodOptional<z.ZodString>;
     variablesSchema: z.ZodOptional<z.ZodDefault<z.ZodArray<z.ZodUnknown>>>;
     defaultForSeverity: z.ZodOptional<z.ZodOptional<z.ZodEnum<{
+        critical: "critical";
         error: "error";
         info: "info";
         warning: "warning";
-        critical: "critical";
     }>>>;
     connectorType: z.ZodOptional<z.ZodOptional<z.ZodString>>;
     isDefault: z.ZodOptional<z.ZodDefault<z.ZodBoolean>>;

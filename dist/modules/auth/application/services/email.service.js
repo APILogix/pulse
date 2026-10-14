@@ -22,7 +22,7 @@
  *     email tokens) is the cross-process source of truth.
  *   - Email via the Postgres-backed auth outbox worker (queue-only).
  */
-import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'crypto';
+import { createHash, randomBytes, timingSafeEqual } from 'crypto';
 import { promisify } from 'util';
 import bcrypt from 'bcrypt';
 import * as OTPAuth from 'otpauth';
@@ -305,24 +305,25 @@ export async function requestPasswordReset(input, ipAddress, requestId) {
 }
 export async function resetPasswordWithToken(input, ipAddress, requestId) {
     const tokenHash = hashEmailFlowToken('password_reset', input.token);
+    const precomputedPasswordHash = await hashPassword(input.new_password);
     let resetUserId = null;
     await repository.withTransaction(async (client) => {
         const consumed = await repository.consumeEmailVerificationToken(tokenHash, 'password_reset', client);
         if (!consumed) {
             throw new AuthError('Invalid password reset link', AuthErrorCodes.PASSWORD_RESET_INVALID, 400);
         }
-        const userRes = await client.query(`SELECT *, email_verified AS email_is_verified
+        const userRes = await client.query(`SELECT ${repository.USER_COLUMNS}
          FROM users
         WHERE id = $1 AND deleted_at IS NULL
         FOR UPDATE`, [consumed.user_id]);
-        const user = userRes.rows[0];
+        const user = userRes.rows[0] ? repository.toUser(userRes.rows[0]) : null;
         if (!user ||
             user.status !== 'active' ||
             normalizeEmail(user.email) !== normalizeEmail(consumed.email)) {
             throw new AuthError('Invalid password reset link', AuthErrorCodes.PASSWORD_RESET_INVALID, 400);
         }
         await ensurePasswordNotReused(user, input.new_password);
-        const passwordHash = await hashPassword(input.new_password);
+        const passwordHash = precomputedPasswordHash;
         const passwordHistory = buildPasswordHistory(user.password_history, user.password_hash);
         const updated = await repository.updateUserPassword(user.id, passwordHash, passwordHistory, client);
         if (!updated) {

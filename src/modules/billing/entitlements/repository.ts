@@ -3,9 +3,16 @@ import type { Pool, PoolClient } from 'pg';
 
 type Db = Pool | PoolClient;
 
-export const EFFECTIVE_ENTITLEMENTS_SQL = `
+export function buildEffectiveEntitlementsSql(featureFilter?: { paramIndex: number; isArray?: boolean }): string {
+  const filterClause = featureFilter
+    ? featureFilter.isArray
+      ? `AND bf.feature_key = ANY($${featureFilter.paramIndex}::text[])`
+      : `AND bf.feature_key = $${featureFilter.paramIndex}`
+    : '';
+
+  return `
 WITH active_subscription AS (
-  SELECT *
+  SELECT id, organization_id, plan_id, status, created_at, current_period_end
   FROM organization_subscriptions
   WHERE organization_id = $1
     AND status IN ('trialing','active','past_due')
@@ -32,6 +39,7 @@ plan_entitlements AS (
     ON bf.id = pfe.feature_id
    AND bf.deleted_at IS NULL
    AND bf.is_deprecated = FALSE
+   ${filterClause}
   LEFT JOIN organization_feature_overrides ofo
     ON ofo.organization_id = os.organization_id
    AND ofo.feature_id = bf.id
@@ -57,12 +65,13 @@ addon_entitlements AS (
     ON bf.id = sa.feature_id
    AND bf.deleted_at IS NULL
    AND bf.is_deprecated = FALSE
+   ${filterClause}
   GROUP BY os.organization_id, bf.feature_key, bf.value_type
 ),
 combined AS (
-  SELECT * FROM plan_entitlements
+  SELECT organization_id, feature_key, boolean_value, integer_value, decimal_value, string_value FROM plan_entitlements
   UNION ALL
-  SELECT * FROM addon_entitlements
+  SELECT organization_id, feature_key, boolean_value, integer_value, decimal_value, string_value FROM addon_entitlements
 )
 SELECT
   organization_id,
@@ -74,6 +83,9 @@ SELECT
 FROM combined
 GROUP BY organization_id, feature_key
 `;
+}
+
+export const EFFECTIVE_ENTITLEMENTS_SQL = buildEffectiveEntitlementsSql();
 
 export interface EffectiveEntitlementRow {
   organization_id: string;
@@ -96,10 +108,33 @@ export class EntitlementsRepository {
     return result?.rows ?? [];
   }
 
+  /**
+   * Resolve multiple feature entitlements in a single database query, avoiding repeated 6-table CTE scans (BIL-Q011).
+   */
+  async getFeaturesMap(orgId: string, featureKeys?: string[], db: Db = this.db): Promise<Map<string, EffectiveEntitlementRow>> {
+    const map = new Map<string, EffectiveEntitlementRow>();
+    let rows: EffectiveEntitlementRow[];
+
+    if (featureKeys && featureKeys.length > 0) {
+      const cleanKeys = Array.from(new Set(featureKeys.filter((k) => typeof k === 'string' && k.length > 0)));
+      const sql = buildEffectiveEntitlementsSql({ paramIndex: 2, isArray: true });
+      const result = await db.query(`${sql} ORDER BY feature_key`, [orgId, cleanKeys]);
+      rows = result?.rows ?? [];
+    } else {
+      rows = await this.getEffectiveEntitlements(orgId, db);
+    }
+
+    for (const r of rows) {
+      map.set(r.feature_key, r);
+    }
+    return map;
+  }
+
   async hasFeature(orgId: string, featureKey: string, db: Db = this.db): Promise<boolean> {
+    const sql = buildEffectiveEntitlementsSql({ paramIndex: 2 });
     const result = await db.query(
       `SELECT COALESCE(boolean_value, integer_value > 0, decimal_value > 0, string_value IS NOT NULL, FALSE) AS has_access
-       FROM (${EFFECTIVE_ENTITLEMENTS_SQL}) entitlements
+       FROM (${sql}) entitlements
        WHERE feature_key = $2
        LIMIT 1`,
       [orgId, featureKey]
@@ -108,9 +143,10 @@ export class EntitlementsRepository {
   }
 
   async getEffectiveIntegerFeature(orgId: string, featureKey: string, db: Db = this.db): Promise<number> {
+    const sql = buildEffectiveEntitlementsSql({ paramIndex: 2 });
     const result = await db.query(
       `SELECT COALESCE(integer_value, 0) AS limit_val
-       FROM (${EFFECTIVE_ENTITLEMENTS_SQL}) entitlements
+       FROM (${sql}) entitlements
        WHERE feature_key = $2
        LIMIT 1`,
       [orgId, featureKey]
@@ -119,9 +155,10 @@ export class EntitlementsRepository {
   }
 
   async getEffectiveFeatureRow(orgId: string, featureKey: string, db: Db = this.db): Promise<EffectiveEntitlementRow | null> {
+    const sql = buildEffectiveEntitlementsSql({ paramIndex: 2 });
     const result = await db.query(
       `SELECT organization_id, feature_key, boolean_value, integer_value, decimal_value, string_value
-       FROM (${EFFECTIVE_ENTITLEMENTS_SQL}) entitlements
+       FROM (${sql}) entitlements
        WHERE feature_key = $2
        LIMIT 1`,
       [orgId, featureKey]

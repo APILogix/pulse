@@ -1,5 +1,5 @@
 import Fastify from 'fastify';
-import type { FastifyInstance, FastifyRequest } from 'fastify';
+import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import helmet from '@fastify/helmet';
 import cors from '@fastify/cors';
 import compress from '@fastify/compress';
@@ -8,18 +8,26 @@ import cookie from '@fastify/cookie';
 import sensible from '@fastify/sensible';
 import underPressure from '@fastify/under-pressure';
 import {
+  EnterpriseAdmissionController,
+  classifyRequestTier,
+  RequestTier,
+} from './lib/admission-control.js';
+import {
   serializerCompiler,
   validatorCompiler,
 } from 'fastify-type-provider-zod';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import fastifyRawBody from 'fastify-raw-body';
-import { randomUUID } from 'crypto';
+import { v7 as uuidv7 } from 'uuid';
 
 import { env } from './config/env.js';
 import { pool } from './config/database.js';
+import { logDB } from './config/log-database.js';
+import { checkPostgresHealth } from './config/postgres-network.js';
 import { logger } from './config/logger.js';
 import { registerHealthPlugin } from './config/plugins.js';
 import { registerMetricsPlugin } from './config/metrics.js';
+import { memoryDiagnostics } from './lib/memory-diagnostics.js';
 import { BackpressureGauge } from './lib/gauge.js';
 import { registerHealthChecks } from './lib/health.js';
 import { registerAuthModule } from './modules/auth/auth.module.js';
@@ -95,7 +103,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   const app = Fastify({
     loggerInstance: logger as any,
     trustProxy: parseTrustProxy(env.TRUST_PROXY),
-    genReqId: (req) => req.headers['x-request-id']?.toString() || randomUUID(),
+    genReqId: (req) => req.headers['x-request-id']?.toString() || uuidv7(),
     connectionTimeout: 30000,
     keepAliveTimeout: 65000,
     maxRequestsPerSocket: 1000,
@@ -116,47 +124,56 @@ export async function buildApp(): Promise<FastifyInstance> {
   // These MUST be registered first — they protect the server and provide
   // foundational capabilities that all modules depend on.
 
-  // Admission control protects latency by shedding new work before the process
-  // is OOM-killed or the event loop becomes unrecoverable. Pressure logs are
-  // rate-limited: logging every rejected request can itself prolong an overload.
-  let lastPressureLogAt = 0;
-  let suppressedPressureLogs = 0;
+  // Admission control protects latency and availability through EWMA smoothing,
+  // multi-sample confirmation, and tiered priority-aware load shedding.
+  const admissionController = new EnterpriseAdmissionController(
+    {
+      maxEventLoopDelayMs: env.PRESSURE_MAX_EVENT_LOOP_DELAY_MS,
+      criticalEventLoopDelayMs: env.PRESSURE_CRITICAL_EVENT_LOOP_DELAY_MS,
+      maxEventLoopUtilization: env.PRESSURE_MAX_EVENT_LOOP_UTILIZATION,
+      maxHeapBytes: env.PRESSURE_MAX_HEAP_MB * 1024 * 1024,
+      maxRssBytes: env.PRESSURE_MAX_RSS_MB * 1024 * 1024,
+      samplingIntervalMs: env.PRESSURE_SAMPLING_INTERVAL_MS,
+      consecutiveBreachesRequired: env.PRESSURE_CONSECUTIVE_BREACHES,
+      tieredSheddingEnabled: env.PRESSURE_TIERED_SHEDDING_ENABLED,
+      logIntervalMs: env.PRESSURE_LOG_INTERVAL_MS,
+    },
+    appLogger,
+  );
+  app.addHook('onReady', async () => {
+    admissionController.start();
+  });
+  app.addHook('onClose', async () => {
+    admissionController.stop();
+  });
+
   await app.register(underPressure, {
-    maxEventLoopDelay: env.PRESSURE_MAX_EVENT_LOOP_DELAY_MS,
+    // Disable plugin's internal eventLoopDelay and eventLoopUtilization checks.
+    // In @fastify/under-pressure, histogram.mean is NaN when count === 0 (idle or Windows libuv tick drift),
+    // causing eventLoopDelay to become Infinity, shedding all traffic falsely with value: null.
+    // Both metrics are sampled via EnterpriseAdmissionController above.
+    maxEventLoopDelay: 0,
     maxHeapUsedBytes: env.PRESSURE_MAX_HEAP_MB * 1024 * 1024,
     maxRssBytes: env.PRESSURE_MAX_RSS_MB * 1024 * 1024,
-    maxEventLoopUtilization: env.PRESSURE_MAX_EVENT_LOOP_UTILIZATION,
+    maxEventLoopUtilization: 0,
     retryAfter: 10,
-    pressureHandler: (_req, reply, type, value) => {
-      const now = Date.now();
-      if (now - lastPressureLogAt >= env.PRESSURE_LOG_INTERVAL_MS) {
-        const memory = process.memoryUsage();
-        appLogger.warn(
-          {
-            type,
-            value,
-            suppressedSinceLastLog: suppressedPressureLogs,
-            heapUsedMB: Math.round(memory.heapUsed / 1024 / 1024),
-            rssMB: Math.round(memory.rss / 1024 / 1024),
-          },
-          'Server under pressure — shedding new work',
-        );
-        lastPressureLogAt = now;
-        suppressedPressureLogs = 0;
-      } else {
-        suppressedPressureLogs += 1;
-      }
+    pressureHandler: ((req: FastifyRequest, reply: FastifyReply, type: string) => {
+      if (req.method === 'OPTIONS') return;
+      reply.header('Retry-After', '10').status(503).send({ error: 'Server busy', retryAfter: 10, reason: type });
+    }) as never,
+  });
 
-      reply
-        .header('Retry-After', '10')
-        .status(503)
-        .send({ error: 'Server busy', retryAfter: 10, reason: type });
-    },
+  app.addHook('onRequest', async (request, reply) => {
+    const shedPayload = admissionController.evaluateRequest(request, reply);
+    if (shedPayload) {
+      return reply.send(shedPayload);
+    }
   });
 
   await app.register(helmet, {
     contentSecurityPolicy: false,
     crossOriginEmbedderPolicy: false,
+    crossOriginOpenerPolicy: { policy: 'same-origin-allow-popups' },
     hsts: env.NODE_ENV === 'production' ? { maxAge: 31536000 } : false,
   });
 
@@ -204,8 +221,6 @@ export async function buildApp(): Promise<FastifyInstance> {
     runFirst: true,
   });
 
-
-
   await app.register(sensible);
 
   // ── Health & Readiness Probes ──────────────────────────────────────
@@ -215,17 +230,58 @@ export async function buildApp(): Promise<FastifyInstance> {
     maxQueueDepth: env.MAX_QUEUE_DEPTH,
     maxGaugeAgeMs: env.MAX_GAUGE_AGE_MS,
     customReadyCheck: async () => {
-      try {
-        await pool.query('SELECT 1');
-        return { healthy: true };
-      } catch {
-        return { healthy: false, reason: 'database_unavailable' };
+      const [primaryHealth, logHealth] = await Promise.all([
+        checkPostgresHealth(pool),
+        logDB.healthCheck(),
+      ]);
+      if (!primaryHealth.healthy) {
+        return { healthy: false, reason: `database_${primaryHealth.failure}` };
       }
+      if (!logHealth.healthy) {
+        return { healthy: false, reason: `log_database_${logHealth.failure ?? 'unavailable'}` };
+      }
+      return { healthy: true };
     },
   });
 
   // ── Prometheus Metrics ─────────────────────────────────────────────
   await app.register(registerMetricsPlugin);
+
+  // ── Memory Diagnostics & Local Diagnostic Mode ─────────────────────
+  if (env.NODE_ENV !== 'production' || env.MEMORY_DIAGNOSTICS_ENABLED) {
+    app.get('/diagnostics/memory', async (_req, reply) => {
+      return reply.send({
+        success: true,
+        data: memoryDiagnostics.getReport(),
+      });
+    });
+
+    app.post('/diagnostics/gc', async (_req, reply) => {
+      if (env.NODE_ENV === 'production') {
+        return reply.status(403).send({
+          success: false,
+          error: {
+            code: 'FORBIDDEN',
+            message: 'Explicit GC is strictly prohibited in production mode',
+          },
+        });
+      }
+      const result = memoryDiagnostics.triggerDiagnosticGC('http_diagnostics');
+      if (!result.success) {
+        return reply.status(400).send({
+          success: false,
+          error: {
+            code: result.reason || 'GC_FAILED',
+            message: 'Diagnostic GC failed: ' + result.reason,
+          },
+        });
+      }
+      return reply.send({
+        success: true,
+        data: result,
+      });
+    });
+  }
 
   // ── Business Modules ───────────────────────────────────────────────
   // Registration order matters only for explicit Fastify decorators. SDK
@@ -258,45 +314,128 @@ export async function buildApp(): Promise<FastifyInstance> {
 
   // ── Global Request Timing Hook ──────────────────────────────────────
   app.addHook('onRequest', async (request) => {
-    request.startTime = Date.now();
+    (request as any).startTime = Date.now();
   });
 
   app.addHook('onResponse', async (request, reply) => {
-    const duration = Date.now() - request.startTime;
-    appLogger["debug"](
-      {
-        durationMs: duration,
-      }
-    );
+    if (appLogger.isLevelEnabled('debug')) {
+      const duration = Date.now() - ((request as any).startTime || Date.now());
+      appLogger.debug(
+        {
+          requestId: request.id,
+          method: request.method,
+          url: request.url,
+          statusCode: reply.statusCode,
+          durationMs: duration,
+        },
+        'Request completed'
+      );
+    }
   });
 
   // ── Global API Response Contract Enforcement Hook ──────────────────
+  // Fast preSerialization hook wraps raw JS objects BEFORE serialization,
+  // avoiding expensive JSON.parse + JSON.stringify cycles in onSend.
+  app.addHook('preSerialization', async (request, reply, payload) => {
+    if (!payload || typeof payload !== 'object' || Buffer.isBuffer(payload)) {
+      return payload;
+    }
+
+    const body = payload as Record<string, any>;
+
+    // Skip if already has canonical envelope fields
+    if ('success' in body && 'requestId' in body) {
+      (reply as any).__envelopeApplied = true;
+      return payload;
+    }
+
+    const requestId = (request.id) || (reply.getHeader('x-request-id')) || 'req_unknown';
+
+    if (reply.statusCode >= 400 || 'error' in body) {
+      const errorObj =
+        body.error && typeof body.error === 'object'
+          ? body.error
+          : {
+              code:
+                reply.statusCode === 404
+                  ? 'NOT_FOUND'
+                  : body.code || (reply.statusCode === 400 ? 'VALIDATION_ERROR' : 'API_ERROR'),
+              message:
+                body.message ||
+                (typeof body.error === 'string' ? body.error : 'Request failed'),
+              details: body.details || null,
+            };
+
+      (reply as any).__envelopeApplied = true;
+      return {
+        success: false,
+        data: null,
+        error: errorObj,
+        meta: body.meta || null,
+        requestId,
+      };
+    }
+
+    (reply as any).__envelopeApplied = true;
+    return {
+      success: true,
+      data: body.data !== undefined ? body.data : payload,
+      message: body.message || null,
+      meta: body.meta || null,
+      requestId,
+    };
+  });
+
   app.addHook('onSend', async (request, reply, payload) => {
-    if (!payload || typeof payload !== 'string') return payload;
-    const contentType = reply.getHeader('content-type')?.toString() || '';
+    // Fast path: preSerialization already applied the canonical contract in O(1)
+    if ((reply as any).__envelopeApplied || !payload || typeof payload !== 'string') {
+      return payload;
+    }
+
+    const rawHeader = reply.getHeader('content-type');
+    const contentType = typeof rawHeader === 'string' ? rawHeader : rawHeader ? String(rawHeader) : '';
     if (contentType && !contentType.includes('application/json')) return payload;
+
+    // Fast O(1) short-circuit: if already formatted with canonical envelope, skip parsing immediately
+    if (payload.includes('"success"') && payload.includes('"requestId"')) {
+      return payload;
+    }
+
+    // Bound payload size for automatic JSON parsing to prevent memory bloat on large analytical/export responses
+    if (payload.length > 2 * 1024 * 1024) return payload;
 
     try {
       const parsed = JSON.parse(payload);
       if (typeof parsed !== 'object' || parsed === null) return payload;
 
-      const requestId = request.id || (reply.getHeader('x-request-id') as string) || 'req_unknown';
+      const body = parsed as Record<string, any>;
+      const requestId = request.id || reply.getHeader('x-request-id') || 'req_unknown';
 
       // If already has canonical envelope fields, skip
-      if ('success' in parsed && 'requestId' in parsed) {
+      if ('success' in body && 'requestId' in body) {
         return payload;
       }
 
-      if (reply.statusCode >= 400 || 'error' in parsed) {
+      if (reply.statusCode >= 400 || 'error' in body) {
+        const errorObj =
+          body.error && typeof body.error === 'object'
+            ? body.error
+            : {
+                code:
+                  reply.statusCode === 404
+                    ? 'NOT_FOUND'
+                    : body.code || (reply.statusCode === 400 ? 'VALIDATION_ERROR' : 'API_ERROR'),
+                message:
+                  body.message ||
+                  (typeof body.error === 'string' ? body.error : 'Request failed'),
+                details: body.details || null,
+              };
+
         const canonicalError = {
           success: false,
           data: null,
-          error: parsed.error ?? {
-            code: reply.statusCode === 404 ? 'NOT_FOUND' : 'API_ERROR',
-            message: parsed.message || 'Request failed',
-            details: parsed.details ?? null,
-          },
-          meta: parsed.meta ?? null,
+          error: errorObj,
+          meta: body.meta ?? null,
           requestId,
         };
         return JSON.stringify(canonicalError);
@@ -304,9 +443,9 @@ export async function buildApp(): Promise<FastifyInstance> {
 
       const canonicalSuccess = {
         success: true,
-        data: parsed.data !== undefined ? parsed.data : parsed,
-        message: parsed.message ?? null,
-        meta: parsed.meta ?? null,
+        data: body.data !== undefined ? body.data : parsed,
+        message: body.message || null,
+        meta: body.meta || null,
         requestId,
       };
       return JSON.stringify(canonicalSuccess);

@@ -144,8 +144,8 @@ export const errorsResource = {
     searchAliases: errorsSearchAliases,
     defaultSort: { field: 'occurredAt', direction: 'desc' },
     defaultProjection: [
-        'id', 'publicId', 'occurredAt', 'message', 'errorGroupId', 'errorGroupPublicId', 'traceId', 'tracePublicId',
-        'route', 'statusCode', 'severity', 'handled', 'environment',
+        'id', 'publicId', 'occurredAt', 'errorName', 'message', 'errorGroupId', 'errorGroupPublicId', 'traceId', 'tracePublicId',
+        'route', 'statusCode', 'severity', 'handled', 'environment', 'release', 'service',
     ],
     preferredIndexes: ['idx_events_errors_tenant_env_time', 'idx_events_errors_fingerprint_time'],
     errorPredicate: "severity IN ('error','critical','fatal')",

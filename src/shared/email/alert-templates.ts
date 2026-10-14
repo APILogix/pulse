@@ -7,55 +7,63 @@
  *
  *   1. **No greeting.** An alert is machine-to-human. It leads with the fact,
  *      not with "Hi,". Every word before the verdict is a word in the way.
- *   2. **Subject is the alert.** `[FIRING · CRITICAL] rule — project (env)`
- *      follows the convention on-call engineers already have inbox rules and
- *      pager integrations for. State first, severity second, identity third.
- *   3. **Severity is pre-verbal.** The 3px top rail and the eyebrow dot carry
- *      the verdict in the truth channel, so severity registers before a single
- *      word is parsed — and survives in a plaintext-only client via the
- *      subject prefix.
- *   4. **Numbers before prose.** Observed value against threshold, in mono at
- *      30px, above any sentence explaining it.
- *   5. **Two paths, always.** "View alert" plus a mitigation
- *      ("Acknowledge", "Silence") — the reader is deciding, not reading.
+ *   2. **Subject is the alert.** A bracketed state tag comes first, so inbox
+ *      rules, pager bridges and mobile previews can classify the message from
+ *      its first few characters.
+ *   3. **Severity is pre-verbal.** The state line under the header strip is a
+ *      tinted band with a drawn status dot, so the verdict registers before a
+ *      word is parsed — and survives a plaintext-only client via the subject.
+ *   4. **Numbers before prose.** The readout band sets the observed value
+ *      against its threshold in mono, and the meter beneath draws the
+ *      crossing: the stretch past the threshold is the only saturated colour
+ *      in the band.
+ *   5. **Action before evidence.** One white button, a ghost secondary and
+ *      quiet text links sit above the fact sections, so a reader who has
+ *      already decided never scrolls past tables to act.
  *   6. **Cyan means a model said it.** AI insight cards are the only cyan in
- *      the email (§2.4). If cyan appears, inference produced that sentence, and
- *      it arrives with a confidence score attached.
+ *      the email. If cyan appears, inference produced that sentence, and it
+ *      arrives with a confidence score attached.
  *   7. **Every alert is identifiable.** Fingerprint and event id ship in the
  *      body so an email can be correlated with the audit log and the dedupe
  *      chain without opening the app.
+ *
+ * Every rule-based notice shares one anatomy: the state line names the event
+ * (firing, resolved, escalated), the headline names the rule, and the facts
+ * below are grouped the way the console's detail sheet groups them.
  */
 
 import {
   aiInsight,
-  block,
   button,
   buttonRow,
   callout,
+  code,
   codeBlock,
   dataTable,
   digestList,
-  divider,
   esc,
-  glyph,
-  heading,
+  exceptionBlock,
+  lines,
   metricCompare,
+  note,
   p,
-  pill,
+  readout,
   renderLayout,
-  routeBadge,
-  safeUrl,
   safeUrlText,
-  sectionHeader,
+  section,
   stack,
-  statStrip,
+  stepTrack,
   stripControl,
+  strong,
   textBody,
+  textLinks,
   textRows,
   type DataRow,
   type DigestItem,
+  type LayoutStatus,
+  type ReadoutCell,
 } from './components.js';
-import { font, palette, severityGlyph, severityTone, type AlertSeverity, type Tone } from './theme.js';
+import { severityGlyph, severityTone, type AlertSeverity, type Tone } from './theme.js';
 import type { EmailTemplate } from './templates.js';
 
 export type { AlertSeverity };
@@ -161,10 +169,21 @@ function scopeSuffix(scope: AlertScope): string {
 }
 
 /**
- * On-call subject line: `[STATE · SEVERITY] rule — scope`.
+ * Header-strip context — which system is speaking, readable before the
+ * headline: `checkout-api · production`, the organization, or "Alerts".
+ */
+function scopeContext(scope: AlertScope): string {
+  const project = stripControl(scope.projectName).trim();
+  const env = stripControl(scope.environment).trim();
+  if (project && env) return `${project} · ${env}`;
+  return project || env || stripControl(scope.orgName).trim() || 'Alerts';
+}
+
+/**
+ * On-call subject line: a bracketed state tag, then the rule.
  *
  * Bracketed state first so inbox rules, pager bridges and mobile notification
- * previews can classify the message from its first eight characters.
+ * previews can classify the message from its first few characters.
  */
 function alertSubject(state: string, severity: AlertSeverity | null, ruleName: string, scope: AlertScope): string {
   let tagText = state.toUpperCase();
@@ -178,38 +197,42 @@ function alertSubject(state: string, severity: AlertSeverity | null, ruleName: s
   return tag ? `${tag} ${rule}` : rule;
 }
 
-/** Rows describing the alert itself. Empty fields are dropped, never shown blank. */
-function identityRows(identity: AlertIdentity, scope: AlertScope): DataRow[] {
-  const rows: DataRow[] = [
-    { label: 'Rule', value: identity.ruleName, sans: true },
-    { label: 'Severity', value: identity.severity.toUpperCase(), tone: severityTone(identity.severity) },
-  ];
-  if (identity.endpoint) rows.push({ label: 'Route', value: identity.endpoint, sans: true });
-  if (identity.method) rows.push({ label: 'Method', value: String(identity.method).toUpperCase() });
-  if (identity.statusCode !== undefined && identity.statusCode !== null && String(identity.statusCode).trim() !== '') {
-    rows.push({ label: 'Status code', value: String(identity.statusCode) });
-  }
-  if (identity.duration) rows.push({ label: 'Time taken', value: identity.duration });
-  if (identity.service) rows.push({ label: 'Service', value: identity.service, sans: true });
-  if (scope.projectName) rows.push({ label: 'Project', value: scope.projectName, sans: true });
-  if (scope.environment) rows.push({ label: 'Environment', value: scope.environment });
-  if (identity.source) rows.push({ label: 'Source', value: identity.source });
-  if (identity.startedAt) rows.push({ label: 'Started', value: identity.startedAt });
-  if (typeof identity.occurrences === 'number') {
-    rows.push({
-      label: 'Occurrences',
-      value: `${identity.occurrences} in this window`,
-    });
-  }
-  if (identity.traceId) rows.push({ label: 'Trace ID', value: identity.traceId });
-  if (identity.spanId) rows.push({ label: 'Span ID', value: identity.spanId });
-  if (identity.clientIp) rows.push({ label: 'Client IP', value: identity.clientIp });
-  if (identity.fingerprint) rows.push({ label: 'Fingerprint', value: identity.fingerprint });
-  if (identity.eventId) rows.push({ label: 'Event id', value: identity.eventId });
-  if (identity.extraRows && identity.extraRows.length > 0) {
-    rows.push(...identity.extraRows);
-  }
-  return rows;
+/** Capitalise the first letter — state words are sentence case. */
+function cap(value: string): string {
+  const v = stripControl(value).trim();
+  return v ? v.charAt(0).toUpperCase() + v.slice(1) : v;
+}
+
+/** State-line label, `Firing · Critical`. Empty parts are dropped. */
+function stateLabel(...parts: (string | null | undefined)[]): string {
+  return parts
+    .map((part) => cap(part ?? ''))
+    .filter((part) => part.length > 0)
+    .join(' · ');
+}
+
+/** The verdict band, carrying its timestamp when the caller supplied one. */
+function verdict(labelText: string, tone: Tone, at?: string | undefined): LayoutStatus {
+  const meta = stripControl(at).trim();
+  return meta ? { label: labelText, tone, meta } : { label: labelText, tone };
+}
+
+function present(value: string | number | null | undefined): value is string | number {
+  return value !== undefined && value !== null && String(value).trim() !== '';
+}
+
+/** 5xx reads red and 4xx amber; anything else is not a verdict. */
+function httpTone(statusCode: string | number): Tone | undefined {
+  const n = Number(statusCode);
+  if (n >= 500) return 'danger';
+  if (n >= 400) return 'warning';
+  return undefined;
+}
+
+/** `POST /v1/checkout` — the method folded into the route, the way access logs print it. */
+function routeValue(endpoint: string | undefined, method: string | undefined): string {
+  if (!endpoint) return '';
+  return method ? `${String(method).toUpperCase()} ${endpoint}` : endpoint;
 }
 
 function plainRows(rows: DataRow[]): string {
@@ -217,13 +240,35 @@ function plainRows(rows: DataRow[]): string {
 }
 
 /**
- * Measurement surface.
- *
- * The window caption is folded into the metric label so it sits directly above
- * the pair of numbers it qualifies — a threshold without its window is not a
- * fact, it is a decoration.
+ * Plaintext block under a `--- TITLE ---` marker. The marker format is kept
+ * from the previous revision because text-only clients and downstream parsers
+ * read it; an empty body renders nothing.
  */
-function measurementBlock(m: AlertMeasurement, tone: Tone): string {
+function textBlock(title: string, body: string): string {
+  return body ? `--- ${title.toUpperCase()} ---\n${body}` : '';
+}
+
+/** Plaintext twin of a fact section: marker, then aligned rows. */
+function textSection(title: string, rows: DataRow[]): string {
+  return rows.length > 0 ? textBlock(title, plainRows(rows)) : '';
+}
+
+/** Plaintext twin of an AI insight, confidence attached. */
+function insightText(insight: AlertInsight | undefined): string {
+  if (!insight) return '';
+  const conf =
+    typeof insight.confidence === 'number' && Number.isFinite(insight.confidence)
+      ? ` (${Math.round(insight.confidence)}% confidence)`
+      : '';
+  return `AI insight${conf}\n${insight.text}`;
+}
+
+/**
+ * The readout for a threshold alert: observed value against the threshold it
+ * crossed, with the window folded into the label so it sits directly above
+ * the numbers it qualifies — a threshold without its window is not a fact.
+ */
+function measurementHero(m: AlertMeasurement, tone: Tone): string {
   return metricCompare({
     label: m.window ? `${m.label} · ${m.window}` : m.label,
     value: m.value,
@@ -239,89 +284,34 @@ function footerLinkFor(scope: AlertScope): { url: string; label: string } | unde
     : undefined;
 }
 
-/**
- * Primary + secondary CTAs for an alert.
- *
- * Falls back gracefully: with both links it renders a pair, with one it renders
- * a single button, with none it renders nothing rather than a dead control.
- */
-function alertActions(
-  scope: AlertScope,
-  primaryLabel: string,
-  secondary: { url: string | undefined; label: string },
-  tone?: Tone | undefined,
-): string {
-  if (scope.alertUrl && secondary.url) {
-    const primary: { url: string; label: string; tone?: Tone | undefined } = {
-      url: scope.alertUrl,
-      label: primaryLabel,
-    };
-    if (tone) primary.tone = tone;
-    return buttonRow(primary, { url: secondary.url, label: secondary.label });
-  }
-  if (scope.alertUrl) return button(scope.alertUrl, primaryLabel, tone ? { tone } : {});
-  if (secondary.url) return button(secondary.url, secondary.label, tone ? { tone } : {});
-  return '';
-}
-
-function actionsText(scope: AlertScope, extra?: { label: string; url: string | undefined }): string {
-  const lines: string[] = [];
-  if (scope.alertUrl) lines.push(`View alert:   ${safeUrlText(scope.alertUrl)}`);
-  if (extra?.url) lines.push(`${extra.label}: ${safeUrlText(extra.url)}`);
-  return lines.join('\n');
+interface AlertLink {
+  url: string | undefined;
+  label: string;
 }
 
 /**
- * Modern developer-focused action CTAs with visual hierarchy:
- * Primary dominant button + Secondary ghost button + inline secondary links.
+ * The decision block — one white button, a ghost secondary, and any remaining
+ * paths as quiet text links, in the order given. Duplicate and unsafe URLs are
+ * dropped, so the same destination is never offered twice and a missing link
+ * never becomes a dead control.
  */
-function developerAlertActions(opts: {
-  primary?: { url: string; label: string; tone?: Tone } | undefined;
-  secondary?: { url: string; label: string } | undefined;
-  viewAlertUrl?: string | undefined;
-  acknowledgeUrl?: string | undefined;
-  silenceUrl?: string | undefined;
-}): { html: string; text: string } {
-  const buttonsHtml: string[] = [];
-  if (opts.primary && opts.secondary) {
-    buttonsHtml.push(buttonRow(opts.primary, opts.secondary));
-  } else if (opts.primary) {
-    buttonsHtml.push(button(opts.primary.url, opts.primary.label, { tone: opts.primary.tone ?? 'brand', variant: 'primary' }));
-  } else if (opts.viewAlertUrl) {
-    buttonsHtml.push(button(opts.viewAlertUrl, 'View Alert', { tone: 'brand', variant: 'primary' }));
+function actionGroup(links: AlertLink[]): { html: string; text: string } {
+  const seen = new Set<string>();
+  const usable: { url: string; label: string }[] = [];
+  for (const link of links) {
+    const href = link.url ? safeUrlText(link.url) : '';
+    if (!href || seen.has(href)) continue;
+    seen.add(href);
+    usable.push({ url: href, label: link.label });
   }
-
-  const links: string[] = [];
-  if (opts.viewAlertUrl && (!opts.primary || opts.primary.url !== opts.viewAlertUrl) && (!opts.secondary || opts.secondary.url !== opts.viewAlertUrl)) {
-    links.push(`<a href="${safeUrl(opts.viewAlertUrl)}" style="color:${palette.text2};text-decoration:underline;">View Alert</a>`);
-  }
-  if (opts.acknowledgeUrl && (!opts.secondary || opts.secondary.url !== opts.acknowledgeUrl)) {
-    links.push(`<a href="${safeUrl(opts.acknowledgeUrl)}" style="color:${palette.text2};text-decoration:underline;">Acknowledge</a>`);
-  }
-  if (opts.silenceUrl) {
-    links.push(`<a href="${safeUrl(opts.silenceUrl)}" style="color:${palette.text2};text-decoration:underline;">Silence</a>`);
-  }
-
-  const linksHtml = links.length > 0
-    ? `<div style="margin-top:12px;font-family:${font.mono};font-size:12px;color:${palette.text3};">${links.join(' &nbsp;·&nbsp; ')}</div>`
-    : '';
-
-  const html = buttonsHtml.length > 0 || linksHtml
-    ? `<div style="margin-top:8px;">${buttonsHtml.join('\n')}${linksHtml}</div>`
-    : '';
-
-  const textLines: string[] = [];
-  if (opts.primary) textLines.push(`${opts.primary.label}: ${safeUrlText(opts.primary.url)}`);
-  if (opts.secondary) textLines.push(`${opts.secondary.label}: ${safeUrlText(opts.secondary.url)}`);
-  if (opts.viewAlertUrl && (!opts.primary || opts.primary.url !== opts.viewAlertUrl) && (!opts.secondary || opts.secondary.url !== opts.viewAlertUrl)) {
-    textLines.push(`View Alert: ${safeUrlText(opts.viewAlertUrl)}`);
-  }
-  if (opts.acknowledgeUrl && (!opts.secondary || opts.secondary.url !== opts.acknowledgeUrl)) {
-    textLines.push(`Acknowledge: ${safeUrlText(opts.acknowledgeUrl)}`);
-  }
-  if (opts.silenceUrl) textLines.push(`Silence: ${safeUrlText(opts.silenceUrl)}`);
-
-  return { html, text: textLines.join('\n') };
+  const [primary, secondary, ...rest] = usable;
+  if (!primary) return { html: '', text: '' };
+  const buttons = secondary ? buttonRow(primary, secondary) : button(primary.url, primary.label);
+  const width = usable.reduce((max, l) => Math.max(max, l.label.length), 0);
+  return {
+    html: stack([buttons, textLinks(rest)], 16),
+    text: usable.map((l) => `${`${l.label}:`.padEnd(width + 2)}${l.url}`).join('\n'),
+  };
 }
 
 /* ════════════════════════════════════════════════════════════════════════
@@ -344,165 +334,94 @@ export interface AlertFiringInput extends AlertScope {
 
 /**
  * The core alert notification: a rule crossed its threshold and is firing.
- * Enhanced with developer triage sections: Metric Compare, Route context, Trace correlation, and Actions.
+ *
+ * Reading order: the verdict band, the rule, the crossing (readout + meter),
+ * the summary and any model insight, the decision, then the evidence grouped
+ * as request, incident and correlation facts.
  */
 export function alertFiringTemplate(input: AlertFiringInput): EmailTemplate {
-  const severity = input.identity.severity;
-  const tone = severityTone(severity);
   const id = input.identity;
+  const severity = id.severity;
+  const tone = severityTone(severity);
 
-  // 1. REQUEST & ROUTE
-  const reqRows: DataRow[] = [];
-  if (id.endpoint) {
-    const routeVal = id.method ? `${String(id.method).toUpperCase()} ${id.endpoint}` : id.endpoint;
-    reqRows.push({ label: 'Route', value: routeVal, sans: true });
+  const requestRows: DataRow[] = [];
+  const route = routeValue(id.endpoint, id.method);
+  if (route) requestRows.push({ label: 'Route', value: route });
+  else if (id.method) requestRows.push({ label: 'Method', value: String(id.method).toUpperCase() });
+  if (present(id.statusCode)) {
+    requestRows.push({ label: 'HTTP status', value: String(id.statusCode), tone: httpTone(id.statusCode) });
   }
-  if (id.method && !id.endpoint) {
-    reqRows.push({ label: 'Method', value: String(id.method).toUpperCase() });
-  }
-  if (id.statusCode !== undefined && id.statusCode !== null && String(id.statusCode).trim() !== '') {
-    reqRows.push({ label: 'HTTP status', value: String(id.statusCode) });
-  }
-  if (id.duration) {
-    reqRows.push({ label: 'Time taken', value: id.duration });
-  }
-  if (id.service) {
-    reqRows.push({ label: 'Service', value: id.service, sans: true });
-  }
+  if (id.duration) requestRows.push({ label: 'Time taken', value: id.duration });
+  if (id.service) requestRows.push({ label: 'Service', value: id.service });
 
-  // 2. TRACE & CORRELATION
-  const traceRows: DataRow[] = [];
-  if (id.traceId) {
-    traceRows.push({ label: 'Trace ID', value: id.traceId });
-  }
-  if (id.spanId) {
-    traceRows.push({ label: 'Span ID', value: id.spanId });
-  }
-  if (id.clientIp) {
-    traceRows.push({ label: 'Client IP', value: id.clientIp });
-  }
-  if (id.fingerprint) {
-    traceRows.push({ label: 'Fingerprint', value: id.fingerprint });
-  }
-  if (id.eventId) {
-    traceRows.push({ label: 'Event ID', value: id.eventId });
-  }
-  if (id.extraRows && id.extraRows.length > 0) {
-    traceRows.push(...id.extraRows);
-  }
-
-  // 3. CONTEXT & METADATA
-  const metaRows: DataRow[] = [
-    { label: 'Severity', value: severity.toUpperCase(), tone },
-  ];
-  if (input.projectName) metaRows.push({ label: 'Project', value: input.projectName, sans: true });
-  if (input.environment) metaRows.push({ label: 'Environment', value: input.environment });
-  if (id.source) metaRows.push({ label: 'Source', value: id.source });
-  if (id.startedAt) metaRows.push({ label: 'Started', value: id.startedAt });
+  const incidentRows: DataRow[] = [];
+  if (input.projectName) incidentRows.push({ label: 'Project', value: input.projectName, sans: true });
+  if (input.environment) incidentRows.push({ label: 'Environment', value: input.environment });
+  if (id.source) incidentRows.push({ label: 'Source', value: id.source });
   if (typeof id.occurrences === 'number') {
-    metaRows.push({ label: 'Occurrences', value: `${id.occurrences} in this window` });
+    incidentRows.push({ label: 'Occurrences', value: `${id.occurrences} in this window` });
   }
 
-  // 4. ACTIONS
-  const primaryAction = input.traceUrl
-    ? { url: input.traceUrl, label: 'Analyze Trace', tone }
-    : input.requestUrl
-      ? { url: input.requestUrl, label: 'View Request', tone }
-      : input.alertUrl
-        ? { url: input.alertUrl, label: 'View Alert', tone }
-        : undefined;
+  const correlationRows: DataRow[] = [];
+  if (id.traceId) correlationRows.push({ label: 'Trace ID', value: id.traceId });
+  if (id.spanId) correlationRows.push({ label: 'Span ID', value: id.spanId });
+  if (id.clientIp) correlationRows.push({ label: 'Client IP', value: id.clientIp });
+  if (id.fingerprint) correlationRows.push({ label: 'Fingerprint', value: id.fingerprint });
+  if (id.eventId) correlationRows.push({ label: 'Event ID', value: id.eventId });
+  if (id.extraRows && id.extraRows.length > 0) correlationRows.push(...id.extraRows);
 
-  const secondaryAction = input.traceUrl && input.alertUrl
-    ? { url: input.alertUrl, label: 'View Alert' }
-    : input.acknowledgeUrl
-      ? { url: input.acknowledgeUrl, label: 'Acknowledge' }
-      : undefined;
+  const actions = actionGroup([
+    { url: input.traceUrl, label: 'Analyze Trace' },
+    { url: input.requestUrl, label: 'View Request' },
+    { url: input.alertUrl, label: 'View Alert' },
+    { url: input.acknowledgeUrl, label: 'Acknowledge' },
+    { url: input.silenceUrl, label: 'Silence' },
+  ]);
 
-  const actions = developerAlertActions({
-    primary: primaryAction,
-    secondary: secondaryAction,
-    viewAlertUrl: input.alertUrl,
-    acknowledgeUrl: input.acknowledgeUrl,
-    silenceUrl: input.silenceUrl,
-  });
+  const body = stack(
+    [
+      input.summary ? p(esc(input.summary)) : '',
+      input.insight ? aiInsight(input.insight) : '',
+      input.runbook ? callout('neutral', esc(input.runbook), 'First response') : '',
+      actions.html,
+      section('Request', dataTable(requestRows)),
+      section('Incident', dataTable(incidentRows)),
+      section('Correlation', dataTable(correlationRows)),
+    ],
+    24,
+  );
 
-  const bodyBlocks: (string | null | undefined | false)[] = [];
-
-  if (input.summary) {
-    bodyBlocks.push(p(esc(input.summary)));
-  }
-
-  if (input.measurement) {
-    bodyBlocks.push(measurementBlock(input.measurement, tone));
-  }
-
-  if (reqRows.length > 0) {
-    bodyBlocks.push(sectionHeader('TARGET & ROUTE'), dataTable(reqRows));
-  }
-
-  if (traceRows.length > 0) {
-    bodyBlocks.push(sectionHeader('DISTRIBUTED TRACE & CORRELATION'), dataTable(traceRows));
-  }
-
-  if (metaRows.length > 0) {
-    bodyBlocks.push(sectionHeader('INCIDENT SCOPE'), dataTable(metaRows));
-  }
-
-  if (input.insight) {
-    bodyBlocks.push(sectionHeader('AI DIAGNOSIS'), aiInsight(input.insight));
-  }
-
-  if (input.runbook) {
-    bodyBlocks.push(callout('neutral', esc(input.runbook), 'First response / Runbook'));
-  }
-
-  if (actions.html) {
-    bodyBlocks.push(sectionHeader('TRIAGE & ACTIONS'), actions.html);
-  }
-
-  const textSections: (string | null | undefined | false)[] = [
-    `ALERT FIRING — ${severity.toUpperCase()}`,
-    input.summary,
-    input.measurement
-      ? `${input.measurement.label}: ${input.measurement.value} (threshold ${input.measurement.threshold}${input.measurement.window ? `, ${input.measurement.window}` : ''})`
-      : '',
-  ];
-  if (reqRows.length > 0) {
-    textSections.push(`\n--- TARGET & ROUTE ---`, plainRows(reqRows));
-  }
-  if (traceRows.length > 0) {
-    textSections.push(`\n--- TRACE & CORRELATION ---`, plainRows(traceRows));
-  }
-  if (metaRows.length > 0) {
-    textSections.push(`\n--- INCIDENT SCOPE ---`, plainRows(metaRows));
-  }
-  if (input.insight) {
-    textSections.push(`\n--- AI DIAGNOSIS ---`, `AI Insight: ${input.insight.text}${input.insight.confidence ? ` (${Math.round(input.insight.confidence)}% confidence)` : ''}`);
-  }
-  if (input.runbook) {
-    textSections.push(`\nFirst response: ${input.runbook}`);
-  }
-  if (actions.text) {
-    textSections.push(`\n--- ACTIONS ---`, actions.text);
-  }
+  const m = input.measurement;
 
   return {
     subject: alertSubject('firing', severity, id.ruleName, input),
     html: renderLayout({
       appName: input.appName,
-      title: input.summary || id.ruleName,
-      eyebrowText: `Firing · ${severity}`,
-      preheader: input.measurement
-        ? `${stripControl(input.measurement.label)} ${stripControl(input.measurement.value)} exceeded ${stripControl(input.measurement.threshold)}${scopeSuffix(input)}.`
+      title: id.ruleName,
+      context: scopeContext(input),
+      status: verdict(stateLabel('Firing', severity), tone, id.startedAt),
+      preheader: m
+        ? `${stripControl(m.label)} ${stripControl(m.value)} exceeded ${stripControl(m.threshold)}${scopeSuffix(input)}.`
         : `${stripControl(id.ruleName)} is firing${scopeSuffix(input)}.`,
-      tone,
-      chip: severityGlyph(severity),
-      body: stack(bodyBlocks),
+      hero: m ? measurementHero(m, tone) : undefined,
+      body,
       footer: 'alert',
       footerLink: footerLinkFor(input),
       closing: null,
     }),
-    text: textBody(...textSections),
+    text: textBody(
+      `ALERT FIRING — ${severity.toUpperCase()}`,
+      id.ruleName,
+      input.summary,
+      m ? `${m.label}: ${m.value} (threshold ${m.threshold}${m.window ? `, ${m.window}` : ''})` : '',
+      insightText(input.insight),
+      input.runbook ? `First response\n${input.runbook}` : '',
+      textBlock('Actions', actions.text),
+      textSection('Request', requestRows),
+      textSection('Incident', incidentRows),
+      textSection('Correlation', correlationRows),
+      id.startedAt ? `Started ${id.startedAt}` : '',
+    ),
   };
 }
 
@@ -532,77 +451,65 @@ export interface AlertResolvedInput extends AlertScope {
 export function alertResolvedTemplate(input: AlertResolvedInput): EmailTemplate {
   const id = input.identity;
 
-  // 1. RESOLUTION DETAILS
-  const resRows: DataRow[] = [
-    { label: 'Rule', value: id.ruleName, sans: true },
-    { label: 'Status', value: 'RESOLVED', tone: 'success' },
-  ];
-  if (input.recoveredValue) resRows.push({ label: 'Recovered to', value: input.recoveredValue, tone: 'success' });
-  if (input.duration) resRows.push({ label: 'Duration active', value: input.duration, tone: 'success' });
-  if (input.resolvedBy) resRows.push({ label: 'Resolved by', value: input.resolvedBy, sans: true });
-  if (input.resolvedAt) resRows.push({ label: 'Resolved at', value: input.resolvedAt });
-  if (id.startedAt) resRows.push({ label: 'Started at', value: id.startedAt });
-  if (input.reason) resRows.push({ label: 'Reason', value: input.reason, sans: true });
+  const cells: ReadoutCell[] = [];
+  if (input.recoveredValue) cells.push({ label: 'Recovered to', value: input.recoveredValue, tone: 'success' });
+  if (input.duration) cells.push({ label: 'Firing for', value: input.duration });
 
-  // 2. INCIDENT CONTEXT
-  const ctxRows: DataRow[] = [];
-  if (id.endpoint) {
-    const routeVal = id.method ? `${String(id.method).toUpperCase()} ${id.endpoint}` : id.endpoint;
-    ctxRows.push({ label: 'Route', value: routeVal, sans: true });
-  }
-  if (id.service) ctxRows.push({ label: 'Service', value: id.service, sans: true });
-  if (input.projectName) ctxRows.push({ label: 'Project', value: input.projectName, sans: true });
-  if (input.environment) ctxRows.push({ label: 'Environment', value: input.environment });
-  if (id.traceId) ctxRows.push({ label: 'Trace ID', value: id.traceId });
-  if (id.fingerprint) ctxRows.push({ label: 'Fingerprint', value: id.fingerprint });
+  const resolutionRows: DataRow[] = [];
+  if (input.resolvedBy) resolutionRows.push({ label: 'Resolved by', value: input.resolvedBy, sans: true });
+  if (id.startedAt) resolutionRows.push({ label: 'Started', value: id.startedAt });
+  if (input.reason) resolutionRows.push({ label: 'Reason', value: input.reason, sans: true });
 
-  const bodyBlocks: (string | null | undefined | false)[] = [
-    p(
-      `${esc(id.ruleName)} has cleared${input.duration ? ` after ${esc(input.duration)}` : ''}. All monitored metrics returned to normal thresholds.`,
-    ),
-    pill('Resolved', 'success'),
-    sectionHeader('RESOLUTION DETAILS'),
-    dataTable(resRows),
-  ];
+  const incidentRows: DataRow[] = [];
+  const route = routeValue(id.endpoint, id.method);
+  if (route) incidentRows.push({ label: 'Route', value: route });
+  if (id.service) incidentRows.push({ label: 'Service', value: id.service });
+  if (input.projectName) incidentRows.push({ label: 'Project', value: input.projectName, sans: true });
+  if (input.environment) incidentRows.push({ label: 'Environment', value: input.environment });
+  if (id.traceId) incidentRows.push({ label: 'Trace ID', value: id.traceId });
+  if (id.fingerprint) incidentRows.push({ label: 'Fingerprint', value: id.fingerprint });
 
-  if (ctxRows.length > 0) {
-    bodyBlocks.push(sectionHeader('INCIDENT SCOPE'), dataTable(ctxRows));
-  }
-  if (input.insight) {
-    bodyBlocks.push(sectionHeader('AI DIAGNOSIS'), aiInsight(input.insight));
-  }
-  if (input.alertUrl) {
-    bodyBlocks.push(sectionHeader('TIMELINE'), button(input.alertUrl, 'View Incident Timeline'));
-  }
+  const actions = actionGroup([{ url: input.alertUrl, label: 'View Incident Timeline' }]);
+  const lead = `This alert has cleared${input.duration ? ` after ${stripControl(input.duration)}` : ''}. All monitored metrics returned to normal thresholds.`;
 
-  const textSections: (string | null | undefined | false)[] = [
-    'ALERT RESOLVED',
-    `${id.ruleName} has cleared${input.duration ? ` after ${input.duration}` : ''}.`,
-    `\n--- RESOLUTION DETAILS ---`,
-    plainRows(resRows),
-  ];
-  if (ctxRows.length > 0) {
-    textSections.push(`\n--- INCIDENT SCOPE ---`, plainRows(ctxRows));
-  }
-  if (input.alertUrl) {
-    textSections.push(`\nView timeline: ${safeUrlText(input.alertUrl)}`);
-  }
+  const body = stack(
+    [
+      p(esc(lead)),
+      input.insight ? aiInsight(input.insight) : '',
+      actions.html,
+      section('Resolution', dataTable(resolutionRows)),
+      section('Incident', dataTable(incidentRows)),
+    ],
+    24,
+  );
 
   return {
     subject: alertSubject('resolved', null, id.ruleName, input),
     html: renderLayout({
       appName: input.appName,
-      title: `Resolved: ${id.ruleName}`,
-      eyebrowText: 'Resolved',
+      title: id.ruleName,
+      context: scopeContext(input),
+      status: verdict('Resolved', 'success', input.resolvedAt),
       preheader: `${stripControl(id.ruleName)} cleared${input.duration ? ` after ${stripControl(input.duration)}` : ''}${scopeSuffix(input)}.`,
-      tone: 'success',
-      chip: glyph.check,
-      body: stack(bodyBlocks),
+      hero: cells.length > 0 ? readout(cells) : undefined,
+      body,
       footer: 'alert',
       footerLink: footerLinkFor(input),
       closing: null,
     }),
-    text: textBody(...textSections),
+    text: textBody(
+      'ALERT RESOLVED',
+      id.ruleName,
+      lead,
+      input.recoveredValue ? `Recovered to ${input.recoveredValue}` : '',
+      insightText(input.insight),
+      textBlock('Actions', actions.text),
+      textSection('Resolution', [
+        ...(input.resolvedAt ? [{ label: 'Resolved at', value: input.resolvedAt }] : []),
+        ...resolutionRows,
+      ]),
+      textSection('Incident', incidentRows),
+    ),
   };
 }
 
@@ -627,59 +534,51 @@ export interface AlertAcknowledgedInput extends AlertScope {
 export function alertAcknowledgedTemplate(input: AlertAcknowledgedInput): EmailTemplate {
   const id = input.identity;
 
-  const ackRows: DataRow[] = [
-    { label: 'Rule', value: id.ruleName, sans: true },
-    { label: 'Owner', value: input.acknowledgedBy, sans: true, tone: 'info' },
-  ];
-  if (input.acknowledgedAt) ackRows.push({ label: 'Acknowledged at', value: input.acknowledgedAt });
-  if (input.expiresAt) ackRows.push({ label: 'Ack expires', value: input.expiresAt, tone: 'warning' });
-  if (input.projectName) ackRows.push({ label: 'Project', value: input.projectName, sans: true });
-  if (input.environment) ackRows.push({ label: 'Environment', value: input.environment });
-  if (id.fingerprint) ackRows.push({ label: 'Fingerprint', value: id.fingerprint });
+  const rows: DataRow[] = [{ label: 'Owner', value: input.acknowledgedBy, sans: true }];
+  if (input.expiresAt) rows.push({ label: 'Ack expires', value: input.expiresAt, tone: 'warning' });
+  if (input.projectName) rows.push({ label: 'Project', value: input.projectName, sans: true });
+  if (input.environment) rows.push({ label: 'Environment', value: input.environment });
+  if (id.fingerprint) rows.push({ label: 'Fingerprint', value: id.fingerprint });
 
-  const bodyBlocks: (string | null | undefined | false)[] = [
-    p(`${esc(input.acknowledgedBy)} has taken ownership of this alert. Escalation is paused.`),
-    pill('Acknowledged', 'info'),
-    sectionHeader('OWNERSHIP & STATUS'),
-    dataTable(ackRows),
-  ];
+  const resumes = input.expiresAt
+    ? `If the alert is still firing at ${stripControl(input.expiresAt)}, the escalation policy resumes automatically.`
+    : '';
+  const actions = actionGroup([{ url: input.alertUrl, label: 'View Alert' }]);
 
-  if (input.comment) {
-    bodyBlocks.push(callout('neutral', esc(input.comment), 'Responder note'));
-  }
-  if (input.expiresAt) {
-    bodyBlocks.push(
-      callout(
-        'warning',
-        `Escalation is paused until ${esc(input.expiresAt)}. If the alert is still firing then, the escalation policy resumes automatically.`,
-        'Escalation paused',
-      ),
-    );
-  }
-  if (input.alertUrl) {
-    bodyBlocks.push(sectionHeader('ACTIONS'), button(input.alertUrl, 'View Alert'));
-  }
+  const body = stack(
+    [
+      p(`${strong(input.acknowledgedBy)} has taken ownership of this alert. Escalation is paused.`),
+      input.comment ? callout('neutral', esc(input.comment), 'Responder note') : '',
+      actions.html,
+      section('Ownership', stack([dataTable(rows), resumes ? note(esc(resumes)) : ''], 12)),
+    ],
+    24,
+  );
 
   return {
     subject: alertSubject('acknowledged', null, id.ruleName, input),
     html: renderLayout({
       appName: input.appName,
-      title: `Acknowledged: ${id.ruleName}`,
-      eyebrowText: 'Acknowledged',
+      title: id.ruleName,
+      context: scopeContext(input),
+      status: verdict('Acknowledged', 'info', input.acknowledgedAt),
       preheader: `${stripControl(input.acknowledgedBy)} is on it — escalation is paused.`,
-      tone: 'info',
-      chip: glyph.dot,
-      body: stack(bodyBlocks),
+      body,
       footer: 'alert',
       footerLink: footerLinkFor(input),
       closing: null,
     }),
     text: textBody(
       'ALERT ACKNOWLEDGED',
-      `${input.acknowledgedBy} has taken ownership of ${id.ruleName}.`,
-      plainRows(ackRows),
-      input.comment ? `Responder note: ${input.comment}` : '',
-      input.alertUrl ? `View alert: ${safeUrlText(input.alertUrl)}` : '',
+      id.ruleName,
+      `${input.acknowledgedBy} has taken ownership of this alert. Escalation is paused.`,
+      input.comment ? `Responder note\n${input.comment}` : '',
+      textBlock('Actions', actions.text),
+      textSection('Ownership', [
+        ...(input.acknowledgedAt ? [{ label: 'Acknowledged at', value: input.acknowledgedAt }] : []),
+        ...rows,
+      ]),
+      resumes,
     ),
   };
 }
@@ -705,6 +604,9 @@ export interface AlertEscalatedInput extends AlertScope {
 
 /**
  * Escalation notice — an alert went unanswered and the policy advanced.
+ *
+ * The readout shows how far the policy has advanced, and the step track draws
+ * it: taken steps fill red, the steps still to come wait on the track.
  */
 export function alertEscalatedTemplate(input: AlertEscalatedInput): EmailTemplate {
   const id = input.identity;
@@ -712,91 +614,81 @@ export function alertEscalatedTemplate(input: AlertEscalatedInput): EmailTemplat
     ? `Step ${input.stepNumber} of ${input.totalSteps}`
     : `Step ${input.stepNumber}`;
 
-  // 1. ESCALATION STATUS
-  const escRows: DataRow[] = [
-    { label: 'Rule', value: id.ruleName, sans: true },
-    { label: 'Severity', value: id.severity.toUpperCase(), tone: severityTone(id.severity) },
-    { label: 'Escalation policy', value: input.policyName, sans: true },
-    { label: 'Current step', value: step, tone: 'danger' },
+  const cells: ReadoutCell[] = [
+    {
+      label: 'Escalation step',
+      value: input.totalSteps ? `${input.stepNumber} of ${input.totalSteps}` : String(input.stepNumber),
+      tone: 'danger',
+    },
   ];
-  if (input.firingFor) escRows.push({ label: 'Firing for', value: input.firingFor, tone: 'danger' });
-  if (input.trigger) escRows.push({ label: 'Trigger', value: input.trigger, sans: true });
-  if (input.notifying) escRows.push({ label: 'Notifying', value: input.notifying, sans: true });
+  if (input.firingFor) cells.push({ label: 'Unacknowledged for', value: input.firingFor });
+  const track = input.totalSteps
+    ? stepTrack({ current: input.stepNumber, total: input.totalSteps, tone: 'danger' })
+    : '';
 
-  // 2. TARGET & TELEMETRY
+  const policyRows: DataRow[] = [{ label: 'Policy', value: input.policyName, sans: true }];
+  if (input.trigger) policyRows.push({ label: 'Trigger', value: input.trigger, sans: true });
+  if (input.notifying) policyRows.push({ label: 'Notifying', value: input.notifying, sans: true });
+
   const targetRows: DataRow[] = [];
-  if (id.endpoint) {
-    const routeVal = id.method ? `${String(id.method).toUpperCase()} ${id.endpoint}` : id.endpoint;
-    targetRows.push({ label: 'Route', value: routeVal, sans: true });
-  }
-  if (id.statusCode !== undefined && id.statusCode !== null) {
-    targetRows.push({ label: 'Status code', value: String(id.statusCode) });
+  const route = routeValue(id.endpoint, id.method);
+  if (route) targetRows.push({ label: 'Route', value: route });
+  if (present(id.statusCode)) {
+    targetRows.push({ label: 'HTTP status', value: String(id.statusCode), tone: httpTone(id.statusCode) });
   }
   if (id.duration) targetRows.push({ label: 'Time taken', value: id.duration });
-  if (id.service) targetRows.push({ label: 'Service', value: id.service, sans: true });
+  if (id.service) targetRows.push({ label: 'Service', value: id.service });
   if (input.projectName) targetRows.push({ label: 'Project', value: input.projectName, sans: true });
   if (input.environment) targetRows.push({ label: 'Environment', value: input.environment });
   if (id.traceId) targetRows.push({ label: 'Trace ID', value: id.traceId });
   if (id.fingerprint) targetRows.push({ label: 'Fingerprint', value: id.fingerprint });
 
-  // 3. ACTIONS
-  const actions = developerAlertActions({
-    primary: input.acknowledgeUrl ? { url: input.acknowledgeUrl, label: 'Take Ownership', tone: 'danger' } : undefined,
-    secondary: input.alertUrl ? { url: input.alertUrl, label: 'View Alert' } : undefined,
-    viewAlertUrl: input.alertUrl,
-    acknowledgeUrl: input.acknowledgeUrl,
-    silenceUrl: input.silenceUrl,
-  });
+  const actions = actionGroup([
+    { url: input.acknowledgeUrl, label: 'Take Ownership' },
+    { url: input.alertUrl, label: 'View Alert' },
+    { url: input.silenceUrl, label: 'Silence' },
+  ]);
 
-  const bodyBlocks: (string | null | undefined | false)[] = [
-    p(
-      `This alert has not been acknowledged, so <strong>${esc(input.policyName)}</strong> advanced to <strong>${esc(step.toLowerCase())}</strong> and widened the notification.`,
-    ),
-    pill(step, 'danger'),
-    sectionHeader('ESCALATION STATUS'),
-    dataTable(escRows),
-  ];
-
-  if (targetRows.length > 0) {
-    bodyBlocks.push(sectionHeader('TELEMETRY & TARGET'), dataTable(targetRows));
-  }
-
-  if (actions.html) {
-    bodyBlocks.push(sectionHeader('TRIAGE & ACTIONS'), actions.html);
-  }
-
-  bodyBlocks.push(
-    callout(
-      'danger',
-      'Acknowledging stops further escalation. Silencing suppresses notifications without resolving the underlying condition — prefer acknowledgement while you investigate.',
-      'How to stop escalation',
-    ),
+  const body = stack(
+    [
+      p(
+        `This alert has not been acknowledged, so ${strong(input.policyName)} advanced to ${strong(step)} and widened the notification.`,
+      ),
+      actions.html,
+      callout(
+        'neutral',
+        'Acknowledging stops further escalation. Silencing suppresses notifications without resolving the underlying condition &mdash; prefer acknowledgement while you investigate.',
+        'How to stop escalation',
+      ),
+      section('Escalation', dataTable(policyRows)),
+      section('Target', dataTable(targetRows)),
+    ],
+    24,
   );
 
   return {
     subject: alertSubject(`escalated s${input.stepNumber}`, id.severity, id.ruleName, input),
     html: renderLayout({
       appName: input.appName,
-      title: `Escalated: ${id.ruleName}`,
-      eyebrowText: `Escalated · ${step.toLowerCase()}`,
+      title: id.ruleName,
+      context: scopeContext(input),
+      status: verdict(stateLabel('Escalated', id.severity), 'danger', id.startedAt),
       preheader: `Unacknowledged${input.firingFor ? ` for ${stripControl(input.firingFor)}` : ''} — ${stripControl(input.policyName)} escalated to ${step.toLowerCase()}.`,
-      tone: 'danger',
-      chip: glyph.arrowUp,
-      body: stack(bodyBlocks),
+      hero: readout(cells, { after: track }),
+      body,
       footer: 'alert',
       footerLink: footerLinkFor(input),
       closing: null,
     }),
     text: textBody(
       `ALERT ESCALATED — ${step.toUpperCase()}`,
-      `${id.ruleName} was not acknowledged; ${input.policyName} advanced to ${step.toLowerCase()}.`,
-      `\n--- ESCALATION STATUS ---`,
-      plainRows(escRows),
-      targetRows.length > 0 ? `\n--- TELEMETRY ---` : '',
-      targetRows.length > 0 ? plainRows(targetRows) : '',
-      actions.text ? `\n--- ACTIONS ---` : '',
-      actions.text,
+      id.ruleName,
+      `This alert was not acknowledged; ${input.policyName} advanced to ${step.toLowerCase()}.`,
+      input.firingFor ? `Unacknowledged for ${input.firingFor}.` : '',
+      textBlock('Actions', actions.text),
       'Acknowledging stops further escalation.',
+      textSection('Escalation', [{ label: 'Severity', value: cap(id.severity) }, ...policyRows]),
+      textSection('Target', targetRows),
     ),
   };
 }
@@ -819,50 +711,52 @@ export interface AlertSilencedInput extends AlertScope {
 }
 
 /**
- * Silence-created notice.
+ * Silence-created notice. The readout states the size of the coverage gap:
+ * how long, and how many rules it swallows.
  */
 export function alertSilencedTemplate(input: AlertSilencedInput): EmailTemplate {
-  const silenceRows: DataRow[] = [
-    { label: 'Target', value: input.target, sans: true },
-    { label: 'Silenced by', value: input.silencedBy, sans: true },
-    { label: 'Expires at', value: input.expiresAt, tone: 'warning' },
-  ];
-  if (input.duration) silenceRows.push({ label: 'Duration', value: input.duration });
+  const cells: ReadoutCell[] = [];
+  if (input.duration) cells.push({ label: 'Duration', value: input.duration });
   if (typeof input.matchedRules === 'number') {
-    silenceRows.push({ label: 'Rules matched', value: String(input.matchedRules), tone: 'warning' });
+    cells.push({ label: 'Rules matched', value: String(input.matchedRules), tone: 'warning' });
   }
-  if (input.projectName) silenceRows.push({ label: 'Project', value: input.projectName, sans: true });
-  if (input.environment) silenceRows.push({ label: 'Environment', value: input.environment });
-  if (input.reason) silenceRows.push({ label: 'Reason', value: input.reason, sans: true });
 
-  const bodyBlocks: (string | null | undefined | false)[] = [
-    p(
-      `Notifications matching <strong>${esc(input.target)}</strong> are suppressed until ${esc(input.expiresAt)}. Rules keep evaluating and events keep recording &mdash; only the notifications stop.`,
-    ),
-    pill('Silenced', 'warning'),
-    sectionHeader('SILENCE DETAILS'),
-    dataTable(silenceRows),
-    callout(
-      'warning',
-      'Anything this matcher covers will not page anyone while the silence is active. Remove it as soon as the maintenance or noisy deploy that justified it is over.',
-      'Coverage gap warning',
-    ),
+  const rows: DataRow[] = [
+    { label: 'Target', value: input.target },
+    { label: 'Silenced by', value: input.silencedBy, sans: true },
   ];
+  if (input.reason) rows.push({ label: 'Reason', value: input.reason, sans: true });
+  if (input.projectName) rows.push({ label: 'Project', value: input.projectName, sans: true });
+  if (input.environment) rows.push({ label: 'Environment', value: input.environment });
 
-  if (input.silenceUrl) {
-    bodyBlocks.push(sectionHeader('ACTIONS'), button(input.silenceUrl, 'Manage Silence', { tone: 'warning' }));
-  }
+  const actions = actionGroup([{ url: input.silenceUrl, label: 'Manage Silence' }]);
+
+  const body = stack(
+    [
+      p(
+        `Notifications matching ${code(input.target)} are suppressed until ${esc(input.expiresAt)}. Rules keep evaluating and events keep recording &mdash; only the notifications stop.`,
+      ),
+      callout(
+        'warning',
+        'Anything this matcher covers will not page anyone while the silence is active. Remove it as soon as the maintenance or noisy deploy that justified it is over.',
+        'Coverage gap warning',
+      ),
+      actions.html,
+      section('Silence', dataTable(rows)),
+    ],
+    24,
+  );
 
   return {
     subject: alertSubject('silenced', null, input.target, input),
     html: renderLayout({
       appName: input.appName,
       title: 'Alerts silenced',
-      eyebrowText: 'Silenced',
+      context: scopeContext(input),
+      status: verdict('Silenced', 'warning', `Until ${stripControl(input.expiresAt)}`),
       preheader: `${stripControl(input.target)} will not notify anyone until ${stripControl(input.expiresAt)}.`,
-      tone: 'warning',
-      chip: glyph.pause,
-      body: stack(bodyBlocks),
+      hero: cells.length > 0 ? readout(cells) : undefined,
+      body,
       footer: 'alert',
       footerLink: footerLinkFor(input),
       closing: null,
@@ -870,8 +764,12 @@ export function alertSilencedTemplate(input: AlertSilencedInput): EmailTemplate 
     text: textBody(
       'ALERTS SILENCED',
       `Notifications matching ${input.target} are suppressed until ${input.expiresAt}.`,
-      plainRows(silenceRows),
-      input.silenceUrl ? `Manage silence: ${safeUrlText(input.silenceUrl)}` : '',
+      textSection('Silence', [
+        ...rows,
+        { label: 'Expires at', value: input.expiresAt },
+        ...cells.map((c) => ({ label: c.label, value: c.value })),
+      ]),
+      textBlock('Actions', actions.text),
       'Rules keep evaluating; only notifications stop.',
     ),
   };
@@ -910,7 +808,8 @@ export interface AlertDigestInput extends AlertScope {
  *
  * The antidote to per-event noise: batch low-severity alerts into one scannable
  * digest so the real-time channel stays trustworthy for things that actually
- * need waking someone up.
+ * need waking someone up. Counts read as a readout band; a zero stays muted,
+ * because colour on a zero is decoration, not a verdict.
  */
 export function alertDigestTemplate(input: AlertDigestInput): EmailTemplate {
   const items: DigestItem[] = input.entries.map((entry) => ({
@@ -924,33 +823,41 @@ export function alertDigestTemplate(input: AlertDigestInput): EmailTemplate {
   const shown = input.entries.length;
   const total = input.totalCount ?? shown;
   const truncated = total > shown;
+  const { firing, resolved, acknowledged } = input.counts;
+  const quiet = firing === 0 && shown === 0;
+  const where = scopeLabel(input) || 'your organization';
 
-  const body = stack([
-    p(
-      `Alert activity across ${esc(scopeLabel(input) || stripControl(input.orgName) || 'your organization')} for the ${esc(input.period)}.`,
-    ),
-    statStrip([
-      { label: 'Firing', value: String(input.counts.firing), tone: input.counts.firing > 0 ? 'danger' : 'neutral' },
-      { label: 'Resolved', value: String(input.counts.resolved), tone: 'success' },
-      { label: 'Acknowledged', value: String(input.counts.acknowledged), tone: 'info' },
-    ]),
-    shown > 0 ? heading(truncated ? `Top ${shown} of ${total} alerts` : `${shown} alert${shown === 1 ? '' : 's'}`) + digestList(items) : '',
-    input.insight ? aiInsight(input.insight) : '',
-    input.feedUrl ? button(input.feedUrl, 'Open alert feed') : '',
-    input.counts.firing === 0 && shown === 0
-      ? callout('success', 'Nothing fired in this period. All monitored rules stayed inside their thresholds.', 'All clear')
-      : '',
-  ]);
+  const count = (labelText: string, n: number, tone: Tone): ReadoutCell =>
+    n > 0
+      ? { label: labelText, value: n.toLocaleString('en-US'), tone }
+      : { label: labelText, value: '0', muted: true };
+
+  const actions = actionGroup([{ url: input.feedUrl, label: 'Open alert feed' }]);
+
+  const body = stack(
+    [
+      p(`Alert activity across ${esc(where)} for the ${esc(input.period)}.`),
+      quiet ? p('Nothing fired in this period. All monitored rules stayed inside their thresholds.') : '',
+      section(truncated ? `Top ${shown} of ${total} alerts` : `${shown} alert${shown === 1 ? '' : 's'}`, digestList(items)),
+      input.insight ? aiInsight(input.insight) : '',
+      actions.html,
+    ],
+    24,
+  );
 
   return {
     subject: `[DIGEST] ${total} alert${total === 1 ? '' : 's'} · ${stripControl(input.period)}${scopeLabel(input) ? ` — ${scopeLabel(input)}` : ''}`,
     html: renderLayout({
       appName: input.appName,
       title: `Alert digest · ${input.period}`,
-      eyebrowText: `Digest · ${input.period}`,
-      preheader: `${input.counts.firing} firing, ${input.counts.resolved} resolved, ${input.counts.acknowledged} acknowledged in the ${stripControl(input.period)}.`,
-      tone: input.counts.firing > 0 ? 'warning' : 'success',
-      chip: glyph.square,
+      context: scopeContext(input),
+      status: firing > 0 ? verdict(`${firing.toLocaleString('en-US')} firing`, 'warning') : verdict('All clear', 'success'),
+      preheader: `${firing} firing, ${resolved} resolved, ${acknowledged} acknowledged in the ${stripControl(input.period)}.`,
+      hero: readout([
+        count('Firing', firing, 'warning'),
+        count('Resolved', resolved, 'success'),
+        count('Acknowledged', acknowledged, 'info'),
+      ]),
       body,
       footer: 'alert',
       footerLink: footerLinkFor(input),
@@ -959,15 +866,17 @@ export function alertDigestTemplate(input: AlertDigestInput): EmailTemplate {
     text: textBody(
       `ALERT DIGEST — ${input.period.toUpperCase()}`,
       textRows([
-        { label: 'Firing', value: String(input.counts.firing) },
-        { label: 'Resolved', value: String(input.counts.resolved) },
-        { label: 'Acknowledged', value: String(input.counts.acknowledged) },
+        { label: 'Firing', value: String(firing) },
+        { label: 'Resolved', value: String(resolved) },
+        { label: 'Acknowledged', value: String(acknowledged) },
       ]),
+      quiet ? 'Nothing fired in this period. All monitored rules stayed inside their thresholds.' : '',
       input.entries
         .map((e) => `${e.severity.toUpperCase().padEnd(9)} ${e.ruleName} — ${e.meta}`)
         .join('\n'),
       truncated ? `Showing ${shown} of ${total} alerts.` : '',
-      input.feedUrl ? `Open alert feed: ${safeUrlText(input.feedUrl)}` : '',
+      insightText(input.insight),
+      textBlock('Actions', actions.text),
     ),
   };
 }
@@ -1003,59 +912,52 @@ export interface AnomalyDetectedInput extends AlertScope {
  *
  * The one template where cyan is the dominant channel, because the entire
  * message is model output — there is no threshold, only inference. Baseline and
- * deviation are shown beside the observed value so the reader can judge the
- * claim instead of taking it on trust.
+ * deviation sit beside the observed value, and the meter draws the distance
+ * from the baseline, so the reader can judge the claim instead of taking it on
+ * trust.
  */
 export function anomalyDetectedTemplate(input: AnomalyDetectedInput): EmailTemplate {
-  const statRows: DataRow[] = [];
-  if (input.metric) statRows.push({ label: 'Metric', value: input.metric, sans: true });
-  if (input.baseline) statRows.push({ label: 'Baseline', value: input.baseline });
-  if (input.observed) statRows.push({ label: 'Observed', value: input.observed });
-  if (input.deviation) statRows.push({ label: 'Deviation', value: input.deviation, tone: 'ai' });
-  if (input.window) statRows.push({ label: 'Window', value: input.window });
-  if (input.projectName) statRows.push({ label: 'Project', value: input.projectName, sans: true });
-  if (input.environment) statRows.push({ label: 'Environment', value: input.environment });
-  if (input.detectedAt) statRows.push({ label: 'Detected', value: input.detectedAt });
+  const hero =
+    input.observed && input.baseline
+      ? metricCompare({
+          // Short labels keep the three values on one baseline; the metric
+          // name and window are stated in the facts below.
+          label: 'Observed',
+          value: input.observed,
+          threshold: input.baseline,
+          thresholdLabel: 'Baseline',
+          tone: 'ai',
+          extra: input.deviation ? [{ label: 'Deviation', value: input.deviation, tone: 'ai' }] : undefined,
+        })
+      : undefined;
 
-  const insightInput: AlertInsight =
+  // Anything the readout already states is not repeated in the facts.
+  const rows: DataRow[] = [];
+  if (input.metric) rows.push({ label: 'Metric', value: input.metric, sans: true });
+  if (!hero && input.observed) rows.push({ label: 'Observed', value: input.observed });
+  if (!hero && input.baseline) rows.push({ label: 'Baseline', value: input.baseline });
+  if (!hero && input.deviation) rows.push({ label: 'Deviation', value: input.deviation, tone: 'ai' });
+  if (input.window) rows.push({ label: 'Window', value: input.window });
+  if (input.projectName) rows.push({ label: 'Project', value: input.projectName, sans: true });
+  if (input.environment) rows.push({ label: 'Environment', value: input.environment });
+
+  const insight: AlertInsight =
     typeof input.confidence === 'number'
       ? { text: input.explanation, confidence: input.confidence }
       : { text: input.explanation };
 
-  const bodyBlocks: (string | null | undefined | false)[] = [];
+  const reading =
+    'This is a statistical detection, not a threshold breach — no rule fired. Treat it as a lead to investigate rather than a confirmed fault.';
+  const actions = actionGroup([{ url: input.alertUrl, label: 'Investigate Anomaly' }]);
 
-  if (input.observed && input.baseline) {
-    bodyBlocks.push(
-      metricCompare({
-        label: input.metric ? `${input.metric} observed` : 'Observed',
-        value: input.observed,
-        threshold: input.baseline,
-        thresholdLabel: 'Baseline',
-        tone: 'ai',
-      }),
-    );
-  }
-
-  bodyBlocks.push(sectionHeader('AI DIAGNOSIS'), aiInsight(insightInput));
-
-  if (statRows.length > 0) {
-    bodyBlocks.push(sectionHeader('STATISTICAL CONTEXT'), dataTable(statRows));
-  }
-
-  if (input.suggestedAction) {
-    bodyBlocks.push(callout('ai', esc(input.suggestedAction), 'Suggested next step'));
-  }
-
-  if (input.alertUrl) {
-    bodyBlocks.push(sectionHeader('ACTIONS'), button(input.alertUrl, 'Investigate Anomaly', { tone: 'ai' }));
-  }
-
-  bodyBlocks.push(
-    callout(
-      'neutral',
-      'This is a statistical detection, not a threshold breach — no rule fired. Treat it as a lead to investigate rather than a confirmed fault.',
-      'How to read this',
-    ),
+  const body = stack(
+    [
+      stack([aiInsight(insight), note(esc(reading))], 12),
+      input.suggestedAction ? callout('ai', esc(input.suggestedAction), 'Suggested next step') : '',
+      actions.html,
+      section('Context', dataTable(rows)),
+    ],
+    24,
   );
 
   return {
@@ -1063,13 +965,13 @@ export function anomalyDetectedTemplate(input: AnomalyDetectedInput): EmailTempl
     html: renderLayout({
       appName: input.appName,
       title: input.title,
-      eyebrowText: 'AI · anomaly detected',
+      context: scopeContext(input),
+      status: verdict('Anomaly detected', 'ai', input.detectedAt),
       preheader: input.deviation
         ? `${stripControl(input.metric ?? 'A metric')} is ${stripControl(input.deviation)} from its learned baseline.`
         : `A model flagged unusual behaviour${scopeSuffix(input)}.`,
-      tone: 'ai',
-      chip: glyph.spark,
-      body: stack(bodyBlocks),
+      hero,
+      body,
       footer: 'alert',
       footerLink: footerLinkFor(input),
       closing: null,
@@ -1077,12 +979,17 @@ export function anomalyDetectedTemplate(input: AnomalyDetectedInput): EmailTempl
     text: textBody(
       'ANOMALY DETECTED (AI)',
       input.title,
-      input.explanation,
-      typeof input.confidence === 'number' ? `Confidence: ${Math.round(input.confidence)}%` : '',
-      statRows.length > 0 ? `\n--- STATISTICAL CONTEXT ---` : '',
-      statRows.length > 0 ? plainRows(statRows) : '',
-      input.suggestedAction ? `Suggested next step: ${input.suggestedAction}` : '',
-      input.alertUrl ? `Investigate: ${safeUrlText(input.alertUrl)}` : '',
+      insightText(insight),
+      input.observed && input.baseline
+        ? `${input.metric ?? 'Observed'}: ${input.observed} (baseline ${input.baseline}${input.deviation ? `, ${input.deviation}` : ''})`
+        : '',
+      reading,
+      input.suggestedAction ? `Suggested next step\n${input.suggestedAction}` : '',
+      textBlock('Actions', actions.text),
+      textSection('Context', [
+        ...rows,
+        ...(input.detectedAt ? [{ label: 'Detected', value: input.detectedAt }] : []),
+      ]),
     ),
   };
 }
@@ -1146,167 +1053,95 @@ export interface LatencyAlertInput extends AlertScope {
 export function latencyAlertTemplate(input: LatencyAlertInput): EmailTemplate {
   const severity = input.severity ?? 'warning';
   const tone = severityTone(severity);
+  const pct = input.percentile.toUpperCase();
   const ruleName = input.ruleName || `${input.percentile} latency${input.endpoint ? ` · ${stripControl(input.endpoint)}` : ''}`;
 
-  // 1. PERFORMANCE
-  const perfRows: DataRow[] = [
-    { label: `${input.percentile.toUpperCase()} latency`, value: input.observed },
-    { label: 'Threshold', value: input.threshold },
-  ];
-  if (input.aboveThreshold) {
-    perfRows.push({ label: 'Above threshold', value: input.aboveThreshold, tone });
-  }
-  if (input.window) {
-    perfRows.push({ label: 'Evaluation window', value: input.window });
-  }
+  const performanceRows: DataRow[] = [];
+  if (input.aboveThreshold) performanceRows.push({ label: 'Above threshold', value: input.aboveThreshold, tone });
   if (typeof input.sampleSize === 'number') {
-    perfRows.push({ label: 'Sample count', value: String(input.sampleSize) });
+    performanceRows.push({ label: 'Sample count', value: input.sampleSize.toLocaleString('en-US') });
   }
 
-  // 2. REQUEST
-  const reqRows: DataRow[] = [];
-  if (input.endpoint) {
-    const routeVal = input.method ? `${String(input.method).toUpperCase()} ${input.endpoint}` : input.endpoint;
-    reqRows.push({ label: 'Route', value: routeVal, sans: true });
+  const requestRows: DataRow[] = [];
+  const route = routeValue(input.endpoint, input.method);
+  if (route) requestRows.push({ label: 'Route', value: route });
+  else if (input.method) requestRows.push({ label: 'Method', value: String(input.method).toUpperCase() });
+  if (present(input.statusCode)) {
+    requestRows.push({ label: 'HTTP status', value: String(input.statusCode), tone: httpTone(input.statusCode) });
   }
-  if (input.method && !input.endpoint) {
-    reqRows.push({ label: 'Method', value: String(input.method).toUpperCase() });
-  }
-  if (input.statusCode !== undefined && input.statusCode !== null && String(input.statusCode).trim() !== '') {
-    reqRows.push({ label: 'HTTP status', value: String(input.statusCode) });
-  }
-  if (input.duration || input.observed) {
-    reqRows.push({ label: 'Duration', value: input.duration || input.observed });
-  }
-  if (input.service) {
-    reqRows.push({ label: 'Service', value: input.service, sans: true });
-  }
-  if (input.release) {
-    reqRows.push({ label: 'Release', value: input.release });
-  }
+  if (input.duration) requestRows.push({ label: 'Duration', value: input.duration });
+  if (input.service) requestRows.push({ label: 'Service', value: input.service });
+  if (input.release) requestRows.push({ label: 'Release', value: input.release });
 
-  // 3. CORRELATION
-  const corrRows: DataRow[] = [];
-  if (input.requestId) {
-    corrRows.push({ label: 'Request', value: input.requestId });
-  }
-  if (input.tracePublicId || input.traceId) {
-    corrRows.push({ label: 'Trace', value: input.tracePublicId || input.traceId || '' });
-  }
-  if (input.spanPublicId || input.spanId) {
-    corrRows.push({ label: 'Span', value: input.spanPublicId || input.spanId || '' });
-  }
-  if (input.clientIp) {
-    corrRows.push({ label: 'Client IP', value: input.clientIp });
-  }
-  if (input.extraRows && input.extraRows.length > 0) {
-    corrRows.push(...input.extraRows);
-  }
+  const correlationRows: DataRow[] = [];
+  if (input.requestId) correlationRows.push({ label: 'Request', value: input.requestId });
+  const trace = input.tracePublicId || input.traceId;
+  if (trace) correlationRows.push({ label: 'Trace', value: trace });
+  const span = input.spanPublicId || input.spanId;
+  if (span) correlationRows.push({ label: 'Span', value: span });
+  if (input.clientIp) correlationRows.push({ label: 'Client IP', value: input.clientIp });
+  if (input.extraRows && input.extraRows.length > 0) correlationRows.push(...input.extraRows);
 
-  // 4. METADATA
-  const metaRows: DataRow[] = [];
-  if (input.projectName) metaRows.push({ label: 'Project', value: input.projectName, sans: true });
-  if (input.environment) metaRows.push({ label: 'Environment', value: input.environment });
-  if (input.startedAt) metaRows.push({ label: 'Started', value: input.startedAt });
+  const incidentRows: DataRow[] = [];
+  if (input.ruleName) incidentRows.push({ label: 'Rule', value: input.ruleName, sans: true });
+  if (input.projectName) incidentRows.push({ label: 'Project', value: input.projectName, sans: true });
+  if (input.environment) incidentRows.push({ label: 'Environment', value: input.environment });
 
-  // 5. ACTIONS
-  const primaryAction = input.traceUrl
-    ? { url: input.traceUrl, label: 'Analyze Trace', tone }
-    : input.requestUrl
-      ? { url: input.requestUrl, label: 'View Request', tone }
-      : input.alertUrl
-        ? { url: input.alertUrl, label: 'View Alert', tone }
-        : undefined;
+  const actions = actionGroup([
+    { url: input.traceUrl, label: 'Analyze Trace' },
+    { url: input.requestUrl, label: 'View Request' },
+    { url: input.alertUrl, label: 'View Alert' },
+    { url: input.acknowledgeUrl, label: 'Acknowledge' },
+    { url: input.silenceUrl, label: 'Silence' },
+  ]);
 
-  const secondaryAction = input.traceUrl && input.requestUrl
-    ? { url: input.requestUrl, label: 'View Request' }
-    : input.traceUrl && input.alertUrl
-      ? { url: input.alertUrl, label: 'View Alert' }
-      : input.acknowledgeUrl
-        ? { url: input.acknowledgeUrl, label: 'Acknowledge' }
-        : undefined;
+  const contributors = input.topContributors ?? [];
 
-  const actions = developerAlertActions({
-    primary: primaryAction,
-    secondary: secondaryAction,
-    viewAlertUrl: input.alertUrl,
-    acknowledgeUrl: input.acknowledgeUrl,
-    silenceUrl: input.silenceUrl,
-  });
-
-  const contributors =
-    input.topContributors && input.topContributors.length > 0
-      ? callout('neutral', input.topContributors.map((c) => esc(c)).join('<br />'), 'Slowest operations')
-      : '';
-
-  const bodyBlocks: (string | null | undefined | false)[] = [
-    p(`${esc(input.percentile.toUpperCase())} response time is above configured threshold${input.endpoint ? ` on ${esc(input.endpoint)}` : ''}.`),
-    metricCompare({
-      label: input.window ? `${input.percentile.toUpperCase()} · ${input.window}` : `${input.percentile.toUpperCase()} latency`,
-      value: input.observed,
-      threshold: input.threshold,
-      tone,
-    }),
-    sectionHeader('PERFORMANCE'),
-    dataTable(perfRows),
-  ];
-
-  if (reqRows.length > 0) {
-    bodyBlocks.push(sectionHeader('TARGET & ROUTE'), dataTable(reqRows));
-  }
-  if (corrRows.length > 0) {
-    bodyBlocks.push(sectionHeader('DISTRIBUTED TRACE & NETWORK'), dataTable(corrRows));
-  }
-  if (contributors) {
-    bodyBlocks.push(contributors);
-  }
-  if (input.insight) {
-    bodyBlocks.push(sectionHeader('AI DIAGNOSIS'), aiInsight(input.insight));
-  }
-  if (actions.html) {
-    bodyBlocks.push(sectionHeader('TRIAGE & ACTIONS'), actions.html);
-  }
-  if (metaRows.length > 0) {
-    bodyBlocks.push(sectionHeader('INCIDENT SCOPE'), dataTable(metaRows));
-  }
-
-  const textSections: (string | null | undefined | false)[] = [
-    `LATENCY ALERT — ${severity.toUpperCase()}`,
-    `${input.percentile.toUpperCase()} is ${input.observed} (threshold ${input.threshold})${input.window ? ` over ${input.window}` : ''}.`,
-    `\n--- PERFORMANCE ---`,
-    plainRows(perfRows),
-  ];
-  if (reqRows.length > 0) {
-    textSections.push(`\n--- TARGET & ROUTE ---`, plainRows(reqRows));
-  }
-  if (corrRows.length > 0) {
-    textSections.push(`\n--- DISTRIBUTED TRACE ---`, plainRows(corrRows));
-  }
-  if (input.insight) {
-    textSections.push(`\n--- AI DIAGNOSIS ---`, `AI Insight: ${input.insight.text}${input.insight.confidence ? ` (Confidence: ${input.insight.confidence}%)` : ''}`);
-  }
-  if (actions.text) {
-    textSections.push(`\n--- ACTIONS ---`, actions.text);
-  }
-  if (metaRows.length > 0) {
-    textSections.push(`\n--- INCIDENT SCOPE ---`, plainRows(metaRows));
-  }
+  const body = stack(
+    [
+      p(`${esc(pct)} response time is above the configured threshold${input.endpoint ? ` on ${code(input.endpoint)}` : ''}.`),
+      input.insight ? aiInsight(input.insight) : '',
+      actions.html,
+      section('Slowest operations', lines(contributors)),
+      section('Performance', dataTable(performanceRows)),
+      section('Request', dataTable(requestRows)),
+      section('Correlation', dataTable(correlationRows)),
+      section('Incident', dataTable(incidentRows)),
+    ],
+    24,
+  );
 
   return {
     subject: alertSubject('firing', severity, ruleName, input),
     html: renderLayout({
       appName: input.appName,
-      title: `${input.percentile.toUpperCase()} latency above threshold`,
-      eyebrowText: `Latency · ${severity}`,
+      title: `${pct} latency above threshold`,
+      context: scopeContext(input),
+      status: verdict(stateLabel('Firing', severity), tone, input.startedAt),
       preheader: `${stripControl(input.percentile)} is ${stripControl(input.observed)} against a ${stripControl(input.threshold)} threshold${input.endpoint ? ` on ${stripControl(input.endpoint)}` : ''}.`,
-      tone,
-      chip: glyph.gauge,
-      body: stack(bodyBlocks),
+      hero: metricCompare({
+        label: input.window ? `${pct} · ${input.window}` : `${pct} latency`,
+        value: input.observed,
+        threshold: input.threshold,
+        tone,
+      }),
+      body,
       footer: 'alert',
       footerLink: footerLinkFor(input),
       closing: null,
     }),
-    text: textBody(...textSections),
+    text: textBody(
+      `LATENCY ALERT — ${severity.toUpperCase()}`,
+      `${pct} is ${input.observed} (threshold ${input.threshold})${input.window ? ` over ${input.window}` : ''}.`,
+      insightText(input.insight),
+      textBlock('Actions', actions.text),
+      textBlock('Slowest operations', contributors.join('\n')),
+      textSection('Performance', performanceRows),
+      textSection('Request', requestRows),
+      textSection('Correlation', correlationRows),
+      textSection('Incident', incidentRows),
+      input.startedAt ? `Started ${input.startedAt}` : '',
+    ),
   };
 }
 
@@ -1351,7 +1186,11 @@ export interface ErrorAlertInput extends AlertScope {
 }
 
 /**
- * Developer-focused error alert — identity, normalized stack frame, source excerpt, impact.
+ * Developer-focused error alert.
+ *
+ * The readout band reads like the top of a stack trace — the exception type in
+ * the verdict colour, the message, and the `at fn (file:line:col)` frame — so
+ * the reader knows what broke and where before any table.
  */
 export function errorAlertTemplate(input: ErrorAlertInput): EmailTemplate {
   const severity = input.severity ?? 'error';
@@ -1359,165 +1198,109 @@ export function errorAlertTemplate(input: ErrorAlertInput): EmailTemplate {
   const ruleName = input.ruleName || 'Unhandled Exception';
   const errorTitle = input.errorName || 'Error';
 
-  // 1. ERROR
-  const errorRows: DataRow[] = [
-    { label: 'Type', value: errorTitle, tone },
-    { label: 'Message', value: input.errorMessage || 'No message provided', sans: true },
-  ];
+  const errorRows: DataRow[] = [];
   if (input.errorId) errorRows.push({ label: 'Error ID', value: input.errorId });
   if (input.fingerprint) errorRows.push({ label: 'Fingerprint', value: input.fingerprint });
   if (input.handled !== undefined) {
-    const handledStr = typeof input.handled === 'boolean' ? (input.handled ? 'Yes' : 'No') : String(input.handled);
-    errorRows.push({ label: 'Handled', value: handledStr });
+    const handled = typeof input.handled === 'boolean' ? (input.handled ? 'Yes' : 'No') : String(input.handled);
+    errorRows.push({ label: 'Handled', value: handled });
   }
   if (input.mechanism) errorRows.push({ label: 'Mechanism', value: input.mechanism });
 
-  // 2. SOURCE
-  const sourceRows: DataRow[] = [];
-  if (input.sourceFrame) sourceRows.push({ label: 'Location', value: input.sourceFrame });
-  if (input.sourceFunction) sourceRows.push({ label: 'Function', value: input.sourceFunction });
+  const requestRows: DataRow[] = [];
+  const route = routeValue(input.endpoint, input.method);
+  if (route) requestRows.push({ label: 'Route', value: route });
+  else if (input.method) requestRows.push({ label: 'Method', value: String(input.method).toUpperCase() });
+  if (present(input.statusCode)) {
+    requestRows.push({ label: 'HTTP status', value: String(input.statusCode), tone: httpTone(input.statusCode) });
+  }
+  if (input.requestId) requestRows.push({ label: 'Request ID', value: input.requestId });
 
-  // 3. REQUEST
-  const reqRows: DataRow[] = [];
-  if (input.endpoint) {
-    const routeVal = input.method ? `${String(input.method).toUpperCase()} ${input.endpoint}` : input.endpoint;
-    reqRows.push({ label: 'Route', value: routeVal, sans: true });
-  }
-  if (input.method && !input.endpoint) {
-    reqRows.push({ label: 'Method', value: String(input.method).toUpperCase() });
-  }
-  if (input.statusCode !== undefined && input.statusCode !== null && String(input.statusCode).trim() !== '') {
-    reqRows.push({ label: 'HTTP status', value: String(input.statusCode) });
-  }
-  if (input.requestId) reqRows.push({ label: 'Request ID', value: input.requestId });
-
-  // 4. IMPACT
   const impactRows: DataRow[] = [];
   if (typeof input.occurrences === 'number') {
-    impactRows.push({ label: 'Occurrences', value: String(input.occurrences) });
+    impactRows.push({ label: 'Occurrences', value: input.occurrences.toLocaleString('en-US') });
   }
   if (input.firstSeenAt) impactRows.push({ label: 'First seen', value: input.firstSeenAt });
   if (input.lastSeenAt) impactRows.push({ label: 'Last seen', value: input.lastSeenAt });
 
-  // 5. RUNTIME
   const runtimeRows: DataRow[] = [];
-  if (input.service) runtimeRows.push({ label: 'Service', value: input.service, sans: true });
+  if (input.service) runtimeRows.push({ label: 'Service', value: input.service });
   if (input.environment) runtimeRows.push({ label: 'Environment', value: input.environment });
   if (input.release) runtimeRows.push({ label: 'Release', value: input.release });
   if (input.framework) runtimeRows.push({ label: 'Framework', value: input.framework });
 
-  // 6. TRACE
-  const traceRows: DataRow[] = [];
-  if (input.tracePublicId || input.traceId) {
-    traceRows.push({ label: 'Trace', value: input.tracePublicId || input.traceId || '' });
-  }
-  if (input.spanPublicId || input.spanId) {
-    traceRows.push({ label: 'Span', value: input.spanPublicId || input.spanId || '' });
-  }
-  if (input.clientIp) traceRows.push({ label: 'Client IP', value: input.clientIp });
-  if (input.extraRows && input.extraRows.length > 0) traceRows.push(...input.extraRows);
+  const correlationRows: DataRow[] = [];
+  const trace = input.tracePublicId || input.traceId;
+  if (trace) correlationRows.push({ label: 'Trace', value: trace });
+  const span = input.spanPublicId || input.spanId;
+  if (span) correlationRows.push({ label: 'Span', value: span });
+  if (input.clientIp) correlationRows.push({ label: 'Client IP', value: input.clientIp });
+  if (input.extraRows && input.extraRows.length > 0) correlationRows.push(...input.extraRows);
 
-  // 7. ACTIONS
-  const primaryAction = input.traceUrl
-    ? { url: input.traceUrl, label: 'Analyze Trace', tone }
-    : (input.errorUrl || input.eventUrl)
-      ? { url: (input.errorUrl || input.eventUrl)!, label: 'View Error', tone }
-      : input.alertUrl
-        ? { url: input.alertUrl, label: 'View Alert', tone }
-        : undefined;
+  const actions = actionGroup([
+    { url: input.traceUrl, label: 'Analyze Trace' },
+    { url: input.errorUrl || input.eventUrl, label: 'View Error' },
+    { url: input.alertUrl, label: 'View Alert' },
+    { url: input.acknowledgeUrl, label: 'Acknowledge' },
+    { url: input.silenceUrl, label: 'Silence' },
+  ]);
 
-  const secondaryAction = input.traceUrl && (input.errorUrl || input.eventUrl)
-    ? { url: (input.errorUrl || input.eventUrl)!, label: 'View Error' }
-    : input.traceUrl && input.alertUrl
-      ? { url: input.alertUrl, label: 'View Alert' }
-      : input.acknowledgeUrl
-        ? { url: input.acknowledgeUrl, label: 'Acknowledge' }
-        : undefined;
+  const body = stack(
+    [
+      p(`An error event triggered alert rule ${strong(ruleName)}${input.endpoint ? ` on ${code(input.endpoint)}` : ''}.`),
+      input.insight ? aiInsight(input.insight) : '',
+      actions.html,
+      input.sourceContext ? section('Source', codeBlock(input.sourceContext)) : '',
+      section('Error', dataTable(errorRows)),
+      section('Request', dataTable(requestRows)),
+      section('Impact', dataTable(impactRows)),
+      section('Runtime', dataTable(runtimeRows)),
+      section('Trace', dataTable(correlationRows)),
+    ],
+    24,
+  );
 
-  const actions = developerAlertActions({
-    primary: primaryAction,
-    secondary: secondaryAction,
-    viewAlertUrl: input.alertUrl,
-    acknowledgeUrl: input.acknowledgeUrl,
-    silenceUrl: input.silenceUrl,
-  });
-
-  const bodyBlocks: (string | null | undefined | false)[] = [
-    p(`An error event triggered alert rule <strong>${esc(ruleName)}</strong>${input.endpoint ? ` on <strong>${esc(input.endpoint)}</strong>` : ''}.`),
-    sectionHeader('ERROR'),
-    dataTable(errorRows),
-  ];
-
-  if (sourceRows.length > 0 || input.sourceContext) {
-    bodyBlocks.push(sectionHeader('SOURCE'));
-    if (sourceRows.length > 0) bodyBlocks.push(dataTable(sourceRows));
-    if (input.sourceContext) bodyBlocks.push(codeBlock(input.sourceContext));
-  }
-
-  if (reqRows.length > 0) {
-    bodyBlocks.push(sectionHeader('TARGET & ROUTE'), dataTable(reqRows));
-  }
-  if (impactRows.length > 0) {
-    bodyBlocks.push(sectionHeader('IMPACT'), dataTable(impactRows));
-  }
-  if (runtimeRows.length > 0) {
-    bodyBlocks.push(sectionHeader('RUNTIME'), dataTable(runtimeRows));
-  }
-  if (traceRows.length > 0) {
-    bodyBlocks.push(sectionHeader('DISTRIBUTED TRACE & NETWORK'), dataTable(traceRows));
-  }
-  if (input.insight) {
-    bodyBlocks.push(sectionHeader('AI DIAGNOSIS'), aiInsight(input.insight));
-  }
-  if (actions.html) {
-    bodyBlocks.push(sectionHeader('TRIAGE & ACTIONS'), actions.html);
-  }
-
-  const textSections: (string | null | undefined | false)[] = [
-    `ERROR ALERT — ${severity.toUpperCase()}`,
-    `${ruleName}: ${input.errorMessage || errorTitle}`,
-    `\n--- ERROR ---`,
-    plainRows(errorRows),
-  ];
-  if (sourceRows.length > 0 || input.sourceContext) {
-    textSections.push(`\n--- SOURCE ---`);
-    if (sourceRows.length > 0) textSections.push(plainRows(sourceRows));
-    if (input.sourceContext) textSections.push(input.sourceContext);
-  }
-  if (reqRows.length > 0) {
-    textSections.push(`\n--- TARGET & ROUTE ---`, plainRows(reqRows));
-  }
-  if (impactRows.length > 0) {
-    textSections.push(`\n--- IMPACT ---`, plainRows(impactRows));
-  }
-  if (runtimeRows.length > 0) {
-    textSections.push(`\n--- RUNTIME ---`, plainRows(runtimeRows));
-  }
-  if (traceRows.length > 0) {
-    textSections.push(`\n--- DISTRIBUTED TRACE ---`, plainRows(traceRows));
-  }
-  if (input.insight) {
-    textSections.push(`\n--- DIAGNOSIS ---`, `AI Insight: ${input.insight.text}${input.insight.confidence ? ` (Confidence: ${input.insight.confidence}%)` : ''}`);
-  }
-  if (actions.text) {
-    textSections.push(`\n--- ACTIONS ---`, actions.text);
-  }
+  const frameText = input.sourceFunction && input.sourceFrame
+    ? `at ${input.sourceFunction} (${input.sourceFrame})`
+    : input.sourceFrame
+      ? `at ${input.sourceFrame}`
+      : input.sourceFunction
+        ? `at ${input.sourceFunction}`
+        : '';
 
   return {
     subject: alertSubject('firing', severity, errorTitle !== 'Error' ? errorTitle : ruleName, input),
     html: renderLayout({
       appName: input.appName,
       title: errorTitle !== 'Error' ? `${errorTitle} detected` : 'Error detected',
-      eyebrowText: `Error · ${severity}`,
+      context: scopeContext(input),
+      status: verdict(stateLabel('Firing', severity), tone, input.startedAt),
       preheader: `${stripControl(errorTitle)}: ${stripControl(input.errorMessage || ruleName)}${input.endpoint ? ` on ${stripControl(input.endpoint)}` : ''}.`,
-      tone,
-      chip: glyph.cross,
-      body: stack(bodyBlocks),
+      hero: exceptionBlock({
+        type: errorTitle,
+        message: input.errorMessage,
+        frame: input.sourceFrame,
+        fn: input.sourceFunction,
+        tone,
+      }),
+      body,
       footer: 'alert',
       footerLink: footerLinkFor(input),
       closing: null,
     }),
-    text: textBody(...textSections),
+    text: textBody(
+      `ERROR ALERT — ${severity.toUpperCase()}`,
+      `${ruleName}: ${input.errorMessage || errorTitle}`,
+      `${errorTitle}${input.errorMessage ? `: ${input.errorMessage}` : ''}${frameText ? `\n    ${frameText}` : ''}`,
+      insightText(input.insight),
+      textBlock('Actions', actions.text),
+      textBlock('Source', input.sourceContext ?? ''),
+      textSection('Error', errorRows),
+      textSection('Request', requestRows),
+      textSection('Impact', impactRows),
+      textSection('Runtime', runtimeRows),
+      textSection('Trace', correlationRows),
+    ),
   };
 }
 
@@ -1559,31 +1342,15 @@ export interface ErrorSpikeInput extends AlertScope {
 }
 
 /**
- * Error-rate spike.
- * Rate and absolute count are both shown with full developer context.
+ * Error-rate spike. The rate carries the readout; the absolute count leads the
+ * impact facts, because a rate alone hides whether this is 50% of 2 requests
+ * or of 2 million.
  */
 export function errorSpikeTemplate(input: ErrorSpikeInput): EmailTemplate {
   const severity = input.severity ?? 'error';
   const tone = severityTone(severity);
   const ruleName = `Error rate${input.endpoint ? ` · ${stripControl(input.endpoint)}` : ''}`;
 
-  // 1. TARGET & ROUTE
-  const reqRows: DataRow[] = [];
-  if (input.endpoint) {
-    const routeVal = input.method ? `${String(input.method).toUpperCase()} ${input.endpoint}` : input.endpoint;
-    reqRows.push({ label: 'Route', value: routeVal, sans: true });
-  }
-  if (input.method && !input.endpoint) {
-    reqRows.push({ label: 'Method', value: String(input.method).toUpperCase() });
-  }
-  if (input.topStatusCode) {
-    reqRows.push({ label: 'Top status', value: input.topStatusCode, tone });
-  }
-  if (input.service) {
-    reqRows.push({ label: 'Service', value: input.service, sans: true });
-  }
-
-  // 2. IMPACT & VOLUME
   const impactRows: DataRow[] = [];
   if (typeof input.errorCount === 'number' && typeof input.totalRequests === 'number') {
     impactRows.push({
@@ -1594,102 +1361,78 @@ export function errorSpikeTemplate(input: ErrorSpikeInput): EmailTemplate {
   } else if (typeof input.errorCount === 'number') {
     impactRows.push({ label: 'Failed requests', value: input.errorCount.toLocaleString('en-US'), tone });
   }
-  if (input.topError) impactRows.push({ label: 'Top error', value: input.topError, sans: true });
-  if (input.window) impactRows.push({ label: 'Window', value: input.window });
-
-  // 3. TRACE & NETWORK
-  const traceRows: DataRow[] = [];
-  if (input.traceId) traceRows.push({ label: 'Trace ID', value: input.traceId });
-  if (input.spanId) traceRows.push({ label: 'Span ID', value: input.spanId });
-  if (input.clientIp) traceRows.push({ label: 'Client IP', value: input.clientIp });
-  if (input.extraRows && input.extraRows.length > 0) traceRows.push(...input.extraRows);
-
-  // 4. INCIDENT SCOPE
-  const metaRows: DataRow[] = [
-    { label: 'Severity', value: severity.toUpperCase(), tone },
-  ];
-  if (input.projectName) metaRows.push({ label: 'Project', value: input.projectName, sans: true });
-  if (input.environment) metaRows.push({ label: 'Environment', value: input.environment });
-  if (input.startedAt) metaRows.push({ label: 'Started', value: input.startedAt });
-
-  // 5. ACTIONS
-  const primaryAction = input.traceUrl
-    ? { url: input.traceUrl, label: 'Analyze Trace', tone }
-    : input.requestUrl
-      ? { url: input.requestUrl, label: 'View Requests', tone }
-      : input.alertUrl
-        ? { url: input.alertUrl, label: 'View Alert', tone }
-        : undefined;
-
-  const secondaryAction = input.traceUrl && input.alertUrl
-    ? { url: input.alertUrl, label: 'View Alert' }
-    : input.acknowledgeUrl
-      ? { url: input.acknowledgeUrl, label: 'Acknowledge' }
-      : undefined;
-
-  const actions = developerAlertActions({
-    primary: primaryAction,
-    secondary: secondaryAction,
-    viewAlertUrl: input.alertUrl,
-    acknowledgeUrl: input.acknowledgeUrl,
-    silenceUrl: input.silenceUrl,
-  });
-
-  const bodyBlocks: (string | null | undefined | false)[] = [
-    p(`Requests are failing above the configured error-rate threshold${input.endpoint ? ` on <strong>${esc(input.endpoint)}</strong>` : ''}.`),
-    metricCompare({
-      label: input.window ? `Error rate · ${input.window}` : 'Error rate',
-      value: input.errorRate,
-      threshold: input.threshold,
-      tone,
-    }),
-  ];
-
-  if (reqRows.length > 0) {
-    bodyBlocks.push(sectionHeader('TARGET & ROUTE'), dataTable(reqRows));
+  if (input.topStatusCode) {
+    impactRows.push({ label: 'Top status', value: input.topStatusCode, tone: httpTone(input.topStatusCode) ?? tone });
   }
-  if (impactRows.length > 0) {
-    bodyBlocks.push(sectionHeader('IMPACT & VOLUME'), dataTable(impactRows));
-  }
-  if (traceRows.length > 0) {
-    bodyBlocks.push(sectionHeader('DISTRIBUTED TRACE & NETWORK'), dataTable(traceRows));
-  }
-  if (metaRows.length > 0) {
-    bodyBlocks.push(sectionHeader('INCIDENT SCOPE'), dataTable(metaRows));
-  }
-  if (input.insight) {
-    bodyBlocks.push(sectionHeader('AI DIAGNOSIS'), aiInsight(input.insight));
-  }
-  if (actions.html) {
-    bodyBlocks.push(sectionHeader('TRIAGE & ACTIONS'), actions.html);
-  }
+  if (input.topError) impactRows.push({ label: 'Top error', value: input.topError });
 
-  const textSections: (string | null | undefined | false)[] = [
-    `ERROR SPIKE — ${severity.toUpperCase()}`,
-    `Error rate is ${input.errorRate} (threshold ${input.threshold})${input.window ? ` over ${input.window}` : ''}.`,
-  ];
-  if (reqRows.length > 0) textSections.push(`\n--- TARGET & ROUTE ---`, plainRows(reqRows));
-  if (impactRows.length > 0) textSections.push(`\n--- IMPACT & VOLUME ---`, plainRows(impactRows));
-  if (traceRows.length > 0) textSections.push(`\n--- DISTRIBUTED TRACE ---`, plainRows(traceRows));
-  if (metaRows.length > 0) textSections.push(`\n--- INCIDENT SCOPE ---`, plainRows(metaRows));
-  if (input.insight) textSections.push(`\n--- AI DIAGNOSIS ---`, `AI Insight: ${input.insight.text}${input.insight.confidence ? ` (${Math.round(input.insight.confidence)}% confidence)` : ''}`);
-  if (actions.text) textSections.push(`\n--- ACTIONS ---`, actions.text);
+  const requestRows: DataRow[] = [];
+  const route = routeValue(input.endpoint, input.method);
+  if (route) requestRows.push({ label: 'Route', value: route });
+  else if (input.method) requestRows.push({ label: 'Method', value: String(input.method).toUpperCase() });
+  if (input.service) requestRows.push({ label: 'Service', value: input.service });
+
+  const correlationRows: DataRow[] = [];
+  if (input.traceId) correlationRows.push({ label: 'Trace ID', value: input.traceId });
+  if (input.spanId) correlationRows.push({ label: 'Span ID', value: input.spanId });
+  if (input.clientIp) correlationRows.push({ label: 'Client IP', value: input.clientIp });
+  if (input.extraRows && input.extraRows.length > 0) correlationRows.push(...input.extraRows);
+
+  const incidentRows: DataRow[] = [];
+  if (input.projectName) incidentRows.push({ label: 'Project', value: input.projectName, sans: true });
+  if (input.environment) incidentRows.push({ label: 'Environment', value: input.environment });
+
+  const actions = actionGroup([
+    { url: input.traceUrl, label: 'Analyze Trace' },
+    { url: input.requestUrl, label: 'View Requests' },
+    { url: input.alertUrl, label: 'View Alert' },
+    { url: input.acknowledgeUrl, label: 'Acknowledge' },
+    { url: input.silenceUrl, label: 'Silence' },
+  ]);
+
+  const body = stack(
+    [
+      p(`Requests are failing above the configured error-rate threshold${input.endpoint ? ` on ${code(input.endpoint)}` : ''}.`),
+      input.insight ? aiInsight(input.insight) : '',
+      actions.html,
+      section('Impact', dataTable(impactRows)),
+      section('Request', dataTable(requestRows)),
+      section('Correlation', dataTable(correlationRows)),
+      section('Incident', dataTable(incidentRows)),
+    ],
+    24,
+  );
 
   return {
     subject: alertSubject('firing', severity, ruleName, input),
     html: renderLayout({
       appName: input.appName,
       title: 'Error rate above threshold',
-      eyebrowText: `Errors · ${severity}`,
+      context: scopeContext(input),
+      status: verdict(stateLabel('Firing', severity), tone, input.startedAt),
       preheader: `Error rate is ${stripControl(input.errorRate)} against a ${stripControl(input.threshold)} threshold${input.endpoint ? ` on ${stripControl(input.endpoint)}` : ''}.`,
-      tone,
-      chip: glyph.cross,
-      body: stack(bodyBlocks),
+      hero: metricCompare({
+        label: input.window ? `Error rate · ${input.window}` : 'Error rate',
+        value: input.errorRate,
+        threshold: input.threshold,
+        tone,
+      }),
+      body,
       footer: 'alert',
       footerLink: footerLinkFor(input),
       closing: null,
     }),
-    text: textBody(...textSections),
+    text: textBody(
+      `ERROR SPIKE — ${severity.toUpperCase()}`,
+      `Error rate is ${input.errorRate} (threshold ${input.threshold})${input.window ? ` over ${input.window}` : ''}.`,
+      insightText(input.insight),
+      textBlock('Actions', actions.text),
+      textSection('Impact', impactRows),
+      textSection('Request', requestRows),
+      textSection('Correlation', correlationRows),
+      textSection('Incident', incidentRows),
+      input.startedAt ? `Started ${input.startedAt}` : '',
+    ),
   };
 }
 
@@ -1720,11 +1463,11 @@ export interface ServiceHealthInput extends AlertScope {
 
 const HEALTH_META: Record<
   ServiceHealthStatus,
-  { tone: Tone; label: string; state: string; chip: string; severity: AlertSeverity | null }
+  { tone: Tone; label: string; state: string; severity: AlertSeverity | null }
 > = {
-  down: { tone: 'danger', label: 'Down', state: 'down', chip: glyph.cross, severity: 'critical' },
-  degraded: { tone: 'warning', label: 'Degraded', state: 'degraded', chip: glyph.wave, severity: 'warning' },
-  recovered: { tone: 'success', label: 'Recovered', state: 'recovered', chip: glyph.check, severity: null },
+  down: { tone: 'danger', label: 'Down', state: 'down', severity: 'critical' },
+  degraded: { tone: 'warning', label: 'Degraded', state: 'degraded', severity: 'warning' },
+  recovered: { tone: 'success', label: 'Recovered', state: 'recovered', severity: null },
 };
 
 /**
@@ -1732,103 +1475,75 @@ const HEALTH_META: Record<
  */
 export function serviceHealthTemplate(input: ServiceHealthInput): EmailTemplate {
   const meta = HEALTH_META[input.status];
+  const recovered = input.status === 'recovered';
+  const service = stripControl(input.serviceName);
 
-  // 1. HEALTH & AVAILABILITY
-  const healthRows: DataRow[] = [
-    { label: 'Service', value: input.serviceName, sans: true },
-    { label: 'Status', value: meta.label.toUpperCase(), tone: meta.tone },
-  ];
+  const cells: ReadoutCell[] = [];
   if (typeof input.failedChecks === 'number') {
-    healthRows.push({ label: 'Failed checks', value: String(input.failedChecks), tone: meta.tone });
+    cells.push({ label: 'Failed checks', value: String(input.failedChecks), tone: meta.tone });
   }
-  if (input.downtime) healthRows.push({ label: 'Downtime', value: input.downtime, tone: 'warning' });
-  if (input.availability) healthRows.push({ label: 'Availability', value: input.availability });
-  if (input.region) healthRows.push({ label: 'Probe region', value: input.region });
-  if (input.checkUrl) healthRows.push({ label: 'Check endpoint', value: input.checkUrl });
+  if (input.downtime) cells.push({ label: 'Downtime', value: input.downtime });
+  if (input.availability) cells.push({ label: 'Availability', value: input.availability });
 
-  // 2. INCIDENT SCOPE
-  const ctxRows: DataRow[] = [];
-  if (input.projectName) ctxRows.push({ label: 'Project', value: input.projectName, sans: true });
-  if (input.environment) ctxRows.push({ label: 'Environment', value: input.environment });
-  if (input.observedAt) ctxRows.push({ label: 'Observed at', value: input.observedAt });
+  const rows: DataRow[] = [{ label: 'Service', value: input.serviceName }];
+  if (input.detail) rows.push({ label: 'Observation', value: input.detail });
+  if (input.region) rows.push({ label: 'Probe region', value: input.region });
+  if (input.checkUrl) rows.push({ label: 'Check endpoint', value: input.checkUrl });
+  if (input.projectName) rows.push({ label: 'Project', value: input.projectName, sans: true });
+  if (input.environment) rows.push({ label: 'Environment', value: input.environment });
 
-  const lead =
-    input.status === 'recovered'
-      ? `${esc(input.serviceName)} is responding normally again${input.downtime ? ` after ${esc(input.downtime)} of downtime` : ''}.`
-      : input.status === 'degraded'
-        ? `${esc(input.serviceName)} is responding, but outside its healthy operating envelope.`
-        : `${esc(input.serviceName)} is not responding to automated health checks.`;
+  const lead = recovered
+    ? `${service} is responding normally again${input.downtime ? ` after ${stripControl(input.downtime)} of downtime` : ''}.`
+    : input.status === 'degraded'
+      ? `${service} is responding, but outside its healthy operating envelope.`
+      : `${service} is not responding to automated health checks.`;
 
-  const bodyBlocks: (string | null | undefined | false)[] = [
-    p(lead),
-    pill(meta.label, meta.tone),
-    sectionHeader('HEALTH & AVAILABILITY'),
-    dataTable(healthRows),
-  ];
+  const actions = recovered
+    ? actionGroup([{ url: input.alertUrl, label: 'View Incident Timeline' }])
+    : actionGroup([
+        { url: input.alertUrl, label: 'View Service' },
+        { url: input.acknowledgeUrl, label: 'Acknowledge' },
+      ]);
 
-  if (ctxRows.length > 0) {
-    bodyBlocks.push(sectionHeader('INCIDENT SCOPE'), dataTable(ctxRows));
-  }
-
-  if (input.detail) {
-    bodyBlocks.push(callout(meta.tone, esc(input.detail), 'Observation detail'));
-  }
-
-  if (input.insight) {
-    bodyBlocks.push(sectionHeader('AI DIAGNOSIS'), aiInsight(input.insight));
-  }
-
-  if (input.status === 'recovered') {
-    if (input.alertUrl) {
-      bodyBlocks.push(sectionHeader('TIMELINE'), button(input.alertUrl, 'View Incident Timeline'));
-    }
-  } else {
-    bodyBlocks.push(
-      sectionHeader('ACTIONS'),
-      alertActions(input, 'View Service', { url: input.acknowledgeUrl, label: 'Acknowledge' }, meta.tone),
-    );
-  }
-
-  const textSections: (string | null | undefined | false)[] = [
-    `SERVICE ${meta.label.toUpperCase()}`,
-    lead,
-    `\n--- HEALTH & AVAILABILITY ---`,
-    plainRows(healthRows),
-  ];
-  if (ctxRows.length > 0) textSections.push(`\n--- INCIDENT SCOPE ---`, plainRows(ctxRows));
-  if (input.detail) textSections.push(`\nObservation: ${input.detail}`);
-  if (input.status === 'recovered') {
-    if (input.alertUrl) textSections.push(`\nView timeline: ${safeUrlText(input.alertUrl)}`);
-  } else {
-    textSections.push(actionsText(input, { label: 'Acknowledge:  ', url: input.acknowledgeUrl }));
-  }
+  const body = stack(
+    [
+      p(esc(lead)),
+      input.insight ? aiInsight(input.insight) : '',
+      actions.html,
+      section('Health', dataTable(rows)),
+    ],
+    24,
+  );
 
   return {
     subject: alertSubject(
-      input.status === 'recovered' ? 'recovered' : `service ${meta.state}`,
+      recovered ? 'recovered' : `service ${meta.state}`,
       meta.severity,
       input.serviceName,
       input,
     ),
     html: renderLayout({
       appName: input.appName,
-      title:
-        input.status === 'recovered'
-          ? `${input.serviceName} recovered`
-          : `${input.serviceName} is ${meta.state}`,
-      eyebrowText: `Availability · ${meta.state}`,
-      preheader:
-        input.status === 'recovered'
-          ? `${stripControl(input.serviceName)} is healthy again${input.downtime ? ` after ${stripControl(input.downtime)}` : ''}.`
-          : `${stripControl(input.serviceName)} is ${meta.state}${input.detail ? ` — ${stripControl(input.detail)}` : ''}.`,
-      tone: meta.tone,
-      chip: meta.chip,
-      body: stack(bodyBlocks),
+      title: recovered ? `${input.serviceName} recovered` : `${input.serviceName} is ${meta.state}`,
+      context: scopeContext(input),
+      status: verdict(meta.label, meta.tone, input.observedAt),
+      preheader: recovered
+        ? `${service} is healthy again${input.downtime ? ` after ${stripControl(input.downtime)}` : ''}.`
+        : `${service} is ${meta.state}${input.detail ? ` — ${stripControl(input.detail)}` : ''}.`,
+      hero: cells.length > 0 ? readout(cells) : undefined,
+      body,
       footer: 'alert',
       footerLink: footerLinkFor(input),
       closing: null,
     }),
-    text: textBody(...textSections),
+    text: textBody(
+      `SERVICE ${meta.label.toUpperCase()}`,
+      lead,
+      textSection('Health', [...cells.map((c) => ({ label: c.label, value: c.value })), ...rows]),
+      insightText(input.insight),
+      textBlock('Actions', actions.text),
+      input.observedAt ? `Observed ${input.observedAt}` : '',
+    ),
   };
 }
 
@@ -1855,75 +1570,63 @@ export interface QuotaAlertInput extends AlertScope {
   usageUrl?: string | undefined;
 }
 
-function quotaActions(input: QuotaAlertInput, tone: Tone): string {
-  if (input.upgradeUrl && input.usageUrl) {
-    return buttonRow(
-      { url: input.upgradeUrl, label: 'Increase limit', tone },
-      { url: input.usageUrl, label: 'View usage' },
-    );
-  }
-  if (input.upgradeUrl) return button(input.upgradeUrl, 'Increase limit', { tone });
-  if (input.usageUrl) return button(input.usageUrl, 'View usage');
-  return '';
-}
-
 /**
- * Usage-quota warning.
+ * Usage-quota warning. The meter shows consumption against the plan limit:
+ * under the limit the fill carries the tone, past it only the overage does.
  */
 export function quotaAlertTemplate(input: QuotaAlertInput): EmailTemplate {
-  const pct = Math.round(input.percentUsed);
+  const pct = Number.isFinite(input.percentUsed) ? Math.round(input.percentUsed) : 0;
   const exceeded = pct >= 100;
   const tone: Tone = exceeded ? 'danger' : pct >= 80 ? 'warning' : 'info';
-  const state = exceeded ? 'exceeded' : 'approaching limit';
+  const resource = input.resource.toLowerCase();
 
-  const quotaRows: DataRow[] = [
-    { label: 'Resource', value: input.resource, sans: true },
-    { label: 'Consumed', value: `${input.used} of ${input.limit}`, tone },
-    { label: 'Utilization', value: `${pct}%`, tone },
-  ];
-  if (input.planName) quotaRows.push({ label: 'Current plan', value: input.planName, sans: true });
-  if (input.resetsAt) quotaRows.push({ label: 'Billing resets', value: input.resetsAt });
-  if (input.projectName) quotaRows.push({ label: 'Project', value: input.projectName, sans: true });
-  if (input.orgName) quotaRows.push({ label: 'Organization', value: input.orgName, sans: true });
+  const rows: DataRow[] = [];
+  if (input.planName) rows.push({ label: 'Current plan', value: input.planName, sans: true });
+  if (input.projectName) rows.push({ label: 'Project', value: input.projectName, sans: true });
+  if (input.orgName) rows.push({ label: 'Organization', value: input.orgName, sans: true });
 
-  const bodyBlocks: (string | null | undefined | false)[] = [
-    p(
-      exceeded
-        ? `Your <strong>${esc(input.resource.toLowerCase())}</strong> quota is fully consumed for this billing period.`
-        : `Your <strong>${esc(input.resource.toLowerCase())}</strong> quota is <strong>${pct}%</strong> consumed for this billing period.`,
-    ),
-    metricCompare({
-      label: input.resource,
-      value: input.used,
-      threshold: input.limit,
-      thresholdLabel: 'Plan limit',
-      tone,
-    }),
-    sectionHeader('RESOURCE UTILIZATION'),
-    dataTable(quotaRows),
-  ];
+  const actions = actionGroup([
+    { url: input.upgradeUrl, label: 'Increase limit' },
+    { url: input.usageUrl, label: 'View usage' },
+  ]);
 
-  if (input.overagePolicy) {
-    bodyBlocks.push(
-      callout(exceeded ? 'danger' : 'warning', esc(input.overagePolicy), exceeded ? 'In effect now' : 'What happens at 100%'),
-    );
-  }
-
-  const actHtml = quotaActions(input, tone);
-  if (actHtml) {
-    bodyBlocks.push(sectionHeader('ACTIONS'), actHtml);
-  }
+  const body = stack(
+    [
+      p(
+        exceeded
+          ? `Your ${strong(resource)} quota is fully consumed for this billing period.`
+          : `Your ${strong(resource)} quota is ${strong(`${pct}%`)} consumed for this billing period.`,
+      ),
+      input.overagePolicy
+        ? callout(exceeded ? 'danger' : 'warning', esc(input.overagePolicy), exceeded ? 'In effect now' : 'What happens at 100%')
+        : '',
+      actions.html,
+      section('Plan', dataTable(rows)),
+    ],
+    24,
+  );
 
   return {
     subject: `[QUOTA${exceeded ? ' · EXCEEDED' : ''}] ${stripControl(input.resource)} at ${pct}%${scopeLabel(input) ? ` — ${scopeLabel(input)}` : ''}`,
     html: renderLayout({
       appName: input.appName,
       title: exceeded ? `${input.resource} quota exceeded` : `${input.resource} quota at ${pct}%`,
-      eyebrowText: `Usage · ${state}`,
-      preheader: `${stripControl(input.used)} of ${stripControl(input.limit)} ${stripControl(input.resource.toLowerCase())} used${input.resetsAt ? ` — resets ${stripControl(input.resetsAt)}` : ''}.`,
-      tone,
-      chip: exceeded ? glyph.bang : glyph.arrowUp,
-      body: stack(bodyBlocks),
+      context: scopeContext(input),
+      status: verdict(
+        exceeded ? 'Quota exceeded' : `${pct}% used`,
+        tone,
+        input.resetsAt ? `Resets ${stripControl(input.resetsAt)}` : undefined,
+      ),
+      preheader: `${stripControl(input.used)} of ${stripControl(input.limit)} ${stripControl(resource)} used${input.resetsAt ? ` — resets ${stripControl(input.resetsAt)}` : ''}.`,
+      hero: metricCompare({
+        label: input.resource,
+        value: input.used,
+        threshold: input.limit,
+        thresholdLabel: 'Plan limit',
+        tone,
+        extra: [{ label: 'Utilization', value: `${pct}%`, tone }],
+      }),
+      body,
       footer: 'alert',
       footerLink: footerLinkFor(input),
       closing: null,
@@ -1931,11 +1634,12 @@ export function quotaAlertTemplate(input: QuotaAlertInput): EmailTemplate {
     text: textBody(
       `USAGE QUOTA ${exceeded ? 'EXCEEDED' : `AT ${pct}%`}`,
       `${input.resource}: ${input.used} of ${input.limit} used (${pct}%).`,
-      `\n--- RESOURCE UTILIZATION ---`,
-      plainRows(quotaRows),
-      input.overagePolicy ? `\nPolicy: ${input.overagePolicy}` : '',
-      input.upgradeUrl ? `Increase limit: ${safeUrlText(input.upgradeUrl)}` : '',
-      input.usageUrl ? `View usage:     ${safeUrlText(input.usageUrl)}` : '',
+      input.overagePolicy ? `${exceeded ? 'In effect now' : 'What happens at 100%'}\n${input.overagePolicy}` : '',
+      textBlock('Actions', actions.text),
+      textSection('Plan', [
+        ...rows,
+        ...(input.resetsAt ? [{ label: 'Billing resets', value: input.resetsAt }] : []),
+      ]),
     ),
   };
 }
@@ -1965,76 +1669,77 @@ export interface DeliveryFailureInput extends AlertScope {
 }
 
 /**
- * Meta-alert: the alerting system itself could not deliver.
+ * Meta-alert: the alerting system itself could not deliver. The connector's
+ * own response is shown verbatim in a code well, because it is usually the
+ * whole diagnosis ("invalid_auth", "channel_not_found").
  */
 export function deliveryFailureTemplate(input: DeliveryFailureInput): EmailTemplate {
-  const rows: DataRow[] = [
-    { label: 'Connector', value: input.connectorName, sans: true },
+  const plural = input.failedCount === 1 ? '' : 's';
+
+  const cells: ReadoutCell[] = [
+    { label: 'Failed deliveries', value: input.failedCount.toLocaleString('en-US'), tone: 'danger' },
   ];
-  if (input.connectorType) rows.push({ label: 'Channel type', value: input.connectorType });
-  rows.push({ label: 'Failed deliveries', value: `${input.failedCount} notification${input.failedCount === 1 ? '' : 's'}`, tone: 'danger' });
-  if (typeof input.attempts === 'number') rows.push({ label: 'Attempts', value: String(input.attempts) });
+  if (typeof input.attempts === 'number') cells.push({ label: 'Attempts', value: String(input.attempts) });
   if (typeof input.statusCode === 'number') {
-    rows.push({ label: 'Last HTTP status', value: String(input.statusCode), tone: 'danger' });
+    cells.push({ label: 'Last HTTP status', value: String(input.statusCode), tone: httpTone(input.statusCode) });
   }
+
+  const rows: DataRow[] = [{ label: 'Connector', value: input.connectorName, sans: true }];
+  if (input.connectorType) rows.push({ label: 'Channel type', value: input.connectorType });
   if (input.firstFailedAt) rows.push({ label: 'First failure', value: input.firstFailedAt });
-  if (input.lastFailedAt) rows.push({ label: 'Last failure', value: input.lastFailedAt });
   if (input.deadLettered !== undefined) {
     rows.push({
       label: 'Dead-lettered',
       value: input.deadLettered ? 'Yes — retained for replay' : 'No',
-      tone: input.deadLettered ? 'warning' : 'neutral',
+      tone: input.deadLettered ? 'warning' : undefined,
       sans: true,
     });
   }
   if (input.orgName) rows.push({ label: 'Organization', value: input.orgName, sans: true });
 
-  const bodyBlocks: (string | null | undefined | false)[] = [
-    p(
-      `${esc(input.appName)} could not deliver <strong>${input.failedCount}</strong> alert notification${input.failedCount === 1 ? '' : 's'} through <strong>${esc(input.connectorName)}</strong>. Those alerts fired correctly &mdash; but notifications failed to dispatch.`,
-    ),
-    pill('Delivery failing', 'danger'),
-    sectionHeader('CONNECTOR FAILURE DETAILS'),
-    dataTable(rows),
-  ];
+  const actions = actionGroup([{ url: input.connectorUrl, label: 'Manage Connector Settings' }]);
 
-  if (input.lastError) {
-    bodyBlocks.push(callout('danger', esc(input.lastError), 'Connector error response'));
-  }
-
-  bodyBlocks.push(
-    callout(
-      'danger',
-      'Until this connector is repaired, alerts routed through it are invisible to whoever depends on it. Verify the webhook URL or credential and send a test notification to confirm delivery.',
-      'Silent-failure risk',
-    ),
+  const body = stack(
+    [
+      p(
+        `${esc(input.appName)} could not deliver ${strong(String(input.failedCount))} alert notification${plural} through ${strong(input.connectorName)}. Those alerts fired correctly &mdash; but notifications failed to dispatch.`,
+      ),
+      input.lastError ? section('Connector response', codeBlock(input.lastError)) : '',
+      callout(
+        'danger',
+        'Until this connector is repaired, alerts routed through it are invisible to whoever depends on it. Verify the webhook URL or credential and send a test notification to confirm delivery.',
+        'Silent-failure risk',
+      ),
+      actions.html,
+      section('Connector', dataTable(rows)),
+    ],
+    24,
   );
 
-  if (input.connectorUrl) {
-    bodyBlocks.push(sectionHeader('ACTIONS'), button(input.connectorUrl, 'Manage Connector Settings', { tone: 'danger' }));
-  }
-
   return {
-    subject: `[DELIVERY FAILED] ${stripControl(input.connectorName)} — ${input.failedCount} notification${input.failedCount === 1 ? '' : 's'}`,
+    subject: `[DELIVERY FAILED] ${stripControl(input.connectorName)} — ${input.failedCount} notification${plural}`,
     html: renderLayout({
       appName: input.appName,
       title: 'Alert delivery is failing',
-      eyebrowText: 'System · delivery failure',
-      preheader: `${input.failedCount} notification${input.failedCount === 1 ? '' : 's'} could not be delivered through ${stripControl(input.connectorName)}.`,
-      tone: 'danger',
-      chip: glyph.bang,
-      body: stack(bodyBlocks),
+      context: scopeContext(input),
+      status: verdict('Delivery failing', 'danger', input.lastFailedAt),
+      preheader: `${input.failedCount} notification${plural} could not be delivered through ${stripControl(input.connectorName)}.`,
+      hero: readout(cells),
+      body,
       footer: 'alert',
       footerLink: footerLinkFor(input),
       closing: null,
     }),
     text: textBody(
       'ALERT DELIVERY FAILING',
-      `${input.appName} could not deliver ${input.failedCount} alert notification${input.failedCount === 1 ? '' : 's'} through ${input.connectorName}.`,
-      `\n--- FAILURE DETAILS ---`,
-      plainRows(rows),
-      input.lastError ? `\nLast error: ${input.lastError}` : '',
-      input.connectorUrl ? `Manage connector: ${safeUrlText(input.connectorUrl)}` : '',
+      `${input.appName} could not deliver ${input.failedCount} alert notification${plural} through ${input.connectorName}.`,
+      textBlock('Connector response', input.lastError ?? ''),
+      textBlock('Actions', actions.text),
+      textSection('Connector', [
+        ...cells.map((c) => ({ label: c.label, value: c.value })),
+        ...rows,
+        ...(input.lastFailedAt ? [{ label: 'Last failure', value: input.lastFailedAt }] : []),
+      ]),
     ),
   };
 }
@@ -2053,71 +1758,56 @@ export interface RuleChangedInput extends AlertScope {
   ruleUrl?: string | undefined;
 }
 
-const RULE_ACTION_META: Record<RuleChangedInput['action'], { tone: Tone; chip: string; verb: string }> = {
-  created: { tone: 'success', chip: glyph.plus, verb: 'created' },
-  updated: { tone: 'info', chip: glyph.refresh, verb: 'updated' },
-  disabled: { tone: 'warning', chip: glyph.pause, verb: 'disabled' },
-  deleted: { tone: 'danger', chip: glyph.cross, verb: 'deleted' },
+const RULE_ACTION_META: Record<RuleChangedInput['action'], { tone: Tone; verb: string }> = {
+  created: { tone: 'success', verb: 'created' },
+  updated: { tone: 'info', verb: 'updated' },
+  disabled: { tone: 'warning', verb: 'disabled' },
+  deleted: { tone: 'danger', verb: 'deleted' },
 };
 
+const COVERAGE_GAP =
+  'While this rule is disabled, nothing it watches will alert anyone. That is a gap in coverage, not a reduction in noise — re-enable it when the reason for disabling it has passed.';
+const COVERAGE_REMOVED =
+  'This rule no longer exists. Whatever condition it watched will not be detected again unless an equivalent rule is created.';
+
 /**
- * Alert-rule audit notice.
+ * Alert-rule audit notice. Field-level changes are listed one per hairline row
+ * in mono, so `Threshold: 800 ms → 1500 ms` reads like a diff.
  */
 export function ruleChangedTemplate(input: RuleChangedInput): EmailTemplate {
   const meta = RULE_ACTION_META[input.action];
+  const changes = input.changes ?? [];
 
-  const rows: DataRow[] = [
-    { label: 'Rule name', value: input.ruleName, sans: true },
-    { label: 'Audit action', value: meta.verb.toUpperCase(), tone: meta.tone },
-    { label: 'Modified by', value: input.changedBy, sans: true },
-  ];
-  if (input.changedAt) rows.push({ label: 'Timestamp', value: input.changedAt });
+  const rows: DataRow[] = [{ label: 'Changed by', value: input.changedBy, sans: true }];
   if (input.projectName) rows.push({ label: 'Project', value: input.projectName, sans: true });
   if (input.environment) rows.push({ label: 'Environment', value: input.environment });
 
-  const bodyBlocks: (string | null | undefined | false)[] = [
-    p(`<strong>${esc(input.changedBy)}</strong> ${esc(meta.verb)} the alert rule <strong>${esc(input.ruleName)}</strong>.`),
-    pill(meta.verb, meta.tone),
-    sectionHeader('AUDIT TRAIL'),
-    dataTable(rows),
-  ];
+  const actions = actionGroup([{ url: input.ruleUrl, label: 'View Rule Configuration' }]);
 
-  if (input.changes && input.changes.length > 0) {
-    bodyBlocks.push(callout('neutral', input.changes.map((c) => esc(c)).join('<br />'), 'Modified parameters'));
-  }
-
-  if (input.action === 'disabled') {
-    bodyBlocks.push(
-      callout(
-        'warning',
-        'While this rule is disabled, nothing it watches will alert anyone. That is a gap in coverage, not a reduction in noise — re-enable it when the reason for disabling it has passed.',
-        'Coverage gap warning',
-      ),
-    );
-  } else if (input.action === 'deleted') {
-    bodyBlocks.push(
-      callout(
-        'danger',
-        'This rule no longer exists. Whatever condition it watched will not be detected again unless an equivalent rule is created.',
-        'Coverage removed',
-      ),
-    );
-  }
-
-  if (input.ruleUrl) {
-    bodyBlocks.push(sectionHeader('ACTIONS'), button(input.ruleUrl, 'View Rule Configuration'));
-  }
+  const body = stack(
+    [
+      p(`${strong(input.changedBy)} ${esc(meta.verb)} this alert rule.`),
+      input.action === 'disabled'
+        ? callout('warning', esc(COVERAGE_GAP), 'Coverage gap warning')
+        : input.action === 'deleted'
+          ? callout('danger', esc(COVERAGE_REMOVED), 'Coverage removed')
+          : '',
+      section('Changes', lines(changes)),
+      actions.html,
+      section('Audit trail', dataTable(rows)),
+    ],
+    24,
+  );
 
   return {
     subject: `[RULE ${meta.verb.toUpperCase()}] ${stripControl(input.ruleName)}${scopeLabel(input) ? ` — ${scopeLabel(input)}` : ''}`,
     html: renderLayout({
       appName: input.appName,
-      title: `Alert rule ${meta.verb}`,
-      eyebrowText: `Configuration · rule ${meta.verb}`,
+      title: input.ruleName,
+      context: scopeContext(input),
+      status: verdict(`Rule ${meta.verb}`, meta.tone, input.changedAt),
       preheader: `${stripControl(input.changedBy)} ${meta.verb} ${stripControl(input.ruleName)}.`,
-      tone: meta.tone,
-      chip: meta.chip,
-      body: stack(bodyBlocks),
+      body,
       footer: 'alert',
       footerLink: footerLinkFor(input),
       closing: null,
@@ -2125,12 +1815,13 @@ export function ruleChangedTemplate(input: RuleChangedInput): EmailTemplate {
     text: textBody(
       `ALERT RULE ${meta.verb.toUpperCase()}`,
       `${input.changedBy} ${meta.verb} the alert rule "${input.ruleName}".`,
-      `\n--- AUDIT TRAIL ---`,
-      plainRows(rows),
-      input.changes && input.changes.length > 0
-        ? `Modified parameters:\n${input.changes.map((c) => `  - ${c}`).join('\n')}`
-        : '',
-      input.ruleUrl ? `View rule: ${safeUrlText(input.ruleUrl)}` : '',
+      input.action === 'disabled' ? COVERAGE_GAP : input.action === 'deleted' ? COVERAGE_REMOVED : '',
+      textBlock('Changes', changes.map((c) => `  - ${c}`).join('\n')),
+      textBlock('Actions', actions.text),
+      textSection('Audit trail', [
+        ...rows,
+        ...(input.changedAt ? [{ label: 'Timestamp', value: input.changedAt }] : []),
+      ]),
     ),
   };
 }

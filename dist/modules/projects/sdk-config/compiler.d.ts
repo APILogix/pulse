@@ -1,4 +1,4 @@
-import { type FeatureKey, type KillswitchKey, type Limits, type SamplingSignal, type SchemaV1Config } from "./schema-v1.js";
+import { type FeatureKey, type KillswitchKey, type Limits, type PersistenceGovernance, type SamplingSignal, type SchemaV1Config } from "./schema-v1.js";
 export interface TrustedTopology {
     ingestBaseUrl: string;
 }
@@ -7,12 +7,14 @@ export interface CompileIdentity {
     environment: string;
     release?: string;
 }
-type NumericLimitKey = Exclude<keyof Limits, "tenantGovernance">;
+type NumericLimitKey = Exclude<keyof Limits, "tenantGovernance" | "persistenceGovernance">;
+type PersistenceGovernancePolicy = Partial<PersistenceGovernance>;
 export interface OrgPolicy {
     forceFeaturesOff?: FeatureKey[];
     forceKillswitchesOn?: KillswitchKey[];
     maxSamplingRates?: Partial<Record<SamplingSignal, number>>;
     limitCeilings?: Partial<Record<NumericLimitKey, number>>;
+    persistenceGovernance?: PersistenceGovernancePolicy;
     mandatoryScrubHeaders?: string[];
     mandatoryScrubFields?: string[];
     forcePiiEnabled?: boolean;

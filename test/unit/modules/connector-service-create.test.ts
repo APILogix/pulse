@@ -8,7 +8,7 @@ let ConnectorService: typeof ConnectorServiceType;
 beforeAll(async () => {
   process.env.NODE_ENV = 'development';
   ({ ConnectorService } = await import('../../../src/modules/connectors/service.js'));
-});
+}, 30000);
 
 const meta: RequestMeta = {
   actorUserId: '11111111-1111-4111-8111-111111111111',

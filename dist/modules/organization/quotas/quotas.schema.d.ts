@@ -1,8 +1,8 @@
 import { z } from "zod";
 export declare const QuotaRequestStatusSchema: z.ZodEnum<{
+    rejected: "rejected";
     pending: "pending";
     approved: "approved";
-    rejected: "rejected";
     cancelled: "cancelled";
 }>;
 export declare const QuotaTypeSchema: z.ZodEnum<{

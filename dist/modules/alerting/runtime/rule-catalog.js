@@ -1,4 +1,5 @@
 import { LRUCache } from 'lru-cache';
+import { ALERT_RULE_CONDITIONS_COLUMNS } from '../rules/rules.repository.js';
 import { resolveEffectiveRule, } from '../policy/resolve-rule.js';
 import { recordCatalogCacheHit, recordCatalogCacheMiss, recordCatalogCacheLoad, recordCatalogCacheInvalidation, } from './alert-runtime-metrics.js';
 const RULE_COLUMNS = `
@@ -26,6 +27,14 @@ const TIER_FIELD_PREFIXES = {
         'errors.unhandled',
         'errors.fatal',
         'errors.crash',
+        // Backs the `unhandled_rejection_fast` preset. It was previously absent here,
+        // so field-path classification returned null for it: the preset itself still
+        // worked (listRulesForTier also matches evaluation_category = 'fast'), but a
+        // USER-created rule on errors.rejection would be inferred as 'analytics' by
+        // inferEvaluationCategory() and land on the window tier, whose rollup tables
+        // have no such column - so hasRelevantMetrics would skip it and the rule
+        // would never fire. Registering the prefix makes both paths agree.
+        'errors.rejection',
         'logs.oom',
         'logs.security',
         'cron.failed',
@@ -42,6 +51,17 @@ const TIER_FIELD_PREFIXES = {
         'deployment.failed',
         'heartbeat.lost',
         'connector.failure',
+        // These four back fast-tier presets whose field paths were never registered
+        // here. The presets themselves work (listRulesForTier also matches
+        // evaluation_category = 'fast'), but inferEvaluationCategory() classifies an
+        // unregistered path as 'analytics', so a user-created rule on one of them
+        // would be routed to the window tier - whose rollup tables contain no such
+        // column - and silently never fire. Registering them makes the heuristic
+        // agree with the presets.
+        'span.timeout',
+        'db.deadlock',
+        'eventloop.lag',
+        'telemetry.drops',
     ],
     window: [
         'errors.rate',
@@ -127,13 +147,20 @@ export class AlertCatalogSnapshot {
         this.conditionsByRule = conditionsByRule;
         this.bindingsByRule = bindingsByRule;
     }
+    /**
+     * Pure, hot-path rule resolution. Called once per scope per evaluation tick.
+     *
+     * Deliberately performs NO logging: it previously emitted several console.log
+     * lines per candidate rule (including building a joined condition-description
+     * string for every rule, even when it was not logged at that level), which is
+     * measurable wasted CPU and unbounded stdout volume on the fast path. Callers
+     * emit structured summaries instead (see AlertRuntimeEngines), and per-rule
+     * outcomes are exported as metrics.
+     */
     resolveRulesForScope(scope) {
-        if (!scope.projectId) {
-            console.log(`[ALERTING] [Phase 1/4: Rule Fetch] ⚠️ Scope has no projectId; skipping project resolution.`);
+        if (!scope.projectId)
             return [];
-        }
         const candidateRules = this.rules.filter((rule) => rule.project_id === null || rule.project_id === scope.projectId);
-        console.log(`[ALERTING] [Phase 1/4: Rule Fetch] 🔍 Fetching subscribed rules for Project: "${scope.projectId}" | Tier: "${this.tier}" | Organization Catalog Total: ${this.rules.length} | Project Candidates: ${candidateRules.length}`);
         const resolved = [];
         for (const rule of candidateRules) {
             const bindings = this.bindingsByRule.get(rule.id) ?? [];
@@ -141,17 +168,13 @@ export class AlertCatalogSnapshot {
             // Project scope requires an explicit project subscription binding for organization-level catalog rules.
             const requireProjectSubscription = rule.project_id === null;
             const effective = resolveEffectiveRule(rule, conditions, bindings, scope, { requireProjectSubscription });
-            const conditionsDesc = effective.conditions
-                .map((c) => `${c.field_path} ${c.operator} ${c.threshold_value}`)
-                .join(' AND ');
-            if (!effective.enabled) {
-                console.log(`[ALERTING] [Phase 1/4: Rule Fetch] ⏭️ Rule "${rule.name}" (${rule.id}) is DISABLED or UNSUBSCRIBED for project ${scope.projectId} (requireProjectSubscription=${requireProjectSubscription}, bindings=${bindings.length}).`);
+            // Disabled or not subscribed to this project - skip silently. The
+            // enabled/subscription decision is captured in `effective.trace` for
+            // auditing, and skip counts are exported as metrics by the caller.
+            if (!effective.enabled)
                 continue;
-            }
-            console.log(`[ALERTING] [Phase 1/4: Rule Fetch] ✅ Rule SUBSCRIBED & ACTIVE: "${rule.name}" (${rule.id}) | Scope: [Project: ${scope.projectId}, Env: ${scope.environment ?? 'all'}] | Severity: ${effective.severity} | ConsecutiveBreaches: ${effective.consecutiveBreaches} | Cooldown: ${effective.cooldownSeconds}s | Conditions: [${conditionsDesc}]`);
             resolved.push({ rule, effective });
         }
-        console.log(`[ALERTING] [Phase 1/4: Rule Fetch] 🎯 Total active subscribed rules ready for evaluation: ${resolved.length}`);
         return resolved;
     }
 }
@@ -316,7 +339,7 @@ export class AlertRuntimeRuleCatalog {
         const grouped = new Map();
         if (ruleIds.length === 0)
             return grouped;
-        const result = await this.db.query(`SELECT *
+        const result = await this.db.query(`SELECT ${ALERT_RULE_CONDITIONS_COLUMNS}
          FROM alert_rule_conditions
         WHERE rule_id = ANY($1::uuid[])
         ORDER BY rule_id, order_index ASC, id ASC`, [ruleIds]);

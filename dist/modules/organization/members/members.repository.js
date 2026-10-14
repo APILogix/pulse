@@ -1,15 +1,35 @@
 import { BaseRepository, cursorPage } from "../shared/base.repository.js";
 import { NotFoundError } from "../shared/errors.js";
 import { quotaGuard } from "../../billing/entitlements/quota-guard.js";
+const ORG_MEMBER_COLUMNS = `
+  om.id,
+  om.org_id,
+  om.user_id,
+  om.role,
+  om.status,
+  om.invited_by,
+  om.invited_at,
+  om.joined_at,
+  om.joined_method,
+  om.last_active_at,
+  om.deactivated_at,
+  om.deactivated_by,
+  om.deactivation_reason,
+  om.created_at,
+  om.updated_at,
+  u.email,
+  u.full_name,
+  u.mfa_enabled
+`;
 export class MembersRepository extends BaseRepository {
     async findActiveMember(orgId, userId) {
-        const r = await this.db.query(`SELECT om.*, u.email, u.full_name, u.mfa_enabled
+        const r = await this.db.query(`SELECT ${ORG_MEMBER_COLUMNS}
        FROM organization_members om JOIN users u ON u.id=om.user_id
        WHERE om.org_id=$1 AND om.user_id=$2 AND om.status='active'`, [orgId, userId]);
         return r.rows[0] ?? null;
     }
     async findMember(orgId, userId) {
-        const r = await this.db.query(`SELECT om.*, u.email, u.full_name, u.mfa_enabled
+        const r = await this.db.query(`SELECT ${ORG_MEMBER_COLUMNS}
        FROM organization_members om JOIN users u ON u.id=om.user_id
        WHERE om.org_id=$1 AND om.user_id=$2`, [orgId, userId]);
         return r.rows[0] ?? null;
@@ -42,7 +62,7 @@ export class MembersRepository extends BaseRepository {
             where += ` AND om.created_at < $${params.length}`;
         }
         params.push(q.limit + 1);
-        const r = await this.db.query(`SELECT om.*, u.email, u.full_name, u.mfa_enabled
+        const r = await this.db.query(`SELECT ${ORG_MEMBER_COLUMNS}
        FROM organization_members om JOIN users u ON u.id=om.user_id
        WHERE ${where}
        ORDER BY om.created_at DESC
@@ -60,9 +80,18 @@ export class MembersRepository extends BaseRepository {
                     return parseInt(r?.rows?.[0]?.count ?? "0", 10);
                 },
             });
-            await client.query(`INSERT INTO organization_members (org_id,user_id,role,status,invited_by,invited_at,joined_at,joined_method)
-         VALUES ($1,$2,$3,'active',$4,NOW(),NOW(),$5)
-         ON CONFLICT (org_id,user_id) DO UPDATE SET role=EXCLUDED.role,status='active',joined_at=NOW(),joined_method=EXCLUDED.joined_method`, [orgId, userId, role, invitedBy, method]);
+            const r = await client.query(`WITH inserted AS (
+           INSERT INTO organization_members (org_id,user_id,role,status,invited_by,invited_at,joined_at,joined_method)
+           VALUES ($1,$2,$3,'active',$4,NOW(),NOW(),$5)
+           ON CONFLICT (org_id,user_id) DO UPDATE SET role=EXCLUDED.role,status='active',joined_at=NOW(),joined_method=EXCLUDED.joined_method
+           RETURNING id, org_id, user_id, role, status, invited_by, invited_at, joined_at, joined_method, last_active_at, deactivated_at, deactivated_by, deactivation_reason, created_at, updated_at
+         )
+         SELECT ${ORG_MEMBER_COLUMNS}
+         FROM inserted om
+         JOIN users u ON u.id = om.user_id`, [orgId, userId, role, invitedBy, method]);
+            if (r?.rows?.[0]) {
+                return r.rows[0];
+            }
             return (await this.findMember(orgId, userId));
         });
     }

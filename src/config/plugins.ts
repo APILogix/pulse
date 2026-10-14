@@ -1,9 +1,14 @@
 import type { FastifyInstance } from 'fastify';
 import fp from 'fastify-plugin';
 import { pool } from './database.js';
+import {
+  checkPostgresHealth,
+  classifyPostgresHealthError,
+} from './postgres-network.js';
 import { logDB } from './log-database.js';
-import { redis } from './redis.js';
+import { checkRedis } from './redis.js';
 import { logger } from './logger.js';
+import { env } from './env.js';
 
 const healthLogger = logger.child({ component: 'health' });
 
@@ -27,7 +32,7 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T
  * Exposes Kubernetes-standard probe endpoints:
  * - /health  — shallow liveness (process is running)
  * - /live    — alias for liveness (always 200 if process is up)
- * - /ready   — deep readiness (checks DB, Redis, Log DB)
+ * - /ready   — deep readiness (required DBs, plus Redis when REDIS_REQUIRED=true)
  * - /metrics — Prometheus metrics (registered via metrics plugin)
  *
  * Wrapped in fastify-plugin so these routes are available at the root scope.
@@ -59,31 +64,57 @@ async function healthPlugin(fastify: FastifyInstance): Promise<void> {
     // Primary DB check with timeout
     const dbStart = Date.now();
     try {
-      await withTimeout(pool.query('SELECT 1'), DEPENDENCY_TIMEOUT_MS);
-      checks.database = { healthy: true, latencyMs: Date.now() - dbStart };
+      const dbHealth = await withTimeout(checkPostgresHealth(pool), DEPENDENCY_TIMEOUT_MS);
+      checks.database = {
+        healthy: dbHealth.healthy,
+        latencyMs: Date.now() - dbStart,
+        ...(!dbHealth.healthy ? { error: dbHealth.failure } : {}),
+      };
     } catch (err) {
-      checks.database = { healthy: false, latencyMs: Date.now() - dbStart, error: (err as Error).message };
+      checks.database = {
+        healthy: false,
+        latencyMs: Date.now() - dbStart,
+        error: classifyPostgresHealthError(err),
+      };
     }
 
     // Redis check with timeout
     const redisStart = Date.now();
     try {
-      await withTimeout(redis.ping(), DEPENDENCY_TIMEOUT_MS);
-      checks.redis = { healthy: true, latencyMs: Date.now() - redisStart };
-    } catch (err) {
-      checks.redis = { healthy: false, latencyMs: Date.now() - redisStart, error: (err as Error).message };
+      const redisHealthy = await withTimeout(checkRedis(), DEPENDENCY_TIMEOUT_MS);
+      checks.redis = {
+        healthy: redisHealthy,
+        latencyMs: Date.now() - redisStart,
+        ...(!redisHealthy ? { error: 'unavailable' } : {}),
+      };
+    } catch {
+      checks.redis = {
+        healthy: false,
+        latencyMs: Date.now() - redisStart,
+        error: 'unavailable',
+      };
     }
 
     // Log DB check with timeout
     const logDbStart = Date.now();
     try {
       const logHealth = await withTimeout(logDB.healthCheck(), DEPENDENCY_TIMEOUT_MS);
-      checks.logDatabase = { healthy: logHealth.healthy, latencyMs: Date.now() - logDbStart };
+      checks.logDatabase = {
+        healthy: logHealth.healthy,
+        latencyMs: Date.now() - logDbStart,
+        ...(!logHealth.healthy && logHealth.failure ? { error: logHealth.failure } : {}),
+      };
     } catch (err) {
-      checks.logDatabase = { healthy: false, latencyMs: Date.now() - logDbStart, error: (err as Error).message };
+      checks.logDatabase = {
+        healthy: false,
+        latencyMs: Date.now() - logDbStart,
+        error: classifyPostgresHealthError(err),
+      };
     }
 
-    const allHealthy = Object.values(checks).every((c) => c.healthy);
+    const allHealthy = Object.entries(checks).every(
+      ([name, check]) => check.healthy || (name === 'redis' && !env.REDIS_REQUIRED),
+    );
 
     if (!allHealthy) {
       healthLogger.warn({ checks }, 'Readiness check failed — one or more dependencies unhealthy');

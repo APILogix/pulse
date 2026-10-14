@@ -74,49 +74,92 @@ export type TriggerType = (typeof TRIGGER_TYPES)[number];
 // ACTION TYPES
 // ═══════════════════════════════════════════════════════════════════════════════
 
+/**
+ * Supported automation action types.
+ *
+ * Every type listed here either performs a real side effect, or fails explicitly
+ * with INTEGRATION_NOT_CONFIGURED when its backing integration is absent.
+ * No action type in this list silently pretends to succeed.
+ *
+ * Nine action types were removed (see docs/automationv2/24-action-inventory-and-decisions.md)
+ * because they had no backing entity in the schema, duplicated another action, or
+ * were unsafe to expose to tenant-authored automation:
+ *   runbook.open, runbook.step.create      -> no runbook entity exists anywhere
+ *   status_page.update                     -> no status-page subsystem exists
+ *   release.guard.warn                     -> duplicate of notification.send
+ *   release.guard.pause                    -> project_releases is append-only; nothing to pause
+ *   retention.archive                      -> platform-level scheduled concern, not per-tenant
+ *   retention.purge_request                -> irreversible data deletion must never be automatable
+ *   quota.throttle_recommend               -> advisory duplicate of quota.notify
+ *   alert.severity.change                  -> conflicts with the alerting decision engine, which
+ *                                             owns severity and only escalates (GREATEST)
+ */
 export const ACTION_TYPES = [
+  // ── Real side effects, backed by existing infrastructure ──
   'notification.send',
-  'incident.create',
-  'incident.assign_owner',
-  'incident.timeline.append',
-  'incident.postmortem.generate_draft',
-  'ticket.github.create',
-  'ticket.jira.create',
-  'pagerduty.trigger',
-  'runbook.open',
-  'runbook.step.create',
-  'status_page.update',
-  'approval.request',
-  'connector.delivery.retry',
-  'alert.severity.change',
-  'alert.silence.create',
-  'ai.summary.generate',
-  'ai.root_cause.generate',
-  'report.export',
-  'rollback.recommend',
-  'release.guard.warn',
-  'release.guard.pause',
   'quota.notify',
-  'quota.throttle_recommend',
-  'retention.archive',
-  'retention.purge_request',
   'security.notify',
   'webhook.call',
+  'pagerduty.trigger',
+  'connector.delivery.retry',
+  'alert.silence.create',
+  'incident.create',
+  'incident.timeline.append',
+  'incident.assign_owner',
+  'approval.request',
+  'rollback.recommend',
   'noop',
+  // ── Require an external integration; fail explicitly when unavailable ──
+  'ai.summary.generate',
+  'ai.root_cause.generate',
+  'incident.postmortem.generate_draft',
+  'report.export',
+  'ticket.github.create',
+  'ticket.jira.create',
 ] as const;
 export type ActionType = (typeof ACTION_TYPES)[number];
+
+/**
+ * Action types that require a configured external integration and have no
+ * in-product implementation. When the integration is not injected these MUST
+ * fail with INTEGRATION_NOT_CONFIGURED rather than reporting success.
+ */
+export const INTEGRATION_DEPENDENT_ACTIONS: ReadonlySet<ActionType> = new Set([
+  'ai.summary.generate',
+  'ai.root_cause.generate',
+  'incident.postmortem.generate_draft',
+  'report.export',
+  'ticket.github.create',
+  'ticket.jira.create',
+]);
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // DANGEROUS ACTIONS (require approval by default)
 // ═══════════════════════════════════════════════════════════════════════════════
 
-export const DANGEROUS_ACTIONS: ReadonlySet<ActionType> = new Set([
-  'release.guard.pause',
-  'retention.purge_request',
-  'quota.throttle_recommend',
-  'status_page.update',
-  'webhook.call', // when external URL is not allowlisted
-]);
+/**
+ * Actions requiring explicit human approval before execution.
+ *
+ * Now empty, and that is a deliberate, narrower-blast-radius design rather than a
+ * relaxation of safety. The four previously-listed destructive actions
+ * (release.guard.pause, retention.purge_request, quota.throttle_recommend,
+ * status_page.update) have been removed from the product entirely, so they can no
+ * longer be requested at all — which is strictly safer than gating them.
+ *
+ * webhook.call was also listed here. It is now implemented as connector-referenced
+ * only: it can target exclusively a `webhook` connector the organization already
+ * created, whose URL is SSRF-validated at creation and again on every send
+ * (connectors/shared/http.ts -> validateWebhookUrl), and whose credentials live
+ * encrypted in connector_credentials, never in workflow config. Because the
+ * destination is pre-approved infrastructure rather than an arbitrary URL supplied
+ * by the rule author, per-run approval added friction without adding safety.
+ *
+ * Approval enforcement itself remains fully wired: any action whose risk resolves
+ * to high/critical still requires approval (see ActionRunnerRegistry.execute), so
+ * adding a genuinely dangerous action here — or marking one high-risk in
+ * automation_actions.risk_level — re-engages the gate immediately.
+ */
+export const DANGEROUS_ACTIONS: ReadonlySet<ActionType> = new Set([]);
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // CONDITION OPERATORS
@@ -336,37 +379,112 @@ export interface AutomationActionHandler {
 // DEPENDENCY INJECTION INTERFACES
 // ═══════════════════════════════════════════════════════════════════════════════
 
+/**
+ * Every integration method receives `idempotencyKey`, the stable per-step key from
+ * buildIdempotencyKey() (which deliberately omits the attempt number).
+ * Implementations MUST forward it to the underlying provider's own dedup mechanism
+ * so a worker crash or queue redelivery cannot produce a duplicate external side
+ * effect. This closes the gap where the key was computed but never actually used.
+ */
+export interface AutomationNotificationTarget {
+  /** Explicit connector to deliver through. Always resolved tenant-scoped. */
+  connectorId?: string | undefined;
+  /** Connector transport to auto-select when no connectorId is given. */
+  connectorType?: string | undefined;
+}
+
 export interface NotificationSender {
   send(params: {
     organizationId: string;
-    channel?: string;
-    message: string;
-    metadata?: Record<string, unknown>;
-  }): Promise<{ sent: boolean; messageId?: string }>;
+    projectId?: string | null | undefined;
+    /** Logical type, e.g. 'automation.notification', 'automation.quota'. */
+    notificationType: string;
+    severity: 'info' | 'warning' | 'critical';
+    title: string;
+    body: string;
+    url?: string | undefined;
+    fields?: Array<{ label: string; value: string }> | undefined;
+    target?: AutomationNotificationTarget | undefined;
+    metadata?: Record<string, unknown> | undefined;
+    /** Forwarded to the provider dedup/idempotency mechanism. */
+    idempotencyKey: string;
+  }): Promise<{
+    sent: boolean;
+    deliveryId: string;
+    connectorId: string;
+    connectorType: string;
+    status: string;
+    /** True when the dispatcher/provider suppressed this as a duplicate. */
+    deduplicated: boolean;
+  }>;
 }
 
 export interface ConnectorRetrier {
   retry(params: {
     organizationId: string;
     deliveryId: string;
-    metadata?: Record<string, unknown>;
-  }): Promise<{ retried: boolean; newDeliveryId?: string }>;
+    idempotencyKey: string;
+    metadata?: Record<string, unknown> | undefined;
+  }): Promise<{ retried: boolean; newDeliveryId?: string | undefined; status: string }>;
 }
 
 export interface AlertSilenceCreator {
   createSilence(params: {
     organizationId: string;
-    matchers: Record<string, string>;
+    /**
+     * Needed because alert_silences.created_by is NOT NULL. The implementation
+     * resolves the workflow's owning user rather than inventing a synthetic actor,
+     * so the silence is attributable to a real person in the audit trail.
+     */
+    workflowId: string;
+    ruleId?: string | undefined;
+    matchers: Record<string, unknown>;
     durationSeconds: number;
     reason: string;
-  }): Promise<{ silenceId: string }>;
+    idempotencyKey: string;
+  }): Promise<{ silenceId: string; startsAt: string; endsAt: string }>;
+}
+
+export interface IncidentManager {
+  createIncident(params: {
+    organizationId: string;
+    projectId?: string | null | undefined;
+    title: string;
+    severity: 'info' | 'warning' | 'critical';
+    service?: string | null | undefined;
+    environment?: string | null | undefined;
+    labels?: Record<string, unknown> | undefined;
+    /** Stable key -> deterministic fingerprint, so retries fold into one incident. */
+    idempotencyKey: string;
+  }): Promise<{ incidentId: string; created: boolean; status: string }>;
+  appendTimelineEvent(params: {
+    organizationId: string;
+    projectId?: string | null | undefined;
+    incidentId: string;
+    kind: string;
+    detail?: Record<string, unknown> | undefined;
+    idempotencyKey: string;
+  }): Promise<{ appended: boolean; incidentId: string }>;
+  assignOwner(params: {
+    organizationId: string;
+    incidentId: string;
+    assigneeUserId: string;
+    idempotencyKey: string;
+  }): Promise<{ assigned: boolean; incidentId: string; assigneeUserId: string }>;
 }
 
 export interface AiSummaryGenerator {
   generateSummary(params: {
     organizationId: string;
+    /**
+     * Needed to resolve the workflow's owning user, who is the accountable
+     * actor for AI entitlement/credit checks — same reasoning as
+     * AlertSilenceCreator.createSilence's workflowId.
+     */
+    workflowId: string;
     context: Record<string, unknown>;
-    type: 'summary' | 'root_cause';
+    type: 'summary' | 'root_cause' | 'postmortem_draft';
+    idempotencyKey: string;
   }): Promise<{ content: string; creditsUsed: number }>;
 }
 
@@ -375,7 +493,20 @@ export interface ReportExporter {
     organizationId: string;
     reportType: string;
     config: Record<string, unknown>;
-  }): Promise<{ reportId: string; url?: string }>;
+    idempotencyKey: string;
+  }): Promise<{ reportId: string; url?: string | undefined }>;
+}
+
+export interface TicketCreator {
+  createTicket(params: {
+    organizationId: string;
+    provider: 'github' | 'jira';
+    title: string;
+    body: string;
+    labels?: string[] | undefined;
+    config: Record<string, unknown>;
+    idempotencyKey: string;
+  }): Promise<{ ticketId: string; url?: string | undefined }>;
 }
 
 export interface ApprovalRequester {
@@ -387,17 +518,30 @@ export interface ApprovalRequester {
     riskLevel: ActionRiskLevel;
     actionType: ActionType;
     payload: Record<string, unknown>;
-  }): Promise<{ approvalId: string }>;
+    idempotencyKey: string;
+  }): Promise<{ approvalId: string; status: string }>;
 }
 
-/** External integrations that can be injected into the action runner */
+/**
+ * Integrations injected into the action runner.
+ *
+ * notificationSender / connectorRetrier / alertSilenceCreator / incidentManager /
+ * approvalRequester are backed by real in-product subsystems and are wired up in
+ * src/modules/automation/integrations.ts.
+ *
+ * aiSummaryGenerator / reportExporter / ticketCreator have no in-product
+ * implementation yet. When absent their actions fail with
+ * INTEGRATION_NOT_CONFIGURED rather than reporting a false success.
+ */
 export interface AutomationIntegrations {
   notificationSender?: NotificationSender;
   connectorRetrier?: ConnectorRetrier;
   alertSilenceCreator?: AlertSilenceCreator;
+  incidentManager?: IncidentManager;
+  approvalRequester?: ApprovalRequester;
   aiSummaryGenerator?: AiSummaryGenerator;
   reportExporter?: ReportExporter;
-  approvalRequester?: ApprovalRequester;
+  ticketCreator?: TicketCreator;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

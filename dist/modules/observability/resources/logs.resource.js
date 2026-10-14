@@ -6,6 +6,14 @@ const logFields = {
     ...commonFields,
     // ── Core Log Fields ──────────────────────────────────────────────────────────
     level: { column: 'level', type: 'enum', enumValues: LOG_LEVELS, filterable: true, projectable: true, label: 'Level' },
+    severity: {
+        column: 'level',
+        selectExpr: 'COALESCE(events_logs.severity::text, events_logs.level)',
+        type: 'string',
+        filterable: true,
+        projectable: true,
+        label: 'Severity / Level',
+    },
     name: { column: 'name', type: 'string', filterable: true, searchable: true, projectable: true, label: 'Name' },
     logger: { column: 'logger', type: 'string', filterable: true, searchable: true, projectable: true, label: 'Original Logger' },
     loggerName: { column: 'logger_name', type: 'string', filterable: true, searchable: true, projectable: true, label: 'Logger Name' },
@@ -41,6 +49,7 @@ export const logsResource = {
     searchAliases: {
         ...commonSearchAliases,
         level: 'level',
+        severity: 'severity',
         logger: 'logger',
         source: 'logSource',
         category: 'logCategory',
@@ -51,15 +60,17 @@ export const logsResource = {
     },
     defaultSort: { field: 'occurredAt', direction: 'desc' },
     defaultProjection: [
-        'id', 'publicId', 'environment', 'occurredAt', 'level', 'name', 'message',
+        'id', 'publicId', 'environment', 'occurredAt', 'level', 'severity', 'name', 'message',
         'logCategory', 'endpoint', 'statusCode', 'durationMs',
         'service', 'traceId', 'requestId',
     ],
     preferredIndexes: [
-        'idx_events_logs_level_time',
-        'idx_events_logs_endpoint_time',
-        'idx_events_logs_category_time',
-        'idx_events_logs_logger_time',
+        'idx_events_logs_org_time',
+        'idx_events_logs_org_env_time',
+        'idx_events_logs_level',
+        'idx_events_logs_endpoint',
+        'idx_events_logs_category',
+        'idx_events_logs_logger',
     ],
     errorPredicate: "level IN ('error','fatal') OR status_code >= 500",
     summary: {

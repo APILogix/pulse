@@ -38,6 +38,8 @@ function pgCode(e: unknown): string | undefined {
   return typeof e === 'object' && e !== null ? (e as { code?: string }).code : undefined;
 }
 
+export const ALERT_SILENCES_COLUMNS = 'id, organization_id, rule_id, created_by, comment, starts_at, ends_at, matchers, is_active, expired_at, created_at, updated_at';
+
 export class SilencesRepository {
   private readonly db: typeof pool;
 
@@ -72,7 +74,7 @@ export class SilencesRepository {
   }): Promise<AlertSilenceRow> {
     const r = await this.db.query<AlertSilenceRow>(
       `INSERT INTO alert_silences (organization_id, rule_id, created_by, comment, starts_at, ends_at, matchers)
-       VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
+       VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING ${ALERT_SILENCES_COLUMNS}`,
       [input.organizationId, input.ruleId, input.createdBy, input.comment, input.startsAt, input.endsAt, JSON.stringify(input.matchers)],
     );
     return r.rows[0]!;
@@ -87,7 +89,7 @@ export class SilencesRepository {
     const countRes = await this.db.query<{ count: string }>(`SELECT COUNT(*)::text AS count FROM alert_silences WHERE ${where}`, params);
     params.push(limit, offset);
     const r = await this.db.query<AlertSilenceRow>(
-      `SELECT * FROM alert_silences WHERE ${where} ORDER BY created_at DESC LIMIT $${params.length - 1} OFFSET $${params.length}`, params,
+      `SELECT ${ALERT_SILENCES_COLUMNS} FROM alert_silences WHERE ${where} ORDER BY created_at DESC LIMIT $${params.length - 1} OFFSET $${params.length}`, params,
     );
     return { data: r.rows, total: Number(countRes.rows[0]?.count ?? 0) };
   }
@@ -104,10 +106,7 @@ export class SilencesRepository {
   /** Active silences applicable to a rule (rule-specific or global) right now. */
   async findActiveSilences(organizationId: string, ruleId: string | null): Promise<AlertSilenceRow[]> {
     const r = await this.db.query<AlertSilenceRow>(
-      `SELECT * FROM alert_silences
-       WHERE organization_id=$1 AND is_active=true
-         AND starts_at <= NOW() AND ends_at > NOW()
-         AND (rule_id IS NULL OR rule_id=$2)`,
+      `SELECT ${ALERT_SILENCES_COLUMNS} FROM alert_silences WHERE organization_id=$1 AND is_active=true AND starts_at <= NOW() AND ends_at > NOW() AND (rule_id IS NULL OR rule_id=$2)`,
       [organizationId, ruleId],
     );
     return r.rows;

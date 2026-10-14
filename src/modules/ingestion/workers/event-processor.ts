@@ -13,7 +13,7 @@
  *      same identity and are dropped by the (project_id, event_id) unique
  *      indexes. normalizeEvent produces `eventId` (optional, all types) and
  *      the TelemetryWriter reads exactly that field, so we write it there.
- *   3. PERSIST via TelemetryWriter.writeBatchDetailed() — idempotent inserts
+ *   3. PERSIST via TelemetryWriter.writeBatchDetailedInTransaction() — idempotent inserts
  *      that report how many rows were ACTUALLY written.
  *   4. ERROR GROUPING (errors only, and only for rows confirmed inserted):
  *      upsert analytics_error_groups keyed (organization_id, project_id,
@@ -25,14 +25,16 @@
  *   6. METRICS: per-type processing latency and e2e latency
  *      (now − metadata.receivedAt).
  */
-import { createHash, randomUUID } from 'crypto';
+import { createHash } from 'crypto';
+import { v7 as uuidv7 } from 'uuid';
 import type { Pool, PoolClient } from 'pg';
 import type { Logger } from 'pino';
 import { env } from '../../../config/env.js';
-import { pgboss } from '../../../lib/pgboss.js';
+import { pgmq } from '../../../lib/pgmq.js';
 import {
   normalizeEvent,
   normalizeSdkEnvironment,
+  parseSafeEpochMs,
   resolveTimestamp,
   type NormalizedEvent,
 } from '../pipeline/event-normalizer.js';
@@ -45,7 +47,14 @@ import {
   type PerTypeWriteStats,
   type ScopedEvent,
 } from '../pipeline/telemetry-writer.js';
+import { WriteAdmissionController, resolveWritePermits } from '../pipeline/write-admission.js';
+import {
+  INGESTION_JOB_ABORTED,
+  IngestionJobAbortedError,
+  throwIfIngestionAborted,
+} from '../pipeline/ingestion-abort.js';
 import { UsageCounter } from '../usage/usage-counter.js';
+import { CreditWeightService } from '../usage/credit-weights.js';
 import {
   INGEST_DLQ_INTAKE_QUEUE,
   type DlqIntakePayload,
@@ -56,6 +65,8 @@ import { ErrorIngestionService } from '../../errors/services/error-ingestion.ser
 import { ErrorGroupingService } from '../../errors/services/error-grouping.service.js';
 import { ErrorGroupRepository } from '../../errors/repositories/error-group.repository.js';
 import { ErrorRepository } from '../../errors/repositories/error.repository.js';
+import type { GroupMutationResult } from '../../errors/repositories/error-group.repository.js';
+import type { ErrorGroupEventRecord } from '../../errors/models/error-group.model.js';
 
 /** Deterministic JSON: object keys sorted recursively, undefined dropped. */
 export function stableStringify(value: unknown): string {
@@ -83,10 +94,10 @@ function deterministicEventId(
   type: string,
   event: NormalizedEvent,
 ): string {
-  return createHash('sha256')
+  const hash = createHash('sha256')
     .update(`${projectId}:${environment}:${type}:${stableStringify(event)}`)
-    .digest('hex')
-    .slice(0, 32);
+    .digest('hex');
+  return `${hash.slice(0, 8)}-${hash.slice(8, 12)}-4${hash.slice(13, 16)}-a${hash.slice(17, 20)}-${hash.slice(20, 32)}`;
 }
 
 function str(v: unknown, max = 255): string | null {
@@ -99,11 +110,46 @@ function elapsedSince(start: number): number {
 
 type QueryCallback = (...args: unknown[]) => void;
 
-function instrumentClientQueries(client: PoolClient, onQueryComplete: (durationMs: number) => void): () => void {
+function queryText(args: unknown[]): string | null {
+  const first = args[0];
+  if (typeof first === 'string') return first;
+  if (first && typeof first === 'object') {
+    const text = (first as { text?: unknown }).text;
+    return typeof text === 'string' ? text : null;
+  }
+  return null;
+}
+
+function instrumentClientQueries(
+  client: PoolClient,
+  onQueryComplete: (durationMs: number) => void,
+  signal?: AbortSignal,
+  onActiveChange?: (active: boolean) => void,
+): () => void {
   const originalQuery = client.query;
   client.query = ((...args: unknown[]) => {
+    const sql = queryText(args);
+    // Cleanup must remain possible after abort. Every other new statement is
+    // rejected before it can extend an expired transaction.
+    if (signal?.aborted && !/^\s*ROLLBACK\b/i.test(sql ?? '')) {
+      const err = new IngestionJobAbortedError('database query', signal.reason);
+      const lastArg = args[args.length - 1];
+      if (typeof lastArg === 'function') {
+        queueMicrotask(() => (lastArg as QueryCallback)(err));
+        return undefined;
+      }
+      return Promise.reject(err);
+    }
+
     const queryStartedAt = Date.now();
-    const record = (): void => onQueryComplete(elapsedSince(queryStartedAt));
+    let finished = false;
+    onActiveChange?.(true);
+    const record = (): void => {
+      if (finished) return;
+      finished = true;
+      onActiveChange?.(false);
+      onQueryComplete(elapsedSince(queryStartedAt));
+    };
     const lastArg = args[args.length - 1];
 
     if (typeof lastArg === 'function') {
@@ -146,6 +192,97 @@ function instrumentClientQueries(client: PoolClient, onQueryComplete: (durationM
   };
 }
 
+/**
+ * Race pool checkout against pg-boss expiry without leaking a connection if
+ * the pool resolves after the abort wins.
+ */
+async function connectWithAbort(pool: Pool, signal?: AbortSignal): Promise<PoolClient> {
+  throwIfIngestionAborted(signal, 'database connection wait');
+  const pending = pool.connect();
+  if (!signal) return pending;
+
+  let onAbort: (() => void) | undefined;
+  const aborted = new Promise<never>((_resolve, reject) => {
+    onAbort = () => reject(new IngestionJobAbortedError('database connection wait', signal.reason));
+    signal.addEventListener('abort', onAbort, { once: true });
+    if (signal.aborted) onAbort();
+  });
+
+  try {
+    return await Promise.race([pending, aborted]);
+  } catch (err) {
+    if (signal.aborted) {
+      // pool.connect() itself has no AbortSignal API. Release a late checkout as
+      // soon as it arrives so an expired waiter cannot permanently consume it.
+      void pending.then((client) => client.release()).catch(() => undefined);
+    }
+    throw err;
+  } finally {
+    if (onAbort) signal.removeEventListener('abort', onAbort);
+  }
+}
+
+interface PostgresAbortGuard {
+  dispose: () => Promise<void>;
+}
+
+/**
+ * Cancel the currently executing statement on this checked-out backend.
+ *
+ * The target client remains checked out until `dispose()` and rollback finish,
+ * so its PID cannot be reassigned to unrelated application work while the
+ * cancellation query is in flight. Admission reserves pool headroom for this
+ * control query. If cancellation itself fails, statement_timeout remains the
+ * final bound and the query wrapper refuses every subsequent statement except
+ * ROLLBACK.
+ */
+function installPostgresAbortGuard(
+  pool: Pool,
+  client: PoolClient,
+  signal: AbortSignal | undefined,
+  isQueryActive: () => boolean,
+  log: Logger,
+): PostgresAbortGuard {
+  let cancellation: Promise<void> | null = null;
+  const backendPid = (client as unknown as { processID?: unknown }).processID;
+
+  const onAbort = (): void => {
+    if (!isQueryActive() || cancellation) return;
+    if (typeof backendPid !== 'number' || !Number.isInteger(backendPid) || backendPid <= 0) {
+      log.warn({ backendPid: backendPid ?? null }, 'cannot cancel aborted ingestion query: backend pid unavailable');
+      return;
+    }
+    cancellation = pool
+      .query<{ cancelled: boolean }>(
+        'SELECT pg_cancel_backend($1)::boolean AS cancelled',
+        [backendPid],
+      )
+      .then((result) => {
+        if (result.rows[0]?.cancelled !== true) {
+          log.warn({ backendPid }, 'PostgreSQL reported ingestion query was not cancelled');
+        }
+      })
+      .catch((err) => {
+        // Do not release the target client early. Its SET LOCAL
+        // statement_timeout still bounds the active statement, after which the
+        // abort-aware query wrapper forces rollback.
+        log.warn({ err, backendPid }, 'failed to cancel aborted ingestion query');
+      });
+  };
+
+  if (signal) {
+    signal.addEventListener('abort', onAbort, { once: true });
+    if (signal.aborted) onAbort();
+  }
+
+  return {
+    dispose: async () => {
+      if (signal) signal.removeEventListener('abort', onAbort);
+      if (cancellation) await cancellation;
+    },
+  };
+}
+
 function serializedBytes(value: unknown): number {
   try {
     return Buffer.byteLength(JSON.stringify(value));
@@ -160,16 +297,25 @@ function errorCode(err: unknown): string | null {
   return typeof value === 'string' && value.length > 0 ? value : null;
 }
 
+/** Raw SDK event id off a scoped event, matching what the error record stored. */
+function scopedEventId(scoped: ScopedEvent): string {
+  const value = (scoped.event as { eventId?: unknown }).eventId;
+  return typeof value === 'string' ? value : '';
+}
+
 function ingestionFailureClass(err: unknown): string {
   const code = errorCode(err);
+  if (code === INGESTION_JOB_ABORTED) return 'job_aborted';
   if (code === '55P03') return 'db_lock_timeout';
   if (code === '57014') return 'db_statement_timeout';
+  if (code === '25P03') return 'db_idle_transaction_timeout';
   if (code === '53300' || code === '08000' || code === '08003' || code === '08006') return 'db_connection';
   if (code && code.startsWith('23')) return 'idempotency';
 
   const message = err instanceof Error ? err.message.toLowerCase() : String(err).toLowerCase();
   if (message.includes('lock timeout') || message.includes('canceling statement due to lock timeout')) return 'db_lock_timeout';
   if (message.includes('statement timeout') || message.includes('canceling statement due to statement timeout')) return 'db_statement_timeout';
+  if (message.includes('idle-in-transaction timeout') || message.includes('idle_in_transaction_session_timeout')) return 'db_idle_transaction_timeout';
   if (message.includes('timeout') || message.includes('connection') || message.includes('econn') || message.includes('terminating connection')) return 'db_connection';
   if (message.includes('duplicate') || message.includes('conflict')) return 'idempotency';
   return 'unknown';
@@ -178,14 +324,43 @@ function ingestionFailureClass(err: unknown): string {
 export class EventProcessor {
   private readonly writer: TelemetryWriter;
   private readonly usage: UsageCounter;
+  private readonly creditWeights: CreditWeightService;
+  private readonly errorGroupingService: ErrorGroupingService;
   private readonly errorIngestionService: ErrorIngestionService;
+  /**
+   * Bounds concurrent ingest transactions to the telemetry pool's real capacity.
+   *
+   * Without this, every pg-boss job handler races on `pool.connect()`. With the
+   * per-type worker fan-out (10 queues x localConcurrency x batchSize) demand
+   * exceeded the pool by more than an order of magnitude, so handlers spent
+   * their time in `pg`'s waiter list and the ones that exceeded
+   * `connectionTimeoutMillis` failed with a connection error — turning overload
+   * into retries and dead letters instead of just slower progress.
+   */
+  private readonly admission: WriteAdmissionController;
 
   constructor(
     private readonly pool: Pool,
     private readonly metrics: WorkerMetrics,
     private readonly log: Logger,
     usagePool: Pool = pool,
+    admission?: WriteAdmissionController,
   ) {
+    // Derive permits from the pool actually being written to, so the invariant
+    // "permits <= pool capacity" holds regardless of how the pool was built.
+    const poolMax = (pool as unknown as { options?: { max?: number } }).options?.max;
+    const permits = resolveWritePermits(
+      env.INGESTION_WRITE_CONCURRENCY,
+      typeof poolMax === 'number' && poolMax > 0 ? poolMax : env.INGESTION_WRITE_POOL_SIZE,
+    );
+    this.admission = admission ?? new WriteAdmissionController(permits);
+    // Optional-called: unit tests inject partial WorkerMetrics stubs, and metrics
+    // reporting must never be able to fail worker construction.
+    this.metrics.setWritePermits?.(permits);
+    log.info(
+      { writePermits: permits, telemetryPoolMax: poolMax ?? null, configured: env.INGESTION_WRITE_CONCURRENCY },
+      'ingest write admission configured',
+    );
     this.writer = new TelemetryWriter(pool, log);
     // The usage-rollup cron job is the ONLY rollup driver (driveRollup: false)
     // — this instance just drains tier-1 memory into usage_counter_staging.
@@ -194,15 +369,24 @@ export class EventProcessor {
       bufferLimit: env.INGESTION_USAGE_BUFFER_LIMIT,
       driveRollup: false,
     });
+    this.creditWeights = new CreditWeightService(usagePool, log);
+    this.creditWeights.start();
     
     const errorGroupRepo = new ErrorGroupRepository(pool);
     const errorRepo = new ErrorRepository(pool);
-    const errorGroupingService = new ErrorGroupingService(errorGroupRepo);
-    this.errorIngestionService = new ErrorIngestionService(pool, errorGroupingService, errorRepo, this.metrics);
+    this.errorGroupingService = new ErrorGroupingService(errorGroupRepo);
+    this.errorIngestionService = new ErrorIngestionService(
+      pool,
+      this.errorGroupingService,
+      errorRepo,
+      this.metrics,
+      log,
+    );
   }
 
   start(): void {
     this.usage.start();
+    void this.creditWeights.loadWeights().catch(() => {});
   }
 
   async stop(): Promise<void> {
@@ -210,7 +394,12 @@ export class EventProcessor {
   }
 
   /** Process one ingest job payload. Throws to fail the job (pg-boss retry). */
-  async process(payload: IngestJobPayload, queue: string): Promise<EventProcessorResult> {
+  async process(
+    payload: IngestJobPayload,
+    queue: string,
+    signal?: AbortSignal,
+  ): Promise<EventProcessorResult> {
+    throwIfIngestionAborted(signal, 'event processing');
     const startedAt = Date.now();
     const type = payload?.eventType;
     const projectId = payload?.projectId ?? '';
@@ -219,11 +408,19 @@ export class EventProcessor {
     const rawEvents = Array.isArray(payload?.events) ? payload.events : [];
     const environment = normalizeSdkEnvironment(payload?.metadata?.environment);
     if (!environment) throw new Error('INVALID_ENVIRONMENT');
-    const receivedAt = Date.parse(payload?.metadata?.receivedAt ?? '');
-    const queueWaitMs = Number.isFinite(receivedAt) ? Math.max(0, startedAt - receivedAt) : null;
+    const receivedAtMs = parseSafeEpochMs(payload?.metadata?.receivedAt);
+    if (receivedAtMs === null || receivedAtMs <= 0) {
+      // A stable receipt clock is part of the durable queue contract. Falling
+      // back to Date.now() here would make the same pg-boss payload acquire a
+      // different occurred_at (and potentially event id) on every retry.
+      throw new Error('INVALID_RECEIVED_AT');
+    }
+    const queueWaitMs = Math.max(0, startedAt - receivedAtMs);
     const timings: Record<string, number> = {};
     const serializationStartedAt = Date.now();
-    const batchBytes = serializedBytes(rawEvents);
+    const batchBytes = typeof payload?.metadata?.batchBytes === 'number'
+      ? payload.metadata.batchBytes
+      : serializedBytes(rawEvents);
     timings.serializationMs = elapsedSince(serializationStartedAt);
     this.log.debug(
       {
@@ -241,8 +438,9 @@ export class EventProcessor {
     const scoped: ScopedEvent[] = [];
     const rejected: Array<{ event: unknown; detail: string }> = [];
     for (const raw of rawEvents) {
+      throwIfIngestionAborted(signal, 'event normalization');
       const normalizationStartedAt = Date.now();
-      const r = normalizeEvent(raw);
+      const r = normalizeEvent(raw, { nowMs: receivedAtMs });
       normalizationMs += elapsedSince(normalizationStartedAt);
       if (!r.ok) {
         rejected.push({ event: raw, detail: `${r.reason}: ${r.detail}` });
@@ -258,6 +456,10 @@ export class EventProcessor {
           event,
         );
       }
+      const occurredAtMs = resolveTimestamp(event, {
+        nowMs: receivedAtMs,
+        fallbackMs: receivedAtMs,
+      });
       scoped.push({
         projectId,
         projectSlug: payload.metadata?.projectSlug,
@@ -267,198 +469,203 @@ export class EventProcessor {
         orgName: payload.metadata?.orgName,
         environment,
         apiKeyName,
+        occurredAtMs,
         event,
       });
     }
-    timings.normalizationMs = normalizationMs;
     timings.validationMs = elapsedSince(validationStartedAt);
+    timings.normalizationMs = normalizationMs;
 
-    // Route validation rejects to the DLQ intake queue (one message per job).
-    // If this send throws, the job fails and retries — rejects are never lost.
+    // Route rejects to the DLQ intake queue asynchronously (fire-and-forget).
     if (rejected.length > 0) {
-      const dlqStartedAt = Date.now();
-      const dlq: DlqIntakePayload = {
+      const dlqPayload: DlqIntakePayload = {
         sourceQueue: queue,
+        eventType: type ?? 'unknown',
         organizationId: orgId,
         projectId,
         environment,
-        eventType: type ?? 'unknown',
-        payload: rejected,
         failedAt: new Date().toISOString(),
-        error: `validation_failed: ${rejected.length} event(s) rejected; first: ${rejected[0]?.detail ?? 'unknown'}`,
+        error: 'validation',
+        payload: rejected,
       };
-      await pgboss.send(INGEST_DLQ_INTAKE_QUEUE, dlq, {} as never);
-      timings.dlqEnqueueMs = elapsedSince(dlqStartedAt);
+      pgmq.send(INGEST_DLQ_INTAKE_QUEUE, dlqPayload).catch((err: unknown) => {
+        this.log.error({ err, queue, count: rejected.length }, 'failed to enqueue rejected events to DLQ');
+      });
     }
 
-    // 3) Persist all writes for this job through one checked-out client and one transaction.
     let result: DetailedWriteResult = {
-      totalInserted: 0,
       totalReceived: rawEvents.length,
+      totalInserted: 0,
       perType: {},
       insertedErrors: [],
-      outboxInserted: 0,
     };
-    let errorDomainEvents: Parameters<ErrorIngestionService['publishBatchDomainEvents']>[0] = [];
     let dbQueries = 0;
     let dbQueryMs = 0;
 
     if (scoped.length > 0) {
-      const dbConnectionStartedAt = Date.now();
-      const client = await this.pool.connect();
-      timings.dbConnectionWaitMs = elapsedSince(dbConnectionStartedAt);
-      const restoreQuery = instrumentClientQueries(client, (durationMs) => {
-        dbQueries += 1;
-        dbQueryMs += durationMs;
-        this.metrics.recordDbQueryDuration(type ?? 'unknown', durationMs);
-      });
-      try {
-        const transactionStartedAt = Date.now();
-        const beginStartedAt = Date.now();
-        await client.query('BEGIN');
-        await applyIngestionTransactionSettings(client);
-        timings.beginMs = elapsedSince(beginStartedAt);
-
-        if (type === 'error') {
-          const errorPrepareStartedAt = Date.now();
-          const errorBatch = scoped.map(s => {
-            const e = s.event as any;
-            const errorName = errorNameOf(s.event);
-            const fingerprint = errorFingerprint(s.event, errorName);
-            const req = (e.context?.request as any) || e.context || {};
-            return {
-              groupParams: {
-                organizationId: s.orgId as string,
-                projectId: s.projectId,
-                fingerprint,
-                fingerprintVersion: 2,
-                eventId: e.eventId,
-                severity: e.level || e.severity || 'error',
-                message: e.message,
-                errorName,
-                ...(typeof e.release === 'string' ? { release: e.release } : {}),
-                ...(typeof e.sdk?.version === 'string' ? { sdkVersion: e.sdk.version } : {}),
-                ...(typeof e.traceId === 'string' ? { traceId: e.traceId } : {}),
-                ...(typeof e.requestId === 'string' ? { requestId: e.requestId } : {}),
-                environment: s.environment,
-                service: typeof e.service === 'string' ? e.service : undefined,
-                occurredAt: new Date(resolveTimestamp(e)),
-              },
-              eventRecord: {
-                id: typeof e.id === 'string' ? e.id : randomUUID(),
-                organization_id: s.orgId as string,
-                project_id: s.projectId,
-                api_key_name: s.apiKeyName ?? '',
-                environment: s.environment,
-                event_id: e.eventId,
-                request_id: e.requestId ?? null,
-                trace_id: e.traceId ?? null,
-                span_id: e.spanId ?? null,
-                parent_span_id: e.parentSpanId ?? null,
-                session_id: e.sessionId ?? null,
-                user_id: e.userId ?? e.context?.userId ?? e.user?.id ?? null,
-                fingerprint,
-                fingerprint_version: 2,
-                message: e.message || errorName,
-                error_name: errorName,
-                severity: e.level || e.severity || 'error',
-                mechanism: e.mechanism ?? null,
-                handled: typeof e.handled === 'boolean' ? e.handled : null,
-                method: e.method ?? req.method ?? null,
-                route: e.route ?? req.route ?? null,
-                url: e.url ?? req.url ?? null,
-                status_code: typeof e.statusCode === 'number' ? e.statusCode : (typeof req.statusCode === 'number' ? req.statusCode : null),
-                status_text: e.statusText ?? req.statusText ?? null,
-                stack_raw: e.stack ? JSON.stringify(e.stack) : null,
-                breadcrumbs: e.breadcrumbs ? JSON.stringify(e.breadcrumbs) : null,
-                user_agent: req.headers?.['user-agent'] ?? null,
-                client_ip: req.headers?.['x-forwarded-for'] ?? req.ip ?? null,
-                service: typeof e.service === 'string' ? e.service : (typeof req.service === 'string' ? req.service : null),
-                release: e.release ?? e.metadata?.release ?? null,
-                server_name: e.serverName ?? e.metadata?.serverName ?? null,
-                application_name: e.applicationName ?? e.metadata?.applicationName ?? null,
-                application_version: e.applicationVersion ?? e.metadata?.applicationVersion ?? null,
-                tags: e.tags ?? {},
-                extra: e.extra ?? {},
-                metadata: e.metadata ?? {},
-                ai_response: e.aiResponse ?? null,
-                occurred_at: new Date(resolveTimestamp(e)),
-                payload: e
-              }
-            };
-          });
-          timings.errorPrepareMs = elapsedSince(errorPrepareStartedAt);
-
-          const insertStartedAt = Date.now();
-          const errorResult = await this.errorIngestionService.ingestBatch(client, errorBatch);
-          timings.insertMs = elapsedSince(insertStartedAt);
-          result.totalInserted = errorResult.inserted;
-          result.totalReceived = errorBatch.length;
-          result.perType = {
-            error: {
-              received: errorBatch.length,
-              inserted: errorResult.inserted,
-              durationMs: timings.insertMs,
-            },
-          };
-          errorDomainEvents = errorResult.domainEvents;
-          if (result.totalInserted > 0) {
-            const outboxStartedAt = Date.now();
-            result.outboxInserted = await this.writer.appendTelemetryOutbox(scoped, client);
-            timings.outboxMs = elapsedSince(outboxStartedAt);
-          }
-        } else {
-          const insertStartedAt = Date.now();
-          result = await this.writer.writeBatchDetailedInTransaction(client, scoped);
-          timings.insertMs = elapsedSince(insertStartedAt);
-          if (result.totalInserted > 0) {
-            const outboxStartedAt = Date.now();
-            result.outboxInserted = await this.writer.appendTelemetryOutbox(scoped, client);
-            timings.outboxMs = elapsedSince(outboxStartedAt);
-          }
-        }
-
-        const commitStartedAt = Date.now();
-        await client.query('COMMIT');
-        timings.commitMs = elapsedSince(commitStartedAt);
-        timings.transactionMs = elapsedSince(transactionStartedAt);
-        if (errorDomainEvents.length > 0) {
-          const domainEventStartedAt = Date.now();
-          this.errorIngestionService.publishBatchDomainEvents(errorDomainEvents);
-          timings.domainEventMs = elapsedSince(domainEventStartedAt);
-        }
-      } catch (err) {
-        const rollbackStartedAt = Date.now();
-        await client.query('ROLLBACK').catch(() => undefined);
-        timings.rollbackMs = elapsedSince(rollbackStartedAt);
-        timings.totalProcessingMs = elapsedSince(startedAt);
-        this.log.error(
-          {
-            err,
-            phase: 'ingestion_profile_failed',
-            failureClass: ingestionFailureClass(err),
-            sqlState: errorCode(err),
-            queue,
-            eventType: type ?? 'unknown',
-            batchId: payload?.metadata?.batchId,
-            projectId,
-            environment,
-            received: rawEvents.length,
-            batchBytes,
-            validated: scoped.length,
-            rejected: rejected.length,
-            dbQueries,
-            dbQueryMs,
-            queueWaitMs,
-            ...timings,
+      throwIfIngestionAborted(signal, 'write admission wait');
+      await this.admission.run(async () => {
+        throwIfIngestionAborted(signal, 'database connection wait');
+        const connectStartedAt = Date.now();
+        const client = await connectWithAbort(this.pool, signal);
+        timings.dbConnectMs = elapsedSince(connectStartedAt);
+        let isQueryActive = false;
+        const restoreQuery = instrumentClientQueries(
+          client,
+          (durationMs) => {
+            dbQueries += 1;
+            dbQueryMs += durationMs;
+            this.metrics.recordDbQueryDuration(type ?? 'unknown', durationMs);
           },
-          'ingestion batch transaction failed',
+          signal,
+          (active) => {
+            isQueryActive = active;
+          },
         );
-        throw err;
-      } finally {
-        restoreQuery();
-        client.release();
-      }
+        const abortGuard = installPostgresAbortGuard(
+          this.pool,
+          client,
+          signal,
+          () => isQueryActive,
+          this.log,
+        );
+
+        let transactionOpen = false;
+        const transactionStartedAt = Date.now();
+        const errorDomainEvents: Array<{ groupResult: GroupMutationResult; eventRecord: Omit<ErrorGroupEventRecord, 'error_group_id'> }> = [];
+        try {
+          await client.query('BEGIN');
+          transactionOpen = true;
+          await applyIngestionTransactionSettings(client);
+
+          throwIfIngestionAborted(signal, 'telemetry persistence');
+          const writeStartedAt = Date.now();
+          result = await this.writer.writeBatchDetailedInTransaction(client, scoped);
+          timings.writeBatchMs = elapsedSince(writeStartedAt);
+
+          if (result.insertedErrors && result.insertedErrors.length > 0) {
+            const errorIngestStartedAt = Date.now();
+            const errorBatch = result.insertedErrors.map((scopedErr) => {
+              const ev = scopedErr.event;
+              const errName = errorNameOf(ev);
+              const fp = errorFingerprint(ev);
+              const occurredAt = new Date(resolveTimestamp(ev, { nowMs: receivedAtMs, fallbackMs: scopedErr.occurredAtMs ?? receivedAtMs }));
+              const eventId = scopedEventId(scopedErr);
+              const severity = str(ev.severity, 50) ?? 'error';
+              return {
+                groupParams: {
+                  organizationId: scopedErr.orgId ?? '',
+                  projectId: scopedErr.projectId,
+                  eventId,
+                  severity,
+                  fingerprint: fp,
+                  errorName: errName,
+                  message: str(ev.message, 1000) ?? errName,
+                  occurredAt,
+                  environment: scopedErr.environment,
+                  metadata: {
+                    type: str(ev.type, 100),
+                    handled: typeof ev.handled === 'boolean' ? ev.handled : undefined,
+                  },
+                },
+                eventRecord: {
+                  id: uuidv7(),
+                  event_id: eventId,
+                  project_id: scopedErr.projectId,
+                  organization_id: scopedErr.orgId ?? '',
+                  fingerprint: fp,
+                  error_name: errName,
+                  message: str(ev.message, 1000) ?? errName,
+                  stack_frames: ev.stack ?? [],
+                  type: str(ev.type, 100) ?? null,
+                  handled: typeof ev.handled === 'boolean' ? ev.handled : null,
+                  severity,
+                  environment: scopedErr.environment,
+                  occurred_at: occurredAt,
+                  payload: ev,
+                  user_id: str(ev.userId, 255) ?? null,
+                  session_id: str(ev.sessionId, 255) ?? null,
+                  request_id: str(ev.requestId, 255) ?? null,
+                  url: str(ev.url, 2048) ?? null,
+                  metadata: typeof ev.metadata === 'object' && ev.metadata !== null ? ev.metadata : {},
+                },
+              };
+            });
+            const errorResult = await this.errorIngestionService.ingestBatch(client, errorBatch, true);
+            errorDomainEvents.push(...errorResult.domainEvents);
+            timings.errorIngestionMs = elapsedSince(errorIngestStartedAt);
+          }
+
+          if (result.totalInserted > 0) {
+            throwIfIngestionAborted(signal, 'outbox persistence');
+            const outboxStartedAt = Date.now();
+            result.outboxInserted = await this.writer.appendTelemetryOutbox(scoped, client);
+            timings.outboxMs = elapsedSince(outboxStartedAt);
+          }
+
+          // ACK remains downstream of this durable boundary. Checking immediately
+          // before submission ensures an abort cannot interleave in JavaScript;
+          // an abort while COMMIT is active is handled by pg_cancel_backend.
+          throwIfIngestionAborted(signal, 'transaction commit');
+          const commitStartedAt = Date.now();
+          await client.query('COMMIT');
+          transactionOpen = false;
+          timings.commitMs = elapsedSince(commitStartedAt);
+          timings.transactionMs = elapsedSince(transactionStartedAt);
+
+          if (errorDomainEvents.length > 0) {
+            const domainEventStartedAt = Date.now();
+            this.errorIngestionService.publishBatchDomainEvents(errorDomainEvents);
+            timings.domainEventMs = elapsedSince(domainEventStartedAt);
+          }
+        } catch (err) {
+          // Keep the target client checked out until its cancellation request has
+          // completed, then rollback on that same connection. This prevents a
+          // late cancel from hitting an unrelated future pool borrower.
+          await abortGuard.dispose();
+          const rollbackStartedAt = Date.now();
+          if (transactionOpen) {
+            await client.query('ROLLBACK').catch(() => undefined);
+            transactionOpen = false;
+          }
+          timings.rollbackMs = elapsedSince(rollbackStartedAt);
+          timings.totalProcessingMs = elapsedSince(startedAt);
+          const failure = signal?.aborted
+            ? new IngestionJobAbortedError('database transaction', err)
+            : err;
+          this.log.error(
+            {
+              err: failure,
+              phase: 'ingestion_profile_failed',
+              failureClass: ingestionFailureClass(failure),
+              sqlState: errorCode(err),
+              queue,
+              eventType: type ?? 'unknown',
+              batchId: payload?.metadata?.batchId,
+              projectId,
+              environment,
+              received: rawEvents.length,
+              batchBytes,
+              validated: scoped.length,
+              rejected: rejected.length,
+              dbQueries,
+              dbQueryMs,
+              queueWaitMs,
+              ...timings,
+            },
+            'ingestion batch transaction failed',
+          );
+          throw failure;
+        } finally {
+          await abortGuard.dispose();
+          restoreQuery();
+          client.release();
+        }
+      }, (waitedMs) => {
+        timings.writeAdmissionWaitMs = waitedMs;
+        const { inFlight, queued } = this.admission.stats();
+        this.metrics.setWriteAdmission?.(inFlight, queued);
+      }, signal);
     }
 
     if (result.totalInserted > 0) {
@@ -482,8 +689,16 @@ export class EventProcessor {
     // 5) Usage accounting (inserted rows only — duplicates are never billed).
     if (result.totalInserted > 0 && orgId && projectId) {
       const usageStartedAt = Date.now();
-      this.usage.increment(projectId, orgId, `billing:events:${type}`, result.totalInserted);
-      this.usage.increment(projectId, orgId, 'events', result.totalInserted, {
+      const weight = this.creditWeights.getWeightSync(type ?? 'unknown');
+      const weightedCredits = Math.round(result.totalInserted * weight * 10000) / 10000;
+      const rawCount = result.totalInserted;
+
+      // Weighted billable credits increment
+      this.usage.increment(projectId, orgId, `billing:events:${type}`, weightedCredits);
+      // Unweighted raw count increment
+      this.usage.increment(projectId, orgId, `billing:raw:${type}`, rawCount);
+      // Aggregate project usage
+      this.usage.increment(projectId, orgId, 'events', weightedCredits, {
         apiKeyId: payload.metadata.apiKeyId || null,
         eventType: type ?? 'all',
       });
@@ -492,7 +707,7 @@ export class EventProcessor {
 
     // 6) Metrics.
     const duplicateCount = Math.max(0, result.totalReceived - result.totalInserted);
-    const e2eMs = Number.isFinite(receivedAt) ? Math.max(0, Date.now() - receivedAt) : null;
+    const e2eMs = Math.max(0, Date.now() - receivedAtMs);
     timings.totalProcessingMs = elapsedSince(startedAt);
     if (queueWaitMs != null) this.metrics.recordStage('queue_wait', type ?? 'unknown', queueWaitMs);
     for (const [stage, ms] of Object.entries(timings)) {

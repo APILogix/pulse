@@ -5,7 +5,7 @@ import type { FastifyInstance } from 'fastify';
  * Exposes Kubernetes-standard probe endpoints:
  * - /health  — shallow liveness (process is running)
  * - /live    — alias for liveness (always 200 if process is up)
- * - /ready   — deep readiness (checks DB, Redis, Log DB)
+ * - /ready   — deep readiness (required DBs, plus Redis when REDIS_REQUIRED=true)
  * - /metrics — Prometheus metrics (registered via metrics plugin)
  *
  * Wrapped in fastify-plugin so these routes are available at the root scope.

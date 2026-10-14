@@ -61,27 +61,64 @@ describe('Phase 2 Behavioral Hardening', () => {
     service = new AutomationService(repo, audit, createMockRunner());
   });
 
-  describe('webhook.call server policy', () => {
-    it('rejects webhook.call without approval even with valid HTTPS URL', async () => {
+  /**
+   * POLICY CHANGE: webhook.call is now connector-referenced rather than
+   * inline-URL-with-approval.
+   *
+   * The old policy required per-run human approval AND SSRF-checked a `targetUrl`
+   * stored in the workflow definition. That was simultaneously unusable (a human
+   * had to approve every single webhook) and weaker than it appeared, because the
+   * destination and any embedded credentials lived in workflow config.
+   *
+   * The new policy refuses inline URLs outright and requires a pre-existing webhook
+   * connector, so SSRF validation runs inside the connectors subsystem on every
+   * send (connectors/shared/http.ts -> validateWebhookUrl) and secrets stay in
+   * encrypted connector_credentials. Approval is no longer needed because the
+   * destination is pre-approved infrastructure, not author-supplied input.
+   */
+  describe('webhook.call server policy (connector-scoped)', () => {
+    const baseInput = {
+      name: 'Test', workflowType: 'custom' as const, scope: 'organization' as const,
+      trigger: { triggerKind: 'event', triggerType: 'manual.run', sourceModule: 'automation', sourceEvent: 'manual.run', timezone: 'UTC', config: {} },
+      conditions: [],
+      tags: [], metadata: {},
+    };
+
+    it('rejects an inline targetUrl, even an HTTPS one', async () => {
       const input = {
-        name: 'Test', workflowType: 'custom' as const, scope: 'organization' as const,
-        trigger: { triggerKind: 'event', triggerType: 'manual.run', sourceModule: 'automation', sourceEvent: 'manual.run', timezone: 'UTC', config: {} },
-        conditions: [],
+        ...baseInput,
         actions: [{ actionKey: 'call', actionType: 'webhook.call', riskLevel: 'medium', requiresApproval: false, config: { targetUrl: 'https://api.example.com/hook' } }],
-        tags: [], metadata: {},
       };
-      await expect(service.createWorkflow(ORG, USER, input, META)).rejects.toThrow('always requires approval');
+      await expect(service.createWorkflow(ORG, USER, input, META))
+        .rejects.toThrow('does not accept an inline URL');
     });
 
-    it('rejects webhook.call with SSRF-unsafe URL even when approval set', async () => {
+    it('rejects an inline SSRF-unsafe URL regardless of approval', async () => {
       const input = {
-        name: 'Test', workflowType: 'custom' as const, scope: 'organization' as const,
-        trigger: { triggerKind: 'event', triggerType: 'manual.run', sourceModule: 'automation', sourceEvent: 'manual.run', timezone: 'UTC', config: {} },
-        conditions: [],
-        actions: [{ actionKey: 'call', actionType: 'webhook.call', riskLevel: 'high', requiresApproval: true, config: { targetUrl: 'https://169.254.169.254/meta' } }],
-        tags: [], metadata: {},
+        ...baseInput,
+        actions: [{ actionKey: 'call', actionType: 'webhook.call', riskLevel: 'medium', requiresApproval: true, config: { targetUrl: 'https://169.254.169.254/meta' } }],
       };
-      await expect(service.createWorkflow(ORG, USER, input, META)).rejects.toThrow('SSRF');
+      // Rejected because inline URLs are not accepted at all — a strictly stronger
+      // guarantee than SSRF-inspecting a URL we would then store.
+      await expect(service.createWorkflow(ORG, USER, input, META))
+        .rejects.toThrow('does not accept an inline URL');
+    });
+
+    it('rejects webhook.call pointed at a non-webhook connector transport', async () => {
+      const input = {
+        ...baseInput,
+        actions: [{ actionKey: 'call', actionType: 'webhook.call', riskLevel: 'medium', requiresApproval: false, config: { connectorType: 'email' } }],
+      };
+      await expect(service.createWorkflow(ORG, USER, input, META))
+        .rejects.toThrow('requires a webhook connector');
+    });
+
+    it('accepts a connector-referenced webhook.call without approval', async () => {
+      const input = {
+        ...baseInput,
+        actions: [{ actionKey: 'call', actionType: 'webhook.call', riskLevel: 'medium', requiresApproval: false, config: { connectorId: '11111111-1111-4111-8111-111111111111' } }],
+      };
+      await expect(service.createWorkflow(ORG, USER, input, META)).resolves.toBeDefined();
     });
   });
 
@@ -540,31 +577,57 @@ describe('Phase 2 Behavioral Hardening', () => {
   // DEFECT 13: Migration integrity constraints
   // ═══════════════════════════════════════════════════════════════════════════
 
+  /**
+   * These assertions previously read
+   * `src/db/postgres/canonical_migrations_draft/19_automation/*.sql`, a directory that
+   * does not exist here, so they failed with ENOENT instead of verifying anything.
+   * They now read the migrations that are actually applied, under
+   * `src/db/postgres/primary_db_draft/14_automation/`.
+   *
+   * The inbox status constraint is now expressed as a dedicated ENUM
+   * (`automation_inbox_status`) rather than a CHECK. That is strictly stronger: the
+   * type system rejects an invalid status everywhere the column is used, and the
+   * allowed set cannot drift between tables.
+   */
   describe('migration integrity constraints (defect 13)', () => {
-    it('migration 012 has CHECK for inbox status values', () => {
+    const AUTOMATION_MIGRATIONS = '../../src/db/postgres/primary_db_draft/14_automation';
+
+    it('constrains inbox status to exactly the five values the repository writes', () => {
       const fs = require('fs');
       const path = require('path');
       const sql = fs.readFileSync(
-        path.join(__dirname, '../../src/db/postgres/canonical_migrations_draft/19_automation/012_automation_events_inbox.sql'),
-        'utf8'
+        path.join(__dirname, `${AUTOMATION_MIGRATIONS}/002_create_automation_runtime.sql`),
+        'utf8',
       );
-      expect(sql).toContain('chk_events_inbox_status');
-      expect(sql).toContain("'pending','processing','processed','retry','failed'");
+      expect(sql).toContain('CREATE TYPE automation_inbox_status AS ENUM');
+      expect(sql).toContain("'pending', 'processing', 'processed', 'retry', 'failed'");
+      expect(sql).toContain('status automation_inbox_status NOT NULL');
     });
 
-    it('migration 003 has immutability trigger for published versions', () => {
+    it('attaches the immutability trigger for published workflow versions', () => {
+      const fs = require('fs');
+      const path = require('path');
+      const triggers = fs.readFileSync(
+        path.join(__dirname, `${AUTOMATION_MIGRATIONS}/999_triggers.sql`),
+        'utf8',
+      );
+      expect(triggers).toContain('trg_fn_immutable_published_version');
+      expect(triggers).toContain('trg_immutable_published_version');
+      // Must guard UPDATE only, so FK CASCADE deletes still work.
+      expect(triggers).toContain('BEFORE UPDATE ON automation_workflow_versions');
+      expect(triggers).not.toContain('BEFORE DELETE ON automation_workflow_versions');
+    });
+
+    it('protects the audit trail from workflow deletion (SET NULL, never CASCADE)', () => {
       const fs = require('fs');
       const path = require('path');
       const sql = fs.readFileSync(
-        path.join(__dirname, '../../src/db/postgres/canonical_migrations_draft/19_automation/003_automation_workflow_versions.sql'),
-        'utf8'
+        path.join(__dirname, `${AUTOMATION_MIGRATIONS}/002_create_automation_runtime.sql`),
+        'utf8',
       );
-      expect(sql).toContain('trg_fn_immutable_published_version');
-      expect(sql).toContain('trg_immutable_published_version');
-      expect(sql).toContain("RAISE EXCEPTION 'Cannot update an already-published workflow version");
-      // Must allow DELETE (FK CASCADE)
-      expect(sql).toContain('BEFORE UPDATE');
-      expect(sql).not.toContain('BEFORE DELETE');
+      // Within the automation_audit_logs block, workflow_id must not cascade.
+      const auditBlock = sql.slice(sql.indexOf('CREATE TABLE IF NOT EXISTS automation_audit_logs'));
+      expect(auditBlock).toContain('workflow_id UUID NULL REFERENCES automation_workflows(id) ON DELETE SET NULL');
     });
   });
 
@@ -573,26 +636,39 @@ describe('Phase 2 Behavioral Hardening', () => {
   // ═══════════════════════════════════════════════════════════════════════════
 
   describe('namespaced event dedupe (defect 14)', () => {
-    it('migration 012 has composite unique on (organization_id, dedupe_key)', () => {
+    /**
+     * The dedupe index is now `UNIQUE (organization_id, dedupe_key) NULLS NOT DISTINCT`
+     * with NO predicate, replacing the old partial index that was restricted to
+     * `WHERE organization_id IS NOT NULL`.
+     *
+     * That old shape had a real hole: because PostgreSQL treats NULLs as distinct in a
+     * unique index by default, and the index skipped NULL-org rows entirely, two
+     * platform/system events sharing a dedupe_key would BOTH insert — silently
+     * breaking deduplication for exactly the events that fan out widest. NULLS NOT
+     * DISTINCT (PG15+) closes that, and removing the predicate lets the plain
+     * `ON CONFLICT (organization_id, dedupe_key)` in insertInboxEvent target it.
+     */
+    it('dedupes the inbox on (organization_id, dedupe_key) including NULL-org events', () => {
       const fs = require('fs');
       const path = require('path');
       const sql = fs.readFileSync(
-        path.join(__dirname, '../../src/db/postgres/canonical_migrations_draft/19_automation/012_automation_events_inbox.sql'),
-        'utf8'
+        path.join(__dirname, '../../src/db/postgres/primary_db_draft/14_automation/002_create_automation_runtime.sql'),
+        'utf8',
       );
-      expect(sql).toContain('idx_automation_inbox_org_dedupe');
-      expect(sql).toContain('organization_id, dedupe_key');
-      expect(sql).toContain('WHERE organization_id IS NOT NULL');
+      expect(sql).toContain('uq_automation_events_inbox_org_dedupe');
+      expect(sql).toContain('(organization_id, dedupe_key) NULLS NOT DISTINCT');
     });
 
-    it('insertInboxEvent uses org-scoped ON CONFLICT', () => {
+    it('insertInboxEvent ON CONFLICT target matches the dedupe index exactly', () => {
       const fs = require('fs');
       const path = require('path');
       const repoSrc = fs.readFileSync(
         path.join(__dirname, '../../src/modules/automation/repository.ts'),
-        'utf8'
+        'utf8',
       );
-      expect(repoSrc).toContain('ON CONFLICT (organization_id, dedupe_key) WHERE organization_id IS NOT NULL DO NOTHING');
+      // Must have no predicate, or it would fail to match the now-unpartitioned index.
+      expect(repoSrc).toContain('ON CONFLICT (organization_id, dedupe_key) DO NOTHING');
+      expect(repoSrc).not.toContain('ON CONFLICT (organization_id, dedupe_key) WHERE');
     });
   });
 

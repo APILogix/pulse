@@ -30,6 +30,7 @@ export const LIMITS = {
   maxStackFrames: 200,
   maxBreadcrumbs: 100,
   maxTraceSpanCount: 10_000,   // reject absurd trace trees
+  maxTraceSpanDepth: 128,      // root is depth 0; reject depth > 128
   maxReplayEvents: 5000,
 } as const;
 
@@ -61,7 +62,11 @@ const boundedStr = (max: number = LIMITS.maxStringLen) => z.string().max(max);
 const idStr = z.string().max(64);
 const MAX_FUTURE_SKEW_MS = 60_000;
 const timestampMs = z.preprocess((value) => {
-  const ms = normalizeTimestampToEpochMs(value);
+  // Parse units and shapes here, but defer future-skew clamping until
+  // normalizeEvent() receives the immutable gateway receipt timestamp. Using
+  // Date.now() inside the schema made retries of the same pg-boss payload
+  // normalize to different values.
+  const ms = parseSafeEpochMs(value);
   return ms ?? value;
 }, z.number().int().nonnegative());
 
@@ -281,12 +286,166 @@ export interface NormalizeErr {
 }
 export type NormalizeResult = NormalizeOk | NormalizeErr;
 
+export interface NormalizeEventOptions {
+  /** Immutable gateway receipt time used for future-skew clamping. */
+  nowMs?: number;
+}
+
+const TOP_LEVEL_TIMESTAMP_KEYS = [
+  'timestamp', 'startTime', 'start_time', 'endTime', 'end_time',
+  'startedAt', 'started_at', 'finishedAt', 'finished_at',
+] as const;
+
+const TRACE_SPAN_TIMESTAMP_KEYS = new Set([
+  'timestamp', 'startTime', 'start_time', 'endTime', 'end_time',
+  'time', 'start', 'end',
+]);
+
+function clockEpochMs(raw: unknown): number {
+  return parseSafeEpochMs(raw) ?? Date.now();
+}
+
+function normalizeTopLevelTimestamps(event: NormalizedEvent, nowMs: number): NormalizedEvent {
+  const source = event as unknown as Record<string, unknown>;
+  const normalized: Record<string, unknown> = { ...source };
+  for (const key of TOP_LEVEL_TIMESTAMP_KEYS) {
+    if (!(key in source)) continue;
+    const value = normalizeTimestampToEpochMs(source[key], nowMs);
+    if (value !== null) normalized[key] = value;
+  }
+  return normalized as unknown as NormalizedEvent;
+}
+
+interface TraceTreeOk {
+  ok: true;
+  rootSpan: Record<string, unknown>;
+  nodeCount: number;
+}
+
+interface TraceTreeErr {
+  ok: false;
+  detail: string;
+}
+
+type TraceTreeResult = TraceTreeOk | TraceTreeErr;
+
+function isPlainTraceSpan(value: unknown): value is Record<string, unknown> {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return false;
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+}
+
+/**
+ * Validate and clone a trace tree without recursion. The discovered-node count
+ * bounds allocation before child arrays are cloned, and the WeakSet rejects
+ * cycles as well as shared span objects (both violate the tree contract).
+ */
+function normalizeTraceSpanTree(rootSpan: unknown, nowMs: number): TraceTreeResult {
+  if (!isPlainTraceSpan(rootSpan)) {
+    return { ok: false, detail: 'rootSpan must be a plain object' };
+  }
+
+  const normalizedRoot = Object.create(null) as Record<string, unknown>;
+  const discovered = new WeakSet<object>();
+  discovered.add(rootSpan);
+  let nodeCount = 1;
+  const stack: Array<{
+    source: Record<string, unknown>;
+    target: Record<string, unknown>;
+    depth: number;
+  }> = [{ source: rootSpan, target: normalizedRoot, depth: 0 }];
+
+  while (stack.length > 0) {
+    const current = stack.pop() as {
+      source: Record<string, unknown>;
+      target: Record<string, unknown>;
+      depth: number;
+    };
+    if (current.depth > LIMITS.maxTraceSpanDepth) {
+      return {
+        ok: false,
+        detail: `rootSpan exceeds maximum depth ${LIMITS.maxTraceSpanDepth}`,
+      };
+    }
+
+    for (const [key, value] of Object.entries(current.source)) {
+      if (key === 'children') continue;
+      if (TRACE_SPAN_TIMESTAMP_KEYS.has(key)) {
+        const timestamp = normalizeTimestampToEpochMs(value, nowMs);
+        current.target[key] = timestamp ?? value;
+      } else {
+        current.target[key] = value;
+      }
+    }
+
+    const children = Object.prototype.hasOwnProperty.call(current.source, 'children')
+      ? current.source.children
+      : undefined;
+    if (children === undefined) continue;
+    if (!Array.isArray(children)) {
+      return {
+        ok: false,
+        detail: `rootSpan children at depth ${current.depth} must be an array`,
+      };
+    }
+    if (children.length === 0) {
+      current.target.children = [];
+      continue;
+    }
+    if (current.depth >= LIMITS.maxTraceSpanDepth) {
+      return {
+        ok: false,
+        detail: `rootSpan exceeds maximum depth ${LIMITS.maxTraceSpanDepth}`,
+      };
+    }
+    if (nodeCount + children.length > LIMITS.maxTraceSpanCount) {
+      return {
+        ok: false,
+        detail: `rootSpan exceeds maximum node count ${LIMITS.maxTraceSpanCount}`,
+      };
+    }
+
+    // Validate and reserve every child before allocating the cloned array.
+    for (const child of children) {
+      if (!isPlainTraceSpan(child)) {
+        return {
+          ok: false,
+          detail: `rootSpan child at depth ${current.depth + 1} must be a plain object`,
+        };
+      }
+      if (discovered.has(child)) {
+        return {
+          ok: false,
+          detail: 'rootSpan must be a tree; cycles and shared span references are not allowed',
+        };
+      }
+      discovered.add(child);
+    }
+    nodeCount += children.length;
+
+    const normalizedChildren = children.map(
+      () => Object.create(null) as Record<string, unknown>,
+    );
+    current.target.children = normalizedChildren;
+    // LIFO traversal is reversed so output and validation preserve SDK order.
+    for (let index = children.length - 1; index >= 0; index -= 1) {
+      stack.push({
+        source: children[index] as Record<string, unknown>,
+        target: normalizedChildren[index] as Record<string, unknown>,
+        depth: current.depth + 1,
+      });
+    }
+  }
+
+  return { ok: true, rootSpan: normalizedRoot, nodeCount };
+}
+
 /**
  * Validate + normalize a single raw event. Never throws — returns a tagged
  * result so the caller can record a per-event rejection without failing the
  * whole batch (partial-success ingestion).
  */
-export function normalizeEvent(raw: unknown): NormalizeResult {
+export function normalizeEvent(raw: unknown, options: NormalizeEventOptions = {}): NormalizeResult {
   if (typeof raw !== 'object' || raw === null) {
     return { ok: false, reason: 'not_an_object', detail: 'event is not an object' };
   }
@@ -310,44 +469,26 @@ export function normalizeEvent(raw: unknown): NormalizeResult {
       detail: parsed.error.issues.slice(0, 3).map((i) => `${i.path.join('.')}: ${i.message}`).join('; '),
     };
   }
-  const event = parsed.data.type === 'trace'
-    ? { ...parsed.data, rootSpan: normalizeTraceSpanTimestamps(parsed.data.rootSpan) }
-    : parsed.data;
+
+  const nowMs = clockEpochMs(options.nowMs);
+  let event = normalizeTopLevelTimestamps(parsed.data, nowMs);
+  if (event.type === 'trace') {
+    const traceTree = normalizeTraceSpanTree(event.rootSpan, nowMs);
+    if (!traceTree.ok) {
+      return { ok: false, reason: 'validation_failed', detail: traceTree.detail };
+    }
+    event = { ...event, rootSpan: traceTree.rootSpan };
+  }
   return { ok: true, event };
 }
 
 /** Normalize a supported SDK timestamp shape into canonical epoch milliseconds. */
-export function normalizeTimestampToEpochMs(raw: unknown): number | null {
+export function normalizeTimestampToEpochMs(raw: unknown, nowMs: number = Date.now()): number | null {
   const ms = parseSafeEpochMs(raw);
   if (ms === null) return null;
 
-  const now = Date.now();
+  const now = clockEpochMs(nowMs);
   return Math.round(ms > now + MAX_FUTURE_SKEW_MS ? now : ms);
-}
-
-const TRACE_SPAN_TIMESTAMP_KEYS = new Set(['timestamp', 'startTime', 'start_time', 'endTime', 'end_time', 'time', 'start', 'end']);
-
-function normalizeTraceSpanTimestamps(span: unknown, remaining: number = LIMITS.maxTraceSpanCount): unknown {
-  if (remaining <= 0 || span === null || typeof span !== 'object' || Array.isArray(span)) {
-    return span;
-  }
-
-  const source = span as Record<string, unknown>;
-  const normalized: Record<string, unknown> = { ...source };
-
-  for (const key of TRACE_SPAN_TIMESTAMP_KEYS) {
-    if (key in source) {
-      const ms = normalizeTimestampToEpochMs(source[key]);
-      if (ms !== null) normalized[key] = ms;
-    }
-  }
-
-  const children = source.children;
-  if (Array.isArray(children)) {
-    normalized.children = children.map((child, index) => normalizeTraceSpanTimestamps(child, remaining - index - 1));
-  }
-
-  return normalized;
 }
 
 /** Parse raw timestamp input (number, string, Date) to safe epoch milliseconds. */
@@ -409,8 +550,19 @@ export function parseSafeEpochMs(raw: unknown): number | null {
   return null;
 }
 
-/** Resolve the storage timestamp (ms epoch) for an event, defaulting to now. */
-export function resolveTimestamp(ev: NormalizedEvent): number {
+export interface ResolveTimestampOptions {
+  /** Clock used for deterministic future-skew clamping. */
+  nowMs?: number;
+  /** Stable fallback used when the event has no usable occurrence timestamp. */
+  fallbackMs?: number;
+}
+
+/** Resolve the storage timestamp (ms epoch), using a caller-supplied stable fallback when available. */
+export function resolveTimestamp(
+  ev: NormalizedEvent,
+  options: ResolveTimestampOptions = {},
+): number {
+  const nowMs = clockEpochMs(options.nowMs);
   const rootSpan = (ev as { rootSpan?: unknown }).rootSpan;
   const root = rootSpan && typeof rootSpan === 'object' && !Array.isArray(rootSpan)
     ? (rootSpan as Record<string, unknown>)
@@ -424,10 +576,12 @@ export function resolveTimestamp(ev: NormalizedEvent): number {
     ?? root?.timestamp;
 
   if (raw != null) {
-    const ms = normalizeTimestampToEpochMs(raw);
+    const ms = normalizeTimestampToEpochMs(raw, nowMs);
     if (ms != null && ms > 0) {
       return ms;
     }
   }
-  return Date.now();
+
+  const fallbackMs = normalizeTimestampToEpochMs(options.fallbackMs, nowMs);
+  return fallbackMs != null && fallbackMs > 0 ? fallbackMs : nowMs;
 }

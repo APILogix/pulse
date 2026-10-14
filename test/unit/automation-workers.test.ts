@@ -8,6 +8,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { buildIdempotencyKey, ActionRunnerRegistry } from '../../src/modules/automation/action-runner.js';
 import { evaluateConditions } from '../../src/modules/automation/evaluator.js';
 import type { AutomationActionContext } from '../../src/modules/automation/types.js';
+import { ACTION_TYPES } from '../../src/modules/automation/types.js';
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // DETERMINISTIC IDEMPOTENCY TESTS
@@ -260,47 +261,47 @@ describe('Queue Registration', () => {
   it('AUTOMATION_QUEUES defines all required queue names', () => {
     // These are the expected queue names matching workers.ts constants
     const AUTOMATION_QUEUES = {
-      inbox: 'automation-inbox',
-      execute: 'automation-run-execute',
-      maintenance: 'automation-maintenance',
-      deadLetter: 'automation-dead-letter',
-      schedule: 'automation-schedule',
+      inbox: 'automation_inbox',
+      execute: 'automation_run_execute',
+      maintenance: 'automation_maintenance',
+      deadLetter: 'automation_dead_letter',
+      schedule: 'automation_schedule',
     };
-    expect(AUTOMATION_QUEUES).toHaveProperty('inbox', 'automation-inbox');
-    expect(AUTOMATION_QUEUES).toHaveProperty('execute', 'automation-run-execute');
-    expect(AUTOMATION_QUEUES).toHaveProperty('maintenance', 'automation-maintenance');
-    expect(AUTOMATION_QUEUES).toHaveProperty('deadLetter', 'automation-dead-letter');
-    expect(AUTOMATION_QUEUES).toHaveProperty('schedule', 'automation-schedule');
+    expect(AUTOMATION_QUEUES).toHaveProperty('inbox', 'automation_inbox');
+    expect(AUTOMATION_QUEUES).toHaveProperty('execute', 'automation_run_execute');
+    expect(AUTOMATION_QUEUES).toHaveProperty('maintenance', 'automation_maintenance');
+    expect(AUTOMATION_QUEUES).toHaveProperty('deadLetter', 'automation_dead_letter');
+    expect(AUTOMATION_QUEUES).toHaveProperty('schedule', 'automation_schedule');
   });
 
   it('enqueueAutomationJob routes execute jobs to correct queue', () => {
     const AUTOMATION_QUEUES = {
-      inbox: 'automation-inbox',
-      execute: 'automation-run-execute',
-      maintenance: 'automation-maintenance',
-      deadLetter: 'automation-dead-letter',
-      schedule: 'automation-schedule',
+      inbox: 'automation_inbox',
+      execute: 'automation_run_execute',
+      maintenance: 'automation_maintenance',
+      deadLetter: 'automation_dead_letter',
+      schedule: 'automation_schedule',
     };
     const jobType = 'automation.run.execute';
     const expectedQueue = jobType === 'automation.run.execute'
       ? AUTOMATION_QUEUES.execute
       : AUTOMATION_QUEUES.inbox;
-    expect(expectedQueue).toBe('automation-run-execute');
+    expect(expectedQueue).toBe('automation_run_execute');
   });
 
   it('enqueueAutomationJob routes inbox jobs to inbox queue', () => {
     const AUTOMATION_QUEUES = {
-      inbox: 'automation-inbox',
-      execute: 'automation-run-execute',
-      maintenance: 'automation-maintenance',
-      deadLetter: 'automation-dead-letter',
-      schedule: 'automation-schedule',
+      inbox: 'automation_inbox',
+      execute: 'automation_run_execute',
+      maintenance: 'automation_maintenance',
+      deadLetter: 'automation_dead_letter',
+      schedule: 'automation_schedule',
     };
     const jobType = 'automation.inbox.process';
     const expectedQueue = jobType === 'automation.run.execute'
       ? AUTOMATION_QUEUES.execute
       : AUTOMATION_QUEUES.inbox;
-    expect(expectedQueue).toBe('automation-inbox');
+    expect(expectedQueue).toBe('automation_inbox');
   });
 });
 
@@ -352,32 +353,38 @@ describe('SKIP LOCKED Pattern', () => {
 // ACTION RUNNER - NOT IMPLEMENTED HANDLERS
 // ═══════════════════════════════════════════════════════════════════════════════
 
-describe('ActionRunner - Not Implemented Handlers', () => {
-  it('registers handlers for all action types', () => {
+describe('ActionRunner - registration and honest failure', () => {
+  it('registers a handler for every supported action type', () => {
     const runner = new ActionRunnerRegistry();
     const types = runner.getRegisteredTypes();
 
-    // All action types from types.ts should have handlers
-    const requiredTypes = [
-      'notification.send', 'incident.create', 'incident.assign_owner',
-      'incident.timeline.append', 'incident.postmortem.generate_draft',
-      'ticket.github.create', 'ticket.jira.create', 'pagerduty.trigger',
-      'runbook.open', 'runbook.step.create', 'status_page.update',
-      'approval.request', 'connector.delivery.retry', 'alert.severity.change',
-      'alert.silence.create', 'ai.summary.generate', 'ai.root_cause.generate',
-      'report.export', 'rollback.recommend', 'release.guard.warn',
-      'release.guard.pause', 'quota.notify', 'quota.throttle_recommend',
-      'retention.archive', 'retention.purge_request', 'security.notify',
-      'webhook.call', 'noop',
-    ];
-
-    for (const actionType of requiredTypes) {
+    // Every type in ACTION_TYPES must have a handler; no type may be advertised
+    // by the schema/API without something to execute it.
+    for (const actionType of ACTION_TYPES) {
       expect(types).toContain(actionType);
+    }
+    expect(types.length).toBe(ACTION_TYPES.length);
+  });
+
+  it('does not register action types that were removed from the product', () => {
+    const runner = new ActionRunnerRegistry();
+    const types = runner.getRegisteredTypes() as string[];
+    for (const removed of [
+      'runbook.open', 'runbook.step.create', 'status_page.update',
+      'release.guard.warn', 'release.guard.pause', 'retention.archive',
+      'retention.purge_request', 'quota.throttle_recommend', 'alert.severity.change',
+    ]) {
+      expect(types).not.toContain(removed);
     }
   });
 
-  it('not_implemented handler returns skipped=true with safe output', async () => {
-    const runner = new ActionRunnerRegistry();
+  /**
+   * Replaces the previous assertion that an unimplemented action returns
+   * skipped=true/success=true. That behaviour let a run report "succeeded" while
+   * doing nothing, so the contract was inverted: missing integration => failure.
+   */
+  it('an action with no injected integration FAILS instead of faking success', async () => {
+    const runner = new ActionRunnerRegistry(); // no integrations
     const ctx: AutomationActionContext = {
       runId: 'r1', stepId: 's1', organizationId: 'org-1',
       projectId: null, workflowId: 'wf-1', actionType: 'incident.create',
@@ -388,9 +395,11 @@ describe('ActionRunner - Not Implemented Handlers', () => {
     };
 
     const result = await runner.execute(ctx);
-    expect(result.skipped).toBe(true);
-    expect(result.success).toBe(true);
-    expect(result.output).toHaveProperty('status', 'not_implemented');
+    expect(result.success).toBe(false);
+    expect(result.skipped).toBeFalsy();
+    expect(result.errorCode).toBe('INTEGRATION_NOT_CONFIGURED');
+    expect(result.output).toHaveProperty('status', 'integration_not_configured');
+    expect(result.output).toHaveProperty('requiredIntegration', 'incidentManager');
   });
 });
 

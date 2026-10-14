@@ -10,8 +10,12 @@ export declare class EmailConnector extends BaseConnector {
     supportsThreading(): boolean;
     supportsAttachments(): boolean;
     private getTransporter;
-    private renderHtml;
-    private renderText;
+    /**
+     * Non-alert notifications (connector tests, generic payloads) render through
+     * the shared Mono template, so they arrive in the same sheet as every other
+     * Pulsiv email instead of an unstyled light page.
+     */
+    private renderFallback;
     protected deliver(notification: NotificationPayload): Promise<DeliveryResult>;
     testConnection(): Promise<ConnectionTestResult>;
 }

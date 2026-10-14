@@ -22,7 +22,8 @@
  *     email tokens) is the cross-process source of truth.
  *   - Email via the Postgres-backed auth outbox worker (queue-only).
  */
-import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'crypto';
+import { createHash, randomBytes, timingSafeEqual } from 'crypto';
+import { v7 as uuidv7 } from 'uuid';
 import { promisify } from 'util';
 import bcrypt from 'bcrypt';
 import * as OTPAuth from 'otpauth';
@@ -79,7 +80,7 @@ export async function createUserFromEmail(input, ipAddress, requestId) {
     const verificationExpiresAt = new Date(Date.now() + EMAIL_VERIFICATION_TTL_SECONDS * 1000);
     const user = await repository.withTransaction(async (client) => {
         const created = await repository.createUser({
-            id: randomUUID(),
+            id: uuidv7(),
             email: normalizedEmail,
             full_name: input.full_name,
             avatar_url: input.avatar_url ?? null,

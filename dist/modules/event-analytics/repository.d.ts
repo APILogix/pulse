@@ -9,6 +9,11 @@
 import type { Pool } from 'pg';
 import { type AnalyticsTableKey, type TimeBucket } from './query-builder.js';
 import type { TimeRange } from './types.js';
+export declare const ANALYTICS_ERROR_GROUP_COLUMNS = "\n  id, organization_id, project_id, fingerprint, error_name, message_template, first_seen_at, last_seen_at, total_count, today_count, week_count, month_count, status, assigned_to, services, environments, releases, created_at, updated_at\n";
+export declare const ANALYTICS_DASHBOARD_COLUMNS = "\n  id, organization_id, project_id, name, description, layout, widgets, is_shared, created_by, created_at, updated_at\n";
+export declare const ANALYTICS_SAVED_QUERY_COLUMNS = "\n  id, organization_id, project_id, name, description, query_type, query_config, visualization_type, visualization_config, created_by, created_at, updated_at\n";
+export declare const ANALYTICS_ALERT_COLUMNS = "\n  id, organization_id, project_id, name, metric, operator, threshold, window_minutes, notification_channels, is_active, created_by, created_at, updated_at\n";
+export declare const ANALYTICS_USER_SESSION_COLUMNS = "\n  id, organization_id, project_id, session_id, user_id, started_at, ended_at, duration_seconds, event_count, error_count, pages, is_crashed, created_at\n";
 export declare class EventAnalyticsRepository {
     private readonly db;
     constructor(db: Pool);
@@ -19,6 +24,14 @@ export declare class EventAnalyticsRepository {
         error: number;
         warning: number;
     }>;
+    /**
+     * Request statistics across a time range.
+     *
+     * ANL-Q006 optimization: reads from pre-aggregated rollups (request_metrics_1h / request_metrics_1m)
+     * where available, merging logarithmic histograms in memory to estimate p50/p95/p99 without
+     * heavy PERCENTILE_CONT sorting over raw events_requests partitions. Falls back to raw table
+     * only if rollup data is not yet available for the requested range.
+     */
     getRequestStats(orgId: string, projectId: string | undefined, environment: string | undefined, range: TimeRange): Promise<{
         total: number;
         errors: number;
@@ -28,6 +41,13 @@ export declare class EventAnalyticsRepository {
         p95: number | null;
         p99: number | null;
     }>;
+    /**
+     * Unique user count across a time range.
+     *
+     * ANL-Q007 optimization: reads from pre-aggregated rollups using HLL sketches
+     * (or exact bucket counts) where available, avoiding massive HashAggregates over
+     * raw events_requests.
+     */
     getUniqueUserCount(orgId: string, projectId: string | undefined, environment: string | undefined, range: TimeRange): Promise<number>;
     getEventTrend(tableKey: AnalyticsTableKey, orgId: string, projectId: string | undefined, environment: string | undefined, range: TimeRange, bucket: TimeBucket, extraSelects?: string): Promise<Array<Record<string, unknown>>>;
     listErrors(orgId: string, range: TimeRange, filters: {
@@ -84,7 +104,7 @@ export declare class EventAnalyticsRepository {
         total: number;
     }>;
     getRequestById(orgId: string, id: string, projectId?: string, environment?: string): Promise<Record<string, unknown> | null>;
-    getSpansByTrace(orgId: string, traceId: string, projectId: string, environment: string): Promise<Array<Record<string, unknown>>>;
+    getSpansByTrace(orgId: string, traceId: string, projectId: string, environment: string, limit?: number): Promise<Array<Record<string, unknown>>>;
     getTraceById(orgId: string, traceId: string, projectId: string, environment: string): Promise<Record<string, unknown> | null>;
     listTraces(orgId: string, range: TimeRange, filters: {
         projectId?: string;
@@ -160,7 +180,7 @@ export declare class EventAnalyticsRepository {
         isShared: boolean;
         createdBy: string;
     }): Promise<Record<string, unknown>>;
-    listDashboards(orgId: string): Promise<Array<Record<string, unknown>>>;
+    listDashboards(orgId: string, limit?: number): Promise<Array<Record<string, unknown>>>;
     getDashboard(orgId: string, id: string): Promise<Record<string, unknown> | null>;
     updateDashboard(orgId: string, id: string, fields: Record<string, unknown>, updatedBy: string): Promise<Record<string, unknown> | null>;
     deleteDashboard(orgId: string, id: string): Promise<boolean>;
@@ -175,7 +195,7 @@ export declare class EventAnalyticsRepository {
         visualizationConfig: Record<string, unknown>;
         createdBy: string;
     }): Promise<Record<string, unknown>>;
-    listSavedQueries(orgId: string): Promise<Array<Record<string, unknown>>>;
+    listSavedQueries(orgId: string, limit?: number): Promise<Array<Record<string, unknown>>>;
     getSavedQuery(orgId: string, id: string): Promise<Record<string, unknown> | null>;
     deleteSavedQuery(orgId: string, id: string): Promise<boolean>;
     createAlert(input: {
@@ -190,7 +210,7 @@ export declare class EventAnalyticsRepository {
         isActive: boolean;
         createdBy: string;
     }): Promise<Record<string, unknown>>;
-    listAlerts(orgId: string): Promise<Array<Record<string, unknown>>>;
+    listAlerts(orgId: string, limit?: number): Promise<Array<Record<string, unknown>>>;
     getAlert(orgId: string, id: string): Promise<Record<string, unknown> | null>;
     deleteAlert(orgId: string, id: string): Promise<boolean>;
     exportDataset(orgId: string, dataset: 'errors' | 'requests' | 'logs' | 'metrics', range: TimeRange, projectId: string | undefined, environment: string | undefined, limit: number): Promise<Array<Record<string, unknown>>>;

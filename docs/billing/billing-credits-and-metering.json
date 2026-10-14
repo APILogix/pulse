@@ -1,0 +1,1378 @@
+{
+  "schema_version": "2.1.0",
+  "catalog_version": 2,
+  "generated_at": "2026-10-11T00:00:00.000Z",
+  "description": "Complete specification of Pulsiv telemetry event credit weights, AI investigation credit rules, AI model routing, metered overage rates, and usage threshold alert policies.",
+  "telemetry_event_credit_system": {
+    "governing_quota_key": "quota.monthly_events",
+    "unit": "credits",
+    "database_table": "billing_event_credit_weights",
+    "seeder_file": "database/primarydbv2/schema/20_seeders/007_11_billing_event_credit_weights.sql",
+    "staging_table": "usage_counter_staging (events_delta NUMERIC(18,4))",
+    "rollup_function": "flush_usage_counters() -> organization_usage_current_period.events_used (CEIL)",
+    "fallback_weight_when_unmatched": 1,
+    "monthly_credit_allowance_by_plan": {
+      "free": 50000,
+      "starter": 250000,
+      "growth": 1500000,
+      "business": 10000000,
+      "enterprise": 50000000
+    },
+    "generic_signal_event_quotas_by_plan": {
+      "free": {
+        "quota.monthly_error_events": {
+          "key": "quota.monthly_error_events",
+          "name": "Monthly Error & Exception Events",
+          "sdk_event_types": [
+            "error",
+            "message"
+          ],
+          "unit": "events",
+          "scope": "organization",
+          "limit": 5000,
+          "is_unlimited": false,
+          "supports_unlimited": false,
+          "enforcement_type": "hard_limit",
+          "dependencies": [
+            "error_tracking.enabled"
+          ]
+        },
+        "quota.monthly_log_events": {
+          "key": "quota.monthly_log_events",
+          "name": "Monthly Structured Log Events",
+          "sdk_event_types": [
+            "log"
+          ],
+          "unit": "events",
+          "scope": "organization",
+          "limit": 25000,
+          "is_unlimited": false,
+          "supports_unlimited": false,
+          "enforcement_type": "hard_limit",
+          "dependencies": [
+            "logging.enabled"
+          ]
+        },
+        "quota.monthly_metric_data_points": {
+          "key": "quota.monthly_metric_data_points",
+          "name": "Monthly Metric Data Points",
+          "sdk_event_types": [
+            "metric"
+          ],
+          "unit": "data_points",
+          "scope": "organization",
+          "limit": 50000,
+          "is_unlimited": false,
+          "supports_unlimited": false,
+          "enforcement_type": "hard_limit",
+          "dependencies": [
+            "metrics.enabled"
+          ]
+        },
+        "quota.monthly_trace_spans": {
+          "key": "quota.monthly_trace_spans",
+          "name": "Monthly Distributed Trace & Span Events",
+          "sdk_event_types": [
+            "trace",
+            "span"
+          ],
+          "unit": "spans",
+          "scope": "organization",
+          "limit": 10000,
+          "is_unlimited": false,
+          "supports_unlimited": false,
+          "enforcement_type": "hard_limit",
+          "dependencies": [
+            "tracing.enabled"
+          ]
+        },
+        "quota.monthly_request_events": {
+          "key": "quota.monthly_request_events",
+          "name": "Monthly HTTP Request Telemetry Events",
+          "sdk_event_types": [
+            "request"
+          ],
+          "unit": "requests",
+          "scope": "organization",
+          "limit": 25000,
+          "is_unlimited": false,
+          "supports_unlimited": false,
+          "enforcement_type": "hard_limit",
+          "dependencies": [
+            "tracing.enabled"
+          ]
+        },
+        "quota.monthly_replay_sessions": {
+          "key": "quota.monthly_replay_sessions",
+          "name": "Monthly Session Replay Recordings",
+          "sdk_event_types": [
+            "replay"
+          ],
+          "unit": "replays",
+          "scope": "organization",
+          "limit": 0,
+          "is_unlimited": false,
+          "supports_unlimited": false,
+          "enforcement_type": "hard_limit",
+          "dependencies": [
+            "replay.enabled"
+          ]
+        },
+        "quota.monthly_profiles": {
+          "key": "quota.monthly_profiles",
+          "name": "Monthly Continuous CPU/Heap Profiles",
+          "sdk_event_types": [
+            "profile"
+          ],
+          "unit": "profiles",
+          "scope": "organization",
+          "limit": 0,
+          "is_unlimited": false,
+          "supports_unlimited": false,
+          "enforcement_type": "hard_limit",
+          "dependencies": [
+            "profiling.enabled"
+          ]
+        },
+        "quota.monthly_cron_checkins": {
+          "key": "quota.monthly_cron_checkins",
+          "name": "Monthly Cron & Uptime Check-In Events",
+          "sdk_event_types": [
+            "cron_checkin"
+          ],
+          "unit": "checkins",
+          "scope": "organization",
+          "limit": 0,
+          "is_unlimited": false,
+          "supports_unlimited": false,
+          "enforcement_type": "hard_limit",
+          "dependencies": [
+            "cron_monitoring.enabled"
+          ]
+        }
+      },
+      "starter": {
+        "quota.monthly_error_events": {
+          "key": "quota.monthly_error_events",
+          "name": "Monthly Error & Exception Events",
+          "sdk_event_types": [
+            "error",
+            "message"
+          ],
+          "unit": "events",
+          "scope": "organization",
+          "limit": 50000,
+          "is_unlimited": false,
+          "supports_unlimited": false,
+          "enforcement_type": "overage",
+          "dependencies": [
+            "error_tracking.enabled"
+          ]
+        },
+        "quota.monthly_log_events": {
+          "key": "quota.monthly_log_events",
+          "name": "Monthly Structured Log Events",
+          "sdk_event_types": [
+            "log"
+          ],
+          "unit": "events",
+          "scope": "organization",
+          "limit": 500000,
+          "is_unlimited": false,
+          "supports_unlimited": false,
+          "enforcement_type": "overage",
+          "dependencies": [
+            "logging.enabled"
+          ]
+        },
+        "quota.monthly_metric_data_points": {
+          "key": "quota.monthly_metric_data_points",
+          "name": "Monthly Metric Data Points",
+          "sdk_event_types": [
+            "metric"
+          ],
+          "unit": "data_points",
+          "scope": "organization",
+          "limit": 1000000,
+          "is_unlimited": false,
+          "supports_unlimited": false,
+          "enforcement_type": "overage",
+          "dependencies": [
+            "metrics.enabled"
+          ]
+        },
+        "quota.monthly_trace_spans": {
+          "key": "quota.monthly_trace_spans",
+          "name": "Monthly Distributed Trace & Span Events",
+          "sdk_event_types": [
+            "trace",
+            "span"
+          ],
+          "unit": "spans",
+          "scope": "organization",
+          "limit": 200000,
+          "is_unlimited": false,
+          "supports_unlimited": false,
+          "enforcement_type": "overage",
+          "dependencies": [
+            "tracing.enabled"
+          ]
+        },
+        "quota.monthly_request_events": {
+          "key": "quota.monthly_request_events",
+          "name": "Monthly HTTP Request Telemetry Events",
+          "sdk_event_types": [
+            "request"
+          ],
+          "unit": "requests",
+          "scope": "organization",
+          "limit": 300000,
+          "is_unlimited": false,
+          "supports_unlimited": false,
+          "enforcement_type": "overage",
+          "dependencies": [
+            "tracing.enabled"
+          ]
+        },
+        "quota.monthly_replay_sessions": {
+          "key": "quota.monthly_replay_sessions",
+          "name": "Monthly Session Replay Recordings",
+          "sdk_event_types": [
+            "replay"
+          ],
+          "unit": "replays",
+          "scope": "organization",
+          "limit": 2500,
+          "is_unlimited": false,
+          "supports_unlimited": false,
+          "enforcement_type": "overage",
+          "dependencies": [
+            "replay.enabled"
+          ]
+        },
+        "quota.monthly_profiles": {
+          "key": "quota.monthly_profiles",
+          "name": "Monthly Continuous CPU/Heap Profiles",
+          "sdk_event_types": [
+            "profile"
+          ],
+          "unit": "profiles",
+          "scope": "organization",
+          "limit": 5000,
+          "is_unlimited": false,
+          "supports_unlimited": false,
+          "enforcement_type": "overage",
+          "dependencies": [
+            "profiling.enabled"
+          ]
+        },
+        "quota.monthly_cron_checkins": {
+          "key": "quota.monthly_cron_checkins",
+          "name": "Monthly Cron & Uptime Check-In Events",
+          "sdk_event_types": [
+            "cron_checkin"
+          ],
+          "unit": "checkins",
+          "scope": "organization",
+          "limit": 50000,
+          "is_unlimited": false,
+          "supports_unlimited": false,
+          "enforcement_type": "overage",
+          "dependencies": [
+            "cron_monitoring.enabled"
+          ]
+        }
+      },
+      "growth": {
+        "quota.monthly_error_events": {
+          "key": "quota.monthly_error_events",
+          "name": "Monthly Error & Exception Events",
+          "sdk_event_types": [
+            "error",
+            "message"
+          ],
+          "unit": "events",
+          "scope": "organization",
+          "limit": 250000,
+          "is_unlimited": false,
+          "supports_unlimited": false,
+          "enforcement_type": "overage",
+          "dependencies": [
+            "error_tracking.enabled"
+          ]
+        },
+        "quota.monthly_log_events": {
+          "key": "quota.monthly_log_events",
+          "name": "Monthly Structured Log Events",
+          "sdk_event_types": [
+            "log"
+          ],
+          "unit": "events",
+          "scope": "organization",
+          "limit": 3000000,
+          "is_unlimited": false,
+          "supports_unlimited": false,
+          "enforcement_type": "overage",
+          "dependencies": [
+            "logging.enabled"
+          ]
+        },
+        "quota.monthly_metric_data_points": {
+          "key": "quota.monthly_metric_data_points",
+          "name": "Monthly Metric Data Points",
+          "sdk_event_types": [
+            "metric"
+          ],
+          "unit": "data_points",
+          "scope": "organization",
+          "limit": 5000000,
+          "is_unlimited": false,
+          "supports_unlimited": false,
+          "enforcement_type": "overage",
+          "dependencies": [
+            "metrics.enabled"
+          ]
+        },
+        "quota.monthly_trace_spans": {
+          "key": "quota.monthly_trace_spans",
+          "name": "Monthly Distributed Trace & Span Events",
+          "sdk_event_types": [
+            "trace",
+            "span"
+          ],
+          "unit": "spans",
+          "scope": "organization",
+          "limit": 1500000,
+          "is_unlimited": false,
+          "supports_unlimited": false,
+          "enforcement_type": "overage",
+          "dependencies": [
+            "tracing.enabled"
+          ]
+        },
+        "quota.monthly_request_events": {
+          "key": "quota.monthly_request_events",
+          "name": "Monthly HTTP Request Telemetry Events",
+          "sdk_event_types": [
+            "request"
+          ],
+          "unit": "requests",
+          "scope": "organization",
+          "limit": 2000000,
+          "is_unlimited": false,
+          "supports_unlimited": false,
+          "enforcement_type": "overage",
+          "dependencies": [
+            "tracing.enabled"
+          ]
+        },
+        "quota.monthly_replay_sessions": {
+          "key": "quota.monthly_replay_sessions",
+          "name": "Monthly Session Replay Recordings",
+          "sdk_event_types": [
+            "replay"
+          ],
+          "unit": "replays",
+          "scope": "organization",
+          "limit": 15000,
+          "is_unlimited": false,
+          "supports_unlimited": false,
+          "enforcement_type": "overage",
+          "dependencies": [
+            "replay.enabled"
+          ]
+        },
+        "quota.monthly_profiles": {
+          "key": "quota.monthly_profiles",
+          "name": "Monthly Continuous CPU/Heap Profiles",
+          "sdk_event_types": [
+            "profile"
+          ],
+          "unit": "profiles",
+          "scope": "organization",
+          "limit": 50000,
+          "is_unlimited": false,
+          "supports_unlimited": false,
+          "enforcement_type": "overage",
+          "dependencies": [
+            "profiling.enabled"
+          ]
+        },
+        "quota.monthly_cron_checkins": {
+          "key": "quota.monthly_cron_checkins",
+          "name": "Monthly Cron & Uptime Check-In Events",
+          "sdk_event_types": [
+            "cron_checkin"
+          ],
+          "unit": "checkins",
+          "scope": "organization",
+          "limit": 250000,
+          "is_unlimited": false,
+          "supports_unlimited": false,
+          "enforcement_type": "overage",
+          "dependencies": [
+            "cron_monitoring.enabled"
+          ]
+        }
+      },
+      "business": {
+        "quota.monthly_error_events": {
+          "key": "quota.monthly_error_events",
+          "name": "Monthly Error & Exception Events",
+          "sdk_event_types": [
+            "error",
+            "message"
+          ],
+          "unit": "events",
+          "scope": "organization",
+          "limit": 2000000,
+          "is_unlimited": false,
+          "supports_unlimited": false,
+          "enforcement_type": "overage",
+          "dependencies": [
+            "error_tracking.enabled"
+          ]
+        },
+        "quota.monthly_log_events": {
+          "key": "quota.monthly_log_events",
+          "name": "Monthly Structured Log Events",
+          "sdk_event_types": [
+            "log"
+          ],
+          "unit": "events",
+          "scope": "organization",
+          "limit": 25000000,
+          "is_unlimited": false,
+          "supports_unlimited": false,
+          "enforcement_type": "overage",
+          "dependencies": [
+            "logging.enabled"
+          ]
+        },
+        "quota.monthly_metric_data_points": {
+          "key": "quota.monthly_metric_data_points",
+          "name": "Monthly Metric Data Points",
+          "sdk_event_types": [
+            "metric"
+          ],
+          "unit": "data_points",
+          "scope": "organization",
+          "limit": 40000000,
+          "is_unlimited": false,
+          "supports_unlimited": false,
+          "enforcement_type": "overage",
+          "dependencies": [
+            "metrics.enabled"
+          ]
+        },
+        "quota.monthly_trace_spans": {
+          "key": "quota.monthly_trace_spans",
+          "name": "Monthly Distributed Trace & Span Events",
+          "sdk_event_types": [
+            "trace",
+            "span"
+          ],
+          "unit": "spans",
+          "scope": "organization",
+          "limit": 10000000,
+          "is_unlimited": false,
+          "supports_unlimited": false,
+          "enforcement_type": "overage",
+          "dependencies": [
+            "tracing.enabled"
+          ]
+        },
+        "quota.monthly_request_events": {
+          "key": "quota.monthly_request_events",
+          "name": "Monthly HTTP Request Telemetry Events",
+          "sdk_event_types": [
+            "request"
+          ],
+          "unit": "requests",
+          "scope": "organization",
+          "limit": 15000000,
+          "is_unlimited": false,
+          "supports_unlimited": false,
+          "enforcement_type": "overage",
+          "dependencies": [
+            "tracing.enabled"
+          ]
+        },
+        "quota.monthly_replay_sessions": {
+          "key": "quota.monthly_replay_sessions",
+          "name": "Monthly Session Replay Recordings",
+          "sdk_event_types": [
+            "replay"
+          ],
+          "unit": "replays",
+          "scope": "organization",
+          "limit": 100000,
+          "is_unlimited": false,
+          "supports_unlimited": false,
+          "enforcement_type": "overage",
+          "dependencies": [
+            "replay.enabled"
+          ]
+        },
+        "quota.monthly_profiles": {
+          "key": "quota.monthly_profiles",
+          "name": "Monthly Continuous CPU/Heap Profiles",
+          "sdk_event_types": [
+            "profile"
+          ],
+          "unit": "profiles",
+          "scope": "organization",
+          "limit": 500000,
+          "is_unlimited": false,
+          "supports_unlimited": false,
+          "enforcement_type": "overage",
+          "dependencies": [
+            "profiling.enabled"
+          ]
+        },
+        "quota.monthly_cron_checkins": {
+          "key": "quota.monthly_cron_checkins",
+          "name": "Monthly Cron & Uptime Check-In Events",
+          "sdk_event_types": [
+            "cron_checkin"
+          ],
+          "unit": "checkins",
+          "scope": "organization",
+          "limit": 1000000,
+          "is_unlimited": false,
+          "supports_unlimited": false,
+          "enforcement_type": "overage",
+          "dependencies": [
+            "cron_monitoring.enabled"
+          ]
+        }
+      },
+      "enterprise": {
+        "quota.monthly_error_events": {
+          "key": "quota.monthly_error_events",
+          "name": "Monthly Error & Exception Events",
+          "sdk_event_types": [
+            "error",
+            "message"
+          ],
+          "unit": "events",
+          "scope": "organization",
+          "limit": 15000000,
+          "is_unlimited": false,
+          "supports_unlimited": false,
+          "enforcement_type": "overage",
+          "contract_overridable": true,
+          "dependencies": [
+            "error_tracking.enabled"
+          ]
+        },
+        "quota.monthly_log_events": {
+          "key": "quota.monthly_log_events",
+          "name": "Monthly Structured Log Events",
+          "sdk_event_types": [
+            "log"
+          ],
+          "unit": "events",
+          "scope": "organization",
+          "limit": 150000000,
+          "is_unlimited": false,
+          "supports_unlimited": false,
+          "enforcement_type": "overage",
+          "contract_overridable": true,
+          "dependencies": [
+            "logging.enabled"
+          ]
+        },
+        "quota.monthly_metric_data_points": {
+          "key": "quota.monthly_metric_data_points",
+          "name": "Monthly Metric Data Points",
+          "sdk_event_types": [
+            "metric"
+          ],
+          "unit": "data_points",
+          "scope": "organization",
+          "limit": 250000000,
+          "is_unlimited": false,
+          "supports_unlimited": false,
+          "enforcement_type": "overage",
+          "contract_overridable": true,
+          "dependencies": [
+            "metrics.enabled"
+          ]
+        },
+        "quota.monthly_trace_spans": {
+          "key": "quota.monthly_trace_spans",
+          "name": "Monthly Distributed Trace & Span Events",
+          "sdk_event_types": [
+            "trace",
+            "span"
+          ],
+          "unit": "spans",
+          "scope": "organization",
+          "limit": 60000000,
+          "is_unlimited": false,
+          "supports_unlimited": false,
+          "enforcement_type": "overage",
+          "contract_overridable": true,
+          "dependencies": [
+            "tracing.enabled"
+          ]
+        },
+        "quota.monthly_request_events": {
+          "key": "quota.monthly_request_events",
+          "name": "Monthly HTTP Request Telemetry Events",
+          "sdk_event_types": [
+            "request"
+          ],
+          "unit": "requests",
+          "scope": "organization",
+          "limit": 100000000,
+          "is_unlimited": false,
+          "supports_unlimited": false,
+          "enforcement_type": "overage",
+          "contract_overridable": true,
+          "dependencies": [
+            "tracing.enabled"
+          ]
+        },
+        "quota.monthly_replay_sessions": {
+          "key": "quota.monthly_replay_sessions",
+          "name": "Monthly Session Replay Recordings",
+          "sdk_event_types": [
+            "replay"
+          ],
+          "unit": "replays",
+          "scope": "organization",
+          "limit": 1000000,
+          "is_unlimited": false,
+          "supports_unlimited": false,
+          "enforcement_type": "overage",
+          "contract_overridable": true,
+          "dependencies": [
+            "replay.enabled"
+          ]
+        },
+        "quota.monthly_profiles": {
+          "key": "quota.monthly_profiles",
+          "name": "Monthly Continuous CPU/Heap Profiles",
+          "sdk_event_types": [
+            "profile"
+          ],
+          "unit": "profiles",
+          "scope": "organization",
+          "limit": 5000000,
+          "is_unlimited": false,
+          "supports_unlimited": false,
+          "enforcement_type": "overage",
+          "contract_overridable": true,
+          "dependencies": [
+            "profiling.enabled"
+          ]
+        },
+        "quota.monthly_cron_checkins": {
+          "key": "quota.monthly_cron_checkins",
+          "name": "Monthly Cron & Uptime Check-In Events",
+          "sdk_event_types": [
+            "cron_checkin"
+          ],
+          "unit": "checkins",
+          "scope": "organization",
+          "limit": 10000000,
+          "is_unlimited": false,
+          "supports_unlimited": false,
+          "enforcement_type": "overage",
+          "contract_overridable": true,
+          "dependencies": [
+            "cron_monitoring.enabled"
+          ]
+        }
+      }
+    },
+    "weights": [
+      {
+        "event_type": "metric",
+        "credit_weight": 0.1,
+        "events_per_single_credit": 10,
+        "category": "metrics",
+        "governing_feature_key": "metrics.enabled",
+        "rationale": "Pre-aggregated numeric gauges/counters — 10 metrics = 1 credit",
+        "is_active": true,
+        "max_monthly_raw_events_by_plan_if_100_percent_this_type": {
+          "free": 100000,
+          "starter": 1500000,
+          "growth": 10000000,
+          "business": 80000000,
+          "enterprise": 500000000
+        }
+      },
+      {
+        "event_type": "log",
+        "credit_weight": 0.2,
+        "events_per_single_credit": 5,
+        "category": "logs",
+        "governing_feature_key": "logging.enabled",
+        "rationale": "High volume, low compute — 5 logs = 1 credit",
+        "is_active": true,
+        "max_monthly_raw_events_by_plan_if_100_percent_this_type": {
+          "free": 50000,
+          "starter": 750000,
+          "growth": 5000000,
+          "business": 40000000,
+          "enterprise": 250000000
+        }
+      },
+      {
+        "event_type": "trace",
+        "credit_weight": 0.5,
+        "events_per_single_credit": 2,
+        "category": "traces",
+        "governing_feature_key": "tracing.enabled",
+        "rationale": "Distributed trace spans with parent-child indexing — 2 spans = 1 credit",
+        "is_active": true,
+        "max_monthly_raw_events_by_plan_if_100_percent_this_type": {
+          "free": 20000,
+          "starter": 300000,
+          "growth": 2000000,
+          "business": 16000000,
+          "enterprise": 100000000
+        }
+      },
+      {
+        "event_type": "span",
+        "credit_weight": 0.5,
+        "events_per_single_credit": 2,
+        "category": "traces",
+        "governing_feature_key": "tracing.enabled",
+        "rationale": "Alias for trace span — 2 spans = 1 credit",
+        "is_active": true,
+        "max_monthly_raw_events_by_plan_if_100_percent_this_type": {
+          "free": 20000,
+          "starter": 300000,
+          "growth": 2000000,
+          "business": 16000000,
+          "enterprise": 100000000
+        }
+      },
+      {
+        "event_type": "event",
+        "credit_weight": 1,
+        "events_per_single_credit": 1,
+        "category": "events",
+        "governing_feature_key": "sdk.enabled",
+        "rationale": "Standard custom application event — baseline 1 credit",
+        "is_active": true,
+        "max_monthly_raw_events_by_plan_if_100_percent_this_type": {
+          "free": 10000,
+          "starter": 150000,
+          "growth": 1000000,
+          "business": 8000000,
+          "enterprise": 50000000
+        }
+      },
+      {
+        "event_type": "error",
+        "credit_weight": 1,
+        "events_per_single_credit": 1,
+        "category": "errors",
+        "governing_feature_key": "error_tracking.enabled",
+        "rationale": "Exception with stack trace fingerprinting & grouping — 1 credit",
+        "is_active": true,
+        "max_monthly_raw_events_by_plan_if_100_percent_this_type": {
+          "free": 10000,
+          "starter": 150000,
+          "growth": 1000000,
+          "business": 8000000,
+          "enterprise": 50000000
+        }
+      },
+      {
+        "event_type": "session",
+        "credit_weight": 1.5,
+        "events_per_single_credit": 0.6667,
+        "category": "sessions",
+        "governing_feature_key": "replay.enabled",
+        "rationale": "User session lifecycle tracking — 1.5 credits",
+        "is_active": true,
+        "max_monthly_raw_events_by_plan_if_100_percent_this_type": {
+          "free": 0,
+          "starter": 100000,
+          "growth": 666666,
+          "business": 5333333,
+          "enterprise": 33333333
+        }
+      },
+      {
+        "event_type": "crash",
+        "credit_weight": 2,
+        "events_per_single_credit": 0.5,
+        "category": "errors",
+        "governing_feature_key": "error_tracking.enabled",
+        "rationale": "Fatal crash dump with full thread/memory state — 2 credits",
+        "is_active": true,
+        "max_monthly_raw_events_by_plan_if_100_percent_this_type": {
+          "free": 5000,
+          "starter": 75000,
+          "growth": 500000,
+          "business": 4000000,
+          "enterprise": 25000000
+        }
+      },
+      {
+        "event_type": "replay",
+        "credit_weight": 5,
+        "events_per_single_credit": 0.2,
+        "category": "sessions",
+        "governing_feature_key": "replay.enabled",
+        "rationale": "DOM mutation stream + network recording — 5 credits",
+        "is_active": true,
+        "max_monthly_raw_events_by_plan_if_100_percent_this_type": {
+          "free": 0,
+          "starter": 30000,
+          "growth": 200000,
+          "business": 1600000,
+          "enterprise": 10000000
+        }
+      },
+      {
+        "event_type": "ai_action",
+        "credit_weight": 10,
+        "events_per_single_credit": 0.1,
+        "category": "ai",
+        "governing_feature_key": "ai.enabled",
+        "rationale": "LLM-powered RCA, anomaly detection, or summarization — 10 credits",
+        "is_active": true,
+        "max_monthly_raw_events_by_plan_if_100_percent_this_type": {
+          "free": 0,
+          "starter": 15000,
+          "growth": 100000,
+          "business": 800000,
+          "enterprise": 5000000
+        }
+      }
+    ],
+    "credit_weights_schedule": {
+      "request": {
+        "credit_weight": 1,
+        "description": "Full HTTP / RPC request",
+        "is_active": true
+      },
+      "error": {
+        "credit_weight": 1.5,
+        "description": "Error / Exception with stack trace",
+        "is_active": true
+      },
+      "trace": {
+        "credit_weight": 0.5,
+        "description": "Distributed trace root",
+        "is_active": true
+      },
+      "span": {
+        "credit_weight": 0.25,
+        "description": "Individual trace span",
+        "is_active": true
+      },
+      "log": {
+        "credit_weight": 0.12,
+        "description": "Structured log line",
+        "is_active": true
+      },
+      "metric": {
+        "credit_weight": 0.1,
+        "description": "Custom metric data point",
+        "is_active": true
+      },
+      "profile": {
+        "credit_weight": 2,
+        "description": "Continuous CPU / memory profile sample",
+        "is_active": true
+      },
+      "replay": {
+        "credit_weight": 2,
+        "description": "Session replay recording segment",
+        "is_active": true
+      },
+      "message": {
+        "credit_weight": 0.3,
+        "description": "Custom message / breadcrumb",
+        "is_active": true
+      },
+      "cron_checkin": {
+        "credit_weight": 0.2,
+        "description": "Cron monitor check-in heartbeat",
+        "is_active": true
+      }
+    }
+  },
+  "ai_credit_system": {
+    "governing_quota_key": "quota.ai_credits",
+    "governing_feature_key": "ai.enabled",
+    "unit": "credits",
+    "active_implementation": {
+      "module": "src/modules/ai/",
+      "database_tables": [
+        "credit_balances",
+        "credit_ledger",
+        "credit_reservations",
+        "credit_rules"
+      ],
+      "seeder_file": "database/primarydbv2/schema/20_seeders/033_18_ai_004_credit_rules.sql",
+      "monthly_credit_allowance_by_plan": {
+        "free": 0,
+        "starter": 100,
+        "growth": 1000,
+        "business": 5000,
+        "enterprise": 50000
+      },
+      "credit_rules": [
+        {
+          "mode": "failure_Only",
+          "description": "Analyze failure event payload and error message only",
+          "cost_credits": 2,
+          "cached_cost_credits": 0,
+          "partial_cost_credits": 1,
+          "min_confidence": 0.6,
+          "is_enabled": true,
+          "max_monthly_investigations_by_plan": {
+            "free": 0,
+            "starter": 50,
+            "growth": 500,
+            "business": 2500,
+            "enterprise": 25000
+          }
+        },
+        {
+          "mode": "exact_Error_Query",
+          "description": "Targeted root-cause lookup for a specific error fingerprint",
+          "cost_credits": 2,
+          "cached_cost_credits": 0,
+          "partial_cost_credits": 1,
+          "min_confidence": 0.6,
+          "is_enabled": true,
+          "max_monthly_investigations_by_plan": {
+            "free": 0,
+            "starter": 50,
+            "growth": 500,
+            "business": 2500,
+            "enterprise": 25000
+          }
+        },
+        {
+          "mode": "Single_Occurrence",
+          "description": "Analyze a single isolated event or log occurrence",
+          "cost_credits": 2,
+          "cached_cost_credits": 0,
+          "partial_cost_credits": 1,
+          "min_confidence": 0.6,
+          "is_enabled": true,
+          "max_monthly_investigations_by_plan": {
+            "free": 0,
+            "starter": 50,
+            "growth": 500,
+            "business": 2500,
+            "enterprise": 25000
+          }
+        },
+        {
+          "mode": "Pure_Business_Event",
+          "description": "Analyze custom business/domain telemetry event",
+          "cost_credits": 2,
+          "cached_cost_credits": 0,
+          "partial_cost_credits": 1,
+          "min_confidence": 0.6,
+          "is_enabled": true,
+          "max_monthly_investigations_by_plan": {
+            "free": 0,
+            "starter": 50,
+            "growth": 500,
+            "business": 2500,
+            "enterprise": 25000
+          }
+        },
+        {
+          "mode": "Timeline",
+          "description": "Temporal correlation across surrounding logs and events",
+          "cost_credits": 3,
+          "cached_cost_credits": 0,
+          "partial_cost_credits": 1,
+          "min_confidence": 0.6,
+          "is_enabled": true,
+          "max_monthly_investigations_by_plan": {
+            "free": 0,
+            "starter": 33,
+            "growth": 333,
+            "business": 1666,
+            "enterprise": 16666
+          }
+        },
+        {
+          "mode": "Slow_Request",
+          "description": "Latency bottleneck analysis for slow HTTP/RPC requests",
+          "cost_credits": 3,
+          "cached_cost_credits": 0,
+          "partial_cost_credits": 1,
+          "min_confidence": 0.6,
+          "is_enabled": true,
+          "max_monthly_investigations_by_plan": {
+            "free": 0,
+            "starter": 33,
+            "growth": 333,
+            "business": 1666,
+            "enterprise": 16666
+          }
+        },
+        {
+          "mode": "Request_Id",
+          "description": "Cross-signal correlation scoped to a single request_id",
+          "cost_credits": 3,
+          "cached_cost_credits": 0,
+          "partial_cost_credits": 1,
+          "min_confidence": 0.6,
+          "is_enabled": true,
+          "max_monthly_investigations_by_plan": {
+            "free": 0,
+            "starter": 33,
+            "growth": 333,
+            "business": 1666,
+            "enterprise": 16666
+          }
+        },
+        {
+          "mode": "Recent_History",
+          "description": "Compare current anomaly against recent historical baseline",
+          "cost_credits": 3,
+          "cached_cost_credits": 0,
+          "partial_cost_credits": 1,
+          "min_confidence": 0.6,
+          "is_enabled": true,
+          "max_monthly_investigations_by_plan": {
+            "free": 0,
+            "starter": 33,
+            "growth": 333,
+            "business": 1666,
+            "enterprise": 16666
+          }
+        },
+        {
+          "mode": "Trace_Id",
+          "description": "Full distributed trace tree analysis across services and spans",
+          "cost_credits": 4,
+          "cached_cost_credits": 0,
+          "partial_cost_credits": 1,
+          "min_confidence": 0.6,
+          "is_enabled": true,
+          "max_monthly_investigations_by_plan": {
+            "free": 0,
+            "starter": 25,
+            "growth": 250,
+            "business": 1250,
+            "enterprise": 12500
+          }
+        },
+        {
+          "mode": "Correlation_Key",
+          "description": "Multi-service correlation by custom business/tenant correlation key",
+          "cost_credits": 4,
+          "cached_cost_credits": 0,
+          "partial_cost_credits": 1,
+          "min_confidence": 0.6,
+          "is_enabled": true,
+          "max_monthly_investigations_by_plan": {
+            "free": 0,
+            "starter": 25,
+            "growth": 250,
+            "business": 1250,
+            "enterprise": 12500
+          }
+        },
+        {
+          "mode": "Full_ Investigation",
+          "description": "Deep multi-signal root cause analysis across logs, traces, metrics, and deployments",
+          "cost_credits": 5,
+          "cached_cost_credits": 0,
+          "partial_cost_credits": 1,
+          "min_confidence": 0.6,
+          "is_enabled": true,
+          "max_monthly_investigations_by_plan": {
+            "free": 0,
+            "starter": 20,
+            "growth": 200,
+            "business": 1000,
+            "enterprise": 10000
+          }
+        }
+      ]
+    },
+    "ai_model_routing": {
+      "database_table": "ai_model_routes",
+      "seeder_file": "database/primarydbv2/schema/20_seeders/034_18_ai_011_ai_model_routes.sql",
+      "routes": [
+        {
+          "ai_mode": "AI_ERROR_EXPLANATION",
+          "primary_model": "gpt-4o-mini",
+          "fallback_model": "gpt-4o",
+          "temperature": 0.3,
+          "max_tokens": 2048,
+          "timeout_ms": 30000,
+          "priority": 100,
+          "status": "active"
+        },
+        {
+          "ai_mode": "AI_STACK_TRACE_ANALYSIS",
+          "primary_model": "gpt-4o-mini",
+          "fallback_model": "gpt-4o",
+          "temperature": 0.2,
+          "max_tokens": 2048,
+          "timeout_ms": 30000,
+          "priority": 100,
+          "status": "active"
+        },
+        {
+          "ai_mode": "AI_SPAN_ANALYSIS",
+          "primary_model": "gpt-4o-mini",
+          "fallback_model": "gpt-4o",
+          "temperature": 0.2,
+          "max_tokens": 2048,
+          "timeout_ms": 30000,
+          "priority": 100,
+          "status": "active"
+        },
+        {
+          "ai_mode": "AI_LOG_SUMMARY",
+          "primary_model": "gpt-4o-mini",
+          "fallback_model": "gpt-4o",
+          "temperature": 0.3,
+          "max_tokens": 2048,
+          "timeout_ms": 30000,
+          "priority": 100,
+          "status": "active"
+        },
+        {
+          "ai_mode": "AI_ROOT_CAUSE_ANALYSIS",
+          "primary_model": "gpt-4o",
+          "fallback_model": "gpt-4o-mini",
+          "temperature": 0.2,
+          "max_tokens": 4096,
+          "timeout_ms": 30000,
+          "priority": 100,
+          "status": "active"
+        },
+        {
+          "ai_mode": "AI_TRACE_ANALYSIS",
+          "primary_model": "gpt-4o",
+          "fallback_model": "gpt-4o-mini",
+          "temperature": 0.2,
+          "max_tokens": 4096,
+          "timeout_ms": 30000,
+          "priority": 100,
+          "status": "active"
+        },
+        {
+          "ai_mode": "AI_SUGGESTED_FIXES",
+          "primary_model": "gpt-4o",
+          "fallback_model": "gpt-4o-mini",
+          "temperature": 0.2,
+          "max_tokens": 4096,
+          "timeout_ms": 30000,
+          "priority": 100,
+          "status": "active"
+        },
+        {
+          "ai_mode": "AI_SQL_OPTIMIZATION",
+          "primary_model": "gpt-4o",
+          "fallback_model": "gpt-4o-mini",
+          "temperature": 0.2,
+          "max_tokens": 4096,
+          "timeout_ms": 30000,
+          "priority": 100,
+          "status": "active"
+        },
+        {
+          "ai_mode": "AI_DEPLOYMENT_CORRELATION",
+          "primary_model": "gpt-4o",
+          "fallback_model": "gpt-4o-mini",
+          "temperature": 0.2,
+          "max_tokens": 4096,
+          "timeout_ms": 30000,
+          "priority": 100,
+          "status": "active"
+        },
+        {
+          "ai_mode": "AI_INCIDENT_SUMMARY",
+          "primary_model": "gpt-4o",
+          "fallback_model": "gpt-4o-mini",
+          "temperature": 0.2,
+          "max_tokens": 4096,
+          "timeout_ms": 30000,
+          "priority": 100,
+          "status": "active"
+        },
+        {
+          "ai_mode": "AI_WEEKLY_REPORT",
+          "primary_model": "gpt-4o",
+          "fallback_model": "gpt-4o-mini",
+          "temperature": 0.2,
+          "max_tokens": 4096,
+          "timeout_ms": 30000,
+          "priority": 100,
+          "status": "active"
+        }
+      ]
+    },
+    "parallel_legacy_token_pricing_model": {
+      "status": "conflicting_legacy_parallel",
+      "source_file": "src/modules/billing/ai/service.ts",
+      "credit_conversion_rate": "1 credit = $0.001 USD",
+      "models": {
+        "gpt-4": {
+          "input_cost_per_1k_tokens_usd": 0.03,
+          "output_cost_per_1k_tokens_usd": 0.06,
+          "input_credits_per_1k_tokens": 30,
+          "output_credits_per_1k_tokens": 60
+        },
+        "gpt-3.5-turbo": {
+          "input_cost_per_1k_tokens_usd": 0.0015,
+          "output_cost_per_1k_tokens_usd": 0.002,
+          "input_credits_per_1k_tokens": 1.5,
+          "output_credits_per_1k_tokens": 2
+        }
+      }
+    }
+  },
+  "metered_overage_rules": [
+    {
+      "quota_key": "quota.monthly_events",
+      "name": "Monthly Billable Credits Overage",
+      "unit": "credits",
+      "rate_minor_units": 50,
+      "rate_major_usd": 0.5,
+      "currency": "USD",
+      "per_units": 1000,
+      "grace_percent": 10,
+      "applicable_plans": [
+        "starter",
+        "growth",
+        "business",
+        "enterprise"
+      ],
+      "excluded_plans": [
+        "free"
+      ],
+      "runtime_enforcement_status": "Defined in feature-registry.ts & plan-matrix.ts; NOT yet persisted in 005_11/006_11 SQL seeders; IngestionService currently enforces hard_limit; BillingJobsRepository.generateInvoices multiplies overage_events by 0."
+    },
+    {
+      "quota_key": "quota.monthly_alerts",
+      "name": "Monthly Alert Notifications Overage",
+      "unit": "notifications",
+      "rate_minor_units": 10,
+      "rate_major_usd": 0.1,
+      "currency": "USD",
+      "per_units": 100,
+      "grace_percent": 5,
+      "applicable_plans": [
+        "starter",
+        "growth",
+        "business",
+        "enterprise"
+      ],
+      "excluded_plans": [
+        "free"
+      ],
+      "runtime_enforcement_status": "Defined in feature-registry.ts & plan-matrix.ts; NOT yet persisted in 005_11/006_11 SQL seeders."
+    },
+    {
+      "quota_key": "quota.connector_sends",
+      "name": "Monthly Connector Sends Overage",
+      "unit": "sends",
+      "rate_minor_units": 25,
+      "rate_major_usd": 0.25,
+      "currency": "USD",
+      "per_units": 100,
+      "grace_percent": 5,
+      "applicable_plans": [
+        "starter",
+        "growth",
+        "business",
+        "enterprise"
+      ],
+      "excluded_plans": [
+        "free"
+      ],
+      "runtime_enforcement_status": "Defined in feature-registry.ts & plan-matrix.ts; NOT yet persisted in 005_11/006_11 SQL seeders."
+    }
+  ],
+  "usage_alert_threshold_policies": [
+    {
+      "policy_key": "events_50",
+      "display_name": "Events 50%",
+      "resource_key": "quota.monthly_events",
+      "threshold_percent": 50,
+      "channels": [
+        "email"
+      ],
+      "cooldown_minutes": 1440,
+      "auto_action": "none"
+    },
+    {
+      "policy_key": "events_75",
+      "display_name": "Events 75%",
+      "resource_key": "quota.monthly_events",
+      "threshold_percent": 75,
+      "channels": [
+        "email",
+        "in_app"
+      ],
+      "cooldown_minutes": 720,
+      "auto_action": "none"
+    },
+    {
+      "policy_key": "events_90",
+      "display_name": "Events 90%",
+      "resource_key": "quota.monthly_events",
+      "threshold_percent": 90,
+      "channels": [
+        "email",
+        "in_app",
+        "slack"
+      ],
+      "cooldown_minutes": 240,
+      "auto_action": "recommend_upgrade"
+    },
+    {
+      "policy_key": "events_100",
+      "display_name": "Events 100%",
+      "resource_key": "quota.monthly_events",
+      "threshold_percent": 100,
+      "channels": [
+        "email",
+        "in_app",
+        "slack",
+        "webhook"
+      ],
+      "cooldown_minutes": 60,
+      "auto_action": "enforce_plan_limits"
+    },
+    {
+      "policy_key": "ai_80",
+      "display_name": "AI Credits 80%",
+      "resource_key": "quota.ai_credits",
+      "threshold_percent": 80,
+      "channels": [
+        "email"
+      ],
+      "cooldown_minutes": 720,
+      "auto_action": "none"
+    },
+    {
+      "policy_key": "ai_100",
+      "display_name": "AI Credits 100%",
+      "resource_key": "quota.ai_credits",
+      "threshold_percent": 100,
+      "channels": [
+        "email",
+        "in_app"
+      ],
+      "cooldown_minutes": 60,
+      "auto_action": "stop_ai_requests"
+    }
+  ]
+}

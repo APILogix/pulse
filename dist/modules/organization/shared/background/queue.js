@@ -1,46 +1,43 @@
-import { pgboss } from '../../../../lib/pgboss.js';
+import { pgmq } from '../../../../lib/pgmq.js';
+import { PgmqWorker } from '../../../../lib/pgmq-worker.js';
 import { OrganizationRepository } from '../../repository.js';
 import { runDailyOrgCleanup, runHourlyOrgCleanup } from './cleanup.js';
 export const ORG_CLEANUP_JOBS = {
-    hourly: 'org.cleanup.hourly',
-    daily: 'org.cleanup.daily',
+    hourly: 'org_cleanup_hourly',
+    daily: 'org_cleanup_daily',
 };
 const DEFAULT_SCHEDULE = {
-    hourlyCron: '0 * * * *',
-    dailyCron: '30 3 * * *',
+    hourlyIntervalMs: 3600_000,
+    dailyIntervalMs: 86400_000,
 };
-async function safeCreateQueue(name) {
-    const boss = pgboss;
-    if (typeof boss.createQueue === 'function') {
-        await boss.createQueue(name).catch(() => undefined);
-    }
-}
-/**
- * Register the organization cleanup workers + cron schedules. Idempotent per
- * process. Returns a stop() that cancels the schedules (handlers drain via
- * pg-boss shutdown).
- */
 export async function registerOrganizationCleanupWorkers(logger, schedule = {}) {
     const cfg = { ...DEFAULT_SCHEDULE, ...schedule };
     const log = logger.child({ component: 'org-cleanup-workers' });
     const repo = new OrganizationRepository();
-    await safeCreateQueue(ORG_CLEANUP_JOBS.hourly);
-    await safeCreateQueue(ORG_CLEANUP_JOBS.daily);
-    // Handlers receive an array of jobs in pg-boss v12; we ignore the payload and
-    // just run the sweep. retryLimit keeps a transient DB blip from skipping a run.
-    await pgboss.work(ORG_CLEANUP_JOBS.hourly, {}, (async () => {
+    await Promise.all([
+        pgmq.createQueue(ORG_CLEANUP_JOBS.hourly),
+        pgmq.createQueue(ORG_CLEANUP_JOBS.daily),
+    ]);
+    const hourlyWorker = new PgmqWorker(pgmq, async () => {
         await runHourlyOrgCleanup(repo, log);
-    }));
-    await pgboss.work(ORG_CLEANUP_JOBS.daily, {}, (async () => {
+    }, { queue: ORG_CLEANUP_JOBS.hourly, batchSize: 1, concurrency: 1 });
+    const dailyWorker = new PgmqWorker(pgmq, async () => {
         await runDailyOrgCleanup(repo, log);
-    }));
-    await pgboss.schedule(ORG_CLEANUP_JOBS.hourly, cfg.hourlyCron, {}, {});
-    await pgboss.schedule(ORG_CLEANUP_JOBS.daily, cfg.dailyCron, {}, {});
-    log.info({ ...cfg }, 'Organization cleanup cron registered');
+    }, { queue: ORG_CLEANUP_JOBS.daily, batchSize: 1, concurrency: 1 });
+    const workers = [hourlyWorker, dailyWorker];
+    await Promise.all(workers.map((w) => w.start()));
+    const timers = [
+        setInterval(() => void pgmq.send(ORG_CLEANUP_JOBS.hourly, {}).catch(() => { }), cfg.hourlyIntervalMs),
+        setInterval(() => void pgmq.send(ORG_CLEANUP_JOBS.daily, {}).catch(() => { }), cfg.dailyIntervalMs),
+    ];
+    for (const t of timers)
+        t.unref();
+    log.info({ ...cfg }, 'Organization cleanup PGMQ workers registered');
     return {
         stop: async () => {
-            await pgboss.unschedule(ORG_CLEANUP_JOBS.hourly).catch(() => undefined);
-            await pgboss.unschedule(ORG_CLEANUP_JOBS.daily).catch(() => undefined);
+            for (const t of timers)
+                clearInterval(t);
+            await Promise.all(workers.map((w) => w.stop()));
         },
     };
 }

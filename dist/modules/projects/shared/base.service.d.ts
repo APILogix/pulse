@@ -1,17 +1,3 @@
-/**
- * Project business service.
- *
- * Flow:
- * 1. Authorize via organization membership before any read/mutation (tenant
- *    isolation root check). Role gating is centralized in requireProjectAccess.
- * 2. Enforce project status transitions, API-key limits, and key lifecycle.
- * 3. Mint key material in memory; persist only hash + prefix; return the full
- *    key exactly once.
- * 4. Warm/evict the in-process LRU (config/lrucashe.ts, 30-min TTL) so ingestion
- *    resolves keys without a Postgres round trip. NO Redis.
- * 5. Write every sensitive lifecycle event to organization_audit_logs (projects
- *    and API keys are org-owned resources, so they share the org audit trail).
- */
 import type { FastifyBaseLogger } from "fastify";
 import type { BillingEntitlementsRow, OrganizationRepository } from "../../organization/repository.js";
 import type { OrganizationAuditService } from "../../organization/audit-logs/audit-logs.service.js";

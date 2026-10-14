@@ -1,5 +1,12 @@
 import { pool } from '../../../config/database.js';
 import { PaymentStatus, BillingProvider } from '../shared/types.js';
+export const PAYMENT_COLUMNS = `
+  id, organization_id, invoice_id, subscription_id, provider, provider_payment_id,
+  status, currency, amount, fee_amount, tax_amount, refunded_amount,
+  payment_method, payment_method_last4, initiated_at, authorized_at,
+  captured_at, failed_at, refunded_at, failure_code, failure_reason,
+  created_at, updated_at
+`;
 export class PaymentsRepository {
     db;
     constructor(db = pool) {
@@ -32,11 +39,11 @@ export class PaymentsRepository {
         const total = countResult.rows[0]?.total ?? 0;
         const dataValues = [...values, options.limit, options.offset];
         const limitOffsetParams = options.status ? `LIMIT $3 OFFSET $4` : `LIMIT $2 OFFSET $3`;
-        const result = await db.query(`SELECT * FROM payments WHERE ${whereClause} ORDER BY created_at DESC ${limitOffsetParams}`, dataValues);
+        const result = await db.query(`SELECT ${PAYMENT_COLUMNS} FROM payments WHERE ${whereClause} ORDER BY created_at DESC ${limitOffsetParams}`, dataValues);
         return { data: result.rows, total };
     }
     async getPaymentForUpdate(orgId, paymentId, db) {
-        const result = await db.query(`SELECT * FROM payments
+        const result = await db.query(`SELECT ${PAYMENT_COLUMNS} FROM payments
        WHERE id = $1 AND organization_id = $2 AND deleted_at IS NULL
        FOR UPDATE`, [paymentId, orgId]);
         return result.rows[0] || null;
@@ -51,7 +58,7 @@ export class PaymentsRepository {
            metadata = metadata || jsonb_build_object('last_refund_reason', $4::text),
            updated_at = NOW()
        WHERE id = $1 AND organization_id = $2
-       RETURNING *`, [payment.id, payment.organization_id, amount, reason ?? null]);
+       RETURNING ${PAYMENT_COLUMNS}`, [payment.id, payment.organization_id, amount, reason ?? null]);
         if (payment.invoice_id && fullyRefunded) {
             await db.query(`UPDATE invoices
          SET status = 'refunded',

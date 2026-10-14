@@ -22,7 +22,7 @@
  *     email tokens) is the cross-process source of truth.
  *   - Email via the Postgres-backed auth outbox worker (queue-only).
  */
-import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'crypto';
+import { createHash, randomBytes, timingSafeEqual } from 'crypto';
 import { promisify } from 'util';
 
 import bcrypt from 'bcrypt';
@@ -468,6 +468,7 @@ export async function resetPasswordWithToken(
   requestId: string,
 ): Promise<void> {
   const tokenHash = hashEmailFlowToken('password_reset', input.token);
+  const precomputedPasswordHash = await hashPassword(input.new_password);
   let resetUserId: string | null = null;
 
   await repository.withTransaction(async (client) => {
@@ -484,14 +485,14 @@ export async function resetPasswordWithToken(
       );
     }
 
-    const userRes = await client.query<User>(
-      `SELECT *, email_verified AS email_is_verified
+    const userRes = await client.query<repository.UserDbRow>(
+      `SELECT ${repository.USER_COLUMNS}
          FROM users
         WHERE id = $1 AND deleted_at IS NULL
         FOR UPDATE`,
       [consumed.user_id],
     );
-    const user = userRes.rows[0];
+    const user = userRes.rows[0] ? repository.toUser(userRes.rows[0]) : null;
     if (
       !user ||
       user.status !== 'active' ||
@@ -506,7 +507,7 @@ export async function resetPasswordWithToken(
 
     await ensurePasswordNotReused(user, input.new_password);
 
-    const passwordHash = await hashPassword(input.new_password);
+    const passwordHash = precomputedPasswordHash;
     const passwordHistory = buildPasswordHistory(
       user.password_history,
       user.password_hash,

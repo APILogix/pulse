@@ -3,9 +3,20 @@
  *
  * Evaluates a payload against a set of conditions. Conditions are combined as:
  *   - Conditions sharing a `conditionGroupId` are OR'd together within the group.
- *   - Groups (and ungrouped conditions) are AND'd together.
- *   - A condition marked `isRequired=false` that fails does not fail the group
- *     unless it is the only condition contributing to its group's truth.
+ *   - Groups and ungrouped REQUIRED conditions are AND'd together.
+ *   - An ungrouped condition with `isRequired: false` is OPTIONAL: it is
+ *     evaluated and reported in `conditionResults` for observability, but it
+ *     does not gate the match. `isRequired` defaults to true (matching the
+ *     `alert_rule_conditions.is_required` column default), so omitting it
+ *     preserves strict AND behaviour.
+ *   - Degenerate case: if a rule has NO required terms (every ungrouped
+ *     condition is optional and there are no groups), at least one optional
+ *     condition must pass. Without this guard an all-optional rule would match
+ *     unconditionally - including against an empty payload - and continuously
+ *     emit false positives.
+ *
+ * Note: `isRequired` is only meaningful for UNGROUPED conditions. Inside a
+ * group the combinator is already OR, so a failing member never fails the group.
  *
  * The engine reads scalar values from the payload by dotted `fieldPath`
  * (e.g. "cpu.usage", "error.rate"). Aggregations over time windows are the
@@ -147,9 +158,10 @@ export function evaluateRule(payload: Record<string, unknown>, conditions: Evalu
     return { matched: false, conditionResults };
   }
 
-  // Partition into groups. Ungrouped conditions form their own singleton AND terms.
+  // Partition into groups. Ungrouped conditions form their own AND terms, split
+  // by whether they are required (gate the match) or optional (informational).
   const groups = new Map<string, boolean[]>();
-  const ungrouped: boolean[] = [];
+  const ungrouped: { required: boolean[]; optional: boolean[] } = { required: [], optional: [] };
 
   conditions.forEach((c, i) => {
     const passed = conditionResults[i]!.passed;
@@ -157,15 +169,27 @@ export function evaluateRule(payload: Record<string, unknown>, conditions: Evalu
       const arr = groups.get(c.conditionGroupId) ?? [];
       arr.push(passed);
       groups.set(c.conditionGroupId, arr);
+    } else if (c.isRequired === false) {
+      ungrouped.optional.push(passed);
     } else {
-      ungrouped.push(passed);
+      // Default (undefined/true) is required - matches the DB column default.
+      ungrouped.required.push(passed);
     }
   });
 
-  // Each group: OR. Ungrouped: each must individually pass (AND).
+  // Each group: OR across its members. Ungrouped required conditions: AND.
   const groupTruths = [...groups.values()].map((arr) => arr.some(Boolean));
-  const allTerms = [...groupTruths, ...ungrouped];
-  const matched = allTerms.length > 0 && allTerms.every(Boolean);
+
+  // `isRequired: false` (optional) ungrouped conditions do not gate the match.
+  // They are evaluated and reported for observability, but a failing optional
+  // condition cannot by itself prevent a match. If a rule consists ONLY of
+  // optional conditions, at least one must pass - otherwise an all-optional
+  // rule would match unconditionally (including on an empty payload), which
+  // would be a false-positive generator.
+  const requiredTerms = [...groupTruths, ...ungrouped.required];
+  const matched = requiredTerms.length > 0
+    ? requiredTerms.every(Boolean)
+    : ungrouped.optional.length > 0 && ungrouped.optional.some(Boolean);
 
   return { matched, conditionResults };
 }

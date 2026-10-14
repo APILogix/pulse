@@ -119,7 +119,7 @@ export class AlertingWorkspaceRepository {
 
     await client.query(
       `WITH defaults AS (
-         SELECT *
+         SELECT severity, destination_type, priority
          FROM jsonb_to_recordset($2::jsonb) AS d(severity text, destination_type text, priority integer)
        )
        INSERT INTO alerting_routing_defaults
@@ -142,7 +142,7 @@ export class AlertingWorkspaceRepository {
 
     const escalationResult = await client.query<{ system_key: string; id: string }>(
       `WITH defaults AS (
-         SELECT *
+         SELECT system_key, name, description, acknowledgement_timeout_seconds, repeat_interval_seconds, max_repeats
          FROM jsonb_to_recordset($2::jsonb) AS d(
            system_key text,
            name text,
@@ -187,7 +187,7 @@ export class AlertingWorkspaceRepository {
     }));
     const escalationStepResult = await client.query<{ escalation_steps: string }>(
       `WITH defaults AS (
-         SELECT *
+         SELECT policy_id, wait_seconds
          FROM jsonb_to_recordset($1::jsonb) AS d(policy_id uuid, wait_seconds integer)
        ),
        upserted AS (
@@ -234,7 +234,7 @@ export class AlertingWorkspaceRepository {
 
     const providerResult = await client.query<{ providers: string }>(
       `WITH defaults AS (
-         SELECT *
+         SELECT provider_key, display_name, capabilities
          FROM jsonb_to_recordset($2::jsonb) AS d(provider_key text, display_name text, capabilities jsonb)
        ),
        upserted AS (
@@ -303,7 +303,7 @@ export class AlertingWorkspaceRepository {
 
     const featureFlagResult = await client.query<{ feature_flags: string }>(
       `WITH defaults AS (
-         SELECT *
+         SELECT key, enabled, description
          FROM jsonb_to_recordset($2::jsonb) AS d(key text, enabled boolean, description text)
        ),
        upserted AS (
@@ -330,7 +330,7 @@ export class AlertingWorkspaceRepository {
 
     const dashboardWidgetResult = await client.query<{ dashboard_widgets: string }>(
       `WITH defaults AS (
-         SELECT *
+         SELECT widget_key, display_name, position
          FROM jsonb_to_recordset($2::jsonb) AS d(widget_key text, display_name text, position jsonb)
        ),
        upserted AS (
@@ -358,7 +358,7 @@ export class AlertingWorkspaceRepository {
 
     const savedViewResult = await client.query<{ saved_views: string }>(
       `WITH defaults AS (
-         SELECT *
+         SELECT view_key, name, filters
          FROM jsonb_to_recordset($3::jsonb) AS d(view_key text, name text, filters jsonb)
        ),
        upserted AS (
@@ -432,7 +432,7 @@ export class AlertingWorkspaceRepository {
   private async syncDefaultPolicyCatalog(client: PoolClient, organizationId: string, actorId: string | null): Promise<number> {
     const categoryResult = await client.query<{ slug: string; id: string }>(
       `WITH defaults AS (
-         SELECT *
+         SELECT slug, name, sort_order
          FROM jsonb_to_recordset($2::jsonb) AS d(slug text, name text, sort_order integer)
        )
        INSERT INTO alerting_policy_categories
@@ -488,7 +488,7 @@ export class AlertingWorkspaceRepository {
 
     const policyVersionResult = await client.query<{ policy_versions: string }>(
       `WITH defaults AS (
-         SELECT *
+         SELECT slug, name, description, category_id, severity, default_threshold, recovery_threshold, cooldown_seconds, evaluation_window_seconds, enabled, version_definition
          FROM jsonb_to_recordset($3::jsonb) AS d(
            slug text,
            name text,
@@ -596,17 +596,17 @@ export class AlertingWorkspaceRepository {
       db.query(`SELECT p.id, p.organization_id, p.slug, p.name, p.description, c.slug AS category, p.severity, p.default_threshold, p.recovery_threshold, p.cooldown_seconds, p.evaluation_window_seconds, p.enabled, p.is_system, p.current_version, COALESCE(v.definition->>'metricSource', '') AS metric_source, COALESCE(v.definition->>'expression', '') AS expression, COALESCE(v.definition->>'documentation', p.description) AS documentation, COALESCE(v.definition->'dependencies', '[]'::jsonb) AS dependencies, p.created_at, p.updated_at FROM alerting_policy_catalog p JOIN alerting_policy_categories c ON c.id = p.category_id LEFT JOIN alerting_policy_versions v ON v.policy_id = p.id AND v.version = p.current_version WHERE p.organization_id = $1 ORDER BY c.sort_order, p.slug`, [organizationId]),
       db.query(`SELECT id, severity, destination_type, connector_id, route_id, is_enabled, priority, config, created_at, updated_at FROM alerting_routing_defaults WHERE organization_id = $1 ORDER BY priority, severity`, [organizationId]),
       db.query(`SELECT p.id, p.system_key, p.name, p.description, p.acknowledgement_timeout_seconds, p.repeat_interval_seconds, p.max_repeats, p.cancellation_rules, p.is_default, p.created_at, p.updated_at, COALESCE(jsonb_agg(to_jsonb(s) ORDER BY s.step_number) FILTER (WHERE s.id IS NOT NULL), '[]'::jsonb) AS steps FROM alerting_escalation_policies_v2 p LEFT JOIN alerting_escalation_steps_v2 s ON s.policy_id = p.id WHERE p.organization_id = $1 GROUP BY p.id ORDER BY p.system_key`, [organizationId]),
-      db.query(`SELECT s.* FROM alerting_settings s JOIN alerting_workspaces w ON w.id = s.workspace_id WHERE w.organization_id = $1`, [organizationId]),
-      db.query(`SELECT m.* FROM alerting_maintenance_config m JOIN alerting_workspaces w ON w.id = m.workspace_id WHERE w.organization_id = $1`, [organizationId]),
-      db.query(`SELECT n.* FROM alerting_notification_defaults n JOIN alerting_workspaces w ON w.id = n.workspace_id WHERE w.organization_id = $1`, [organizationId]),
+      db.query(`SELECT s.workspace_id, s.timezone, s.default_evaluation_window_seconds, s.default_cooldown_seconds, s.retention_days, s.default_severity, s.default_routing_key, s.default_escalation_policy_id, s.maximum_incident_age_seconds, s.digest_defaults, s.version, s.created_at, s.updated_at FROM alerting_settings s JOIN alerting_workspaces w ON w.id = s.workspace_id WHERE w.organization_id = $1`, [organizationId]),
+      db.query(`SELECT m.workspace_id, m.timezone, m.suppression_enabled, m.recurring_support_enabled, m.default_suppression_settings, m.calendar_metadata, m.created_at, m.updated_at FROM alerting_maintenance_config m JOIN alerting_workspaces w ON w.id = m.workspace_id WHERE w.organization_id = $1`, [organizationId]),
+      db.query(`SELECT n.workspace_id, n.email_enabled, n.digest_enabled, n.business_hours, n.quiet_hours, n.fallback_behavior, n.created_at, n.updated_at FROM alerting_notification_defaults n JOIN alerting_workspaces w ON w.id = n.workspace_id WHERE w.organization_id = $1`, [organizationId]),
       db.query(`SELECT id, provider_key, display_name, status, capabilities, metadata, created_at, updated_at FROM alerting_provider_catalog WHERE organization_id = $1 ORDER BY provider_key`, [organizationId]),
-      db.query(`SELECT e.* FROM alerting_entitlements e WHERE e.organization_id = $1`, [organizationId]),
-      db.query(`SELECT u.* FROM alerting_usage_counters u WHERE u.organization_id = $1`, [organizationId]),
+      db.query(`SELECT e.workspace_id, e.organization_id, e.subscription_id, e.plan_key, e.limits, e.features, e.source_version, e.created_at, e.updated_at FROM alerting_entitlements e WHERE e.organization_id = $1`, [organizationId]),
+      db.query(`SELECT u.workspace_id, u.organization_id, u.policies_count, u.custom_policies_count, u.project_subscriptions_count, u.notifications_count, u.sms_count, u.connector_deliveries_count, u.incidents_count, u.maintenance_windows_count, u.escalations_count, u.created_at, u.updated_at FROM alerting_usage_counters u WHERE u.organization_id = $1`, [organizationId]),
       db.query(`SELECT key, enabled, payload, description, updated_at FROM feature_flags WHERE scope = 'organization' AND scope_id = $1 ORDER BY key`, [organizationId]),
-      db.query(`SELECT d.* FROM alerting_dashboard_widgets d JOIN alerting_workspaces w ON w.id = d.workspace_id WHERE w.organization_id = $1 ORDER BY (d.position->>'order')::int, d.widget_key`, [organizationId]),
-      db.query(`SELECT v.* FROM alerting_saved_views v JOIN alerting_workspaces w ON w.id = v.workspace_id WHERE w.organization_id = $1 ORDER BY v.view_key`, [organizationId]),
+      db.query(`SELECT d.id, d.workspace_id, d.widget_key, d.display_name, d.position, d.configuration, d.is_visible, d.created_at, d.updated_at FROM alerting_dashboard_widgets d JOIN alerting_workspaces w ON w.id = d.workspace_id WHERE w.organization_id = $1 ORDER BY (d.position->>'order')::int, d.widget_key`, [organizationId]),
+      db.query(`SELECT v.id, v.workspace_id, v.view_key, v.name, v.filters, v.is_system, v.created_by, v.created_at, v.updated_at FROM alerting_saved_views v JOIN alerting_workspaces w ON w.id = v.workspace_id WHERE w.organization_id = $1 ORDER BY v.view_key`, [organizationId]),
       db.query(`SELECT id, event_type, entity_type, entity_id, actor_type, actor_id, provisioning_version, payload, created_at FROM alerting_audit_events WHERE organization_id = $1 ORDER BY created_at DESC, id DESC LIMIT 100`, [organizationId]),
-      db.query(`SELECT s.* FROM alerting_search_index_metadata s JOIN alerting_workspaces w ON w.id = s.workspace_id WHERE w.organization_id = $1`, [organizationId]),
+      db.query(`SELECT s.workspace_id, s.schema_version, s.enabled_entities, s.last_rebuild_at, s.created_at, s.updated_at FROM alerting_search_index_metadata s JOIN alerting_workspaces w ON w.id = s.workspace_id WHERE w.organization_id = $1`, [organizationId]),
     ]);
     return {
       workspace: row,
@@ -721,7 +721,7 @@ export class AlertingWorkspaceRepository {
            (organization_id, slug, name, description, category_id, severity, default_threshold,
             recovery_threshold, cooldown_seconds, evaluation_window_seconds, enabled, is_system, current_version)
          VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb, $9, $10, TRUE, FALSE, 1)
-         RETURNING *`,
+         RETURNING id, organization_id, slug, name, description, category_id, severity, default_threshold, recovery_threshold, cooldown_seconds, evaluation_window_seconds, enabled, is_system, current_version, created_at, updated_at`,
         [organizationId, input.slug, input.name, input.description, categoryId, input.severity, JSON.stringify(input.defaultThreshold), JSON.stringify(input.recoveryThreshold), input.cooldownSeconds, input.evaluationWindowSeconds],
       );
       const policyRow = policy.rows[0];
@@ -749,7 +749,7 @@ export class AlertingWorkspaceRepository {
         [organizationId, policyId, version, JSON.stringify(definition), actorId],
       );
       const result = await client.query(
-        `UPDATE alerting_policy_catalog SET current_version = $3, updated_at = NOW() WHERE organization_id = $1 AND id = $2 RETURNING *`,
+        `UPDATE alerting_policy_catalog SET current_version = $3, updated_at = NOW() WHERE organization_id = $1 AND id = $2 RETURNING id, organization_id, slug, name, description, category_id, severity, default_threshold, recovery_threshold, cooldown_seconds, evaluation_window_seconds, enabled, is_system, current_version, created_at, updated_at`,
         [organizationId, policyId, version],
       );
       return result.rows[0] ?? null;

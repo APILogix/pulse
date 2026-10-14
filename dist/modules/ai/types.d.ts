@@ -27,16 +27,16 @@ export type InvestigationResource = (typeof INVESTIGATION_RESOURCES)[number];
 export declare const investigationResourceSchema: z.ZodEnum<{
     error: "error";
     trace: "trace";
-    request: "request";
     log: "log";
+    request: "request";
     logs: "logs";
 }>;
 export declare const aiInvestigationRequestSchema: z.ZodObject<{
     resource: z.ZodEnum<{
         error: "error";
         trace: "trace";
-        request: "request";
         log: "log";
+        request: "request";
         logs: "logs";
     }>;
     publicId: z.ZodString;

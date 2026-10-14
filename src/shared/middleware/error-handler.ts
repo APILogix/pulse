@@ -69,6 +69,9 @@ export function errorHandler(
   request: FastifyRequest,
   reply: FastifyReply
 ): FastifyReply {
+  if (reply.sent) {
+    return reply;
+  }
   const err = error as StructuredError;
   const isDev = env.NODE_ENV === 'development';
   const isZodError = err.name === 'ZodError';

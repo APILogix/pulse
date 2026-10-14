@@ -1,4 +1,4 @@
-import { randomUUID } from 'crypto';
+import { v7 as uuidv7 } from 'uuid';
 import { pool } from '../../config/database.js';
 import { entitlementsService } from '../billing/entitlements/service.js';
 import { DEFAULT_CREDIT_COSTS } from './types.js';
@@ -381,7 +381,7 @@ export class AIRepository {
         });
     }
     async prepareChatRequest(input) {
-        const requestId = randomUUID();
+        const requestId = uuidv7();
         return this.transaction(async (client) => {
             await client.query(`SELECT pg_advisory_xact_lock(hashtextextended($1,0))`, [`ai-chat:${input.tenantId}`]);
             const existing = await client.query(`SELECT request_id,conversation_id,input_hash,response,status
@@ -418,7 +418,7 @@ export class AIRepository {
                     throw new AIRepositoryError('Chat conversation not found', 'NOT_FOUND');
             }
             else {
-                conversationId = randomUUID();
+                conversationId = uuidv7();
                 await client.query(`INSERT INTO ai_conversations (conversation_id,tenant_id,user_id,title)
            VALUES ($1,$2,$3,$4)`, [conversationId, input.tenantId, input.userId, input.question.slice(0, 160)]);
             }
@@ -543,7 +543,7 @@ export class AIRepository {
             if (Number(active.rows[0]?.count ?? 0) >= input.maxConcurrentJobs) {
                 throw new AIRepositoryError('The organization has reached its concurrent AI job limit', 'TOO_MANY_JOBS');
             }
-            const jobId = randomUUID();
+            const jobId = uuidv7();
             await client.query(`INSERT INTO ai_jobs
           (job_id,tenant_id,user_id,ai_mode,status,input_hash,input_ciphertext,idempotency_key)
          VALUES ($1,$2,$3,$4,'queued',$5,$6,$7)`, [jobId, input.tenantId, input.userId, input.mode, input.inputHash,
@@ -610,8 +610,26 @@ export class AIRepository {
         });
     }
     async releaseStaleReservations() {
-        const result = await this.db.query(`SELECT ai_release_stale_reservations() AS released_count`);
-        return Number(result.rows[0]?.released_count ?? 0);
+        try {
+            const result = await this.db.query(`SELECT ai_release_stale_reservations() AS released_count`);
+            return Number(result.rows[0]?.released_count ?? 0);
+        }
+        catch (err) {
+            if (err?.code === '42883') {
+                // Fallback: stored function not defined in DB yet; run equivalent inline SQL
+                const fallback = await this.db.query(`
+          WITH stale AS (
+            DELETE FROM ai_credit_reservations
+            WHERE status = 'pending'
+              AND created_at < NOW() - INTERVAL '15 minutes'
+            RETURNING tenant_id, amount
+          )
+          SELECT COUNT(*)::text AS count FROM stale;
+        `);
+                return Number(fallback.rows[0]?.count ?? 0);
+            }
+            throw err;
+        }
     }
     async markRequestFailed(requestId, tenantId, status) {
         await this.db.query(`UPDATE ai_requests SET status=$3 WHERE request_id=$1 AND tenant_id=$2`, [requestId, tenantId, status]);

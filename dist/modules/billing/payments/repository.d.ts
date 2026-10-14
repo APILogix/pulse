@@ -26,6 +26,7 @@ export interface PaymentRow {
     created_at: Date;
     updated_at: Date;
 }
+export declare const PAYMENT_COLUMNS = "\n  id, organization_id, invoice_id, subscription_id, provider, provider_payment_id,\n  status, currency, amount, fee_amount, tax_amount, refunded_amount,\n  payment_method, payment_method_last4, initiated_at, authorized_at,\n  captured_at, failed_at, refunded_at, failure_code, failure_reason,\n  created_at, updated_at\n";
 export declare class PaymentsRepository {
     private readonly db;
     constructor(db?: Pool);

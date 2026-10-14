@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { OrgStatusSchema, MemberStatusSchema, OrgRoleSchema, UuidSchema, OrgIdParamsSchema, IdParamsSchema, CursorPaginationSchema, } from "./shared/types.js";
 export * from "./shared/types.js";
+export { ORGANIZATION_DEFAULTS } from "./shared/constants.js";
 // ═══════════════════════════════════════════════════
 // ENUMS — Match PostgreSQL enum types exactly
 // ═══════════════════════════════════════════════════

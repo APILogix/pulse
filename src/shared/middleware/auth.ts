@@ -33,8 +33,8 @@ import {
   hasFreshStepUp,
   isAccessTokenBlacklisted,
 } from '../../modules/auth/infrastructure/cache/auth.cache.js';
-import { findSessionById, findUserById } from '../../modules/auth/infrastructure/repositories/index.js';
-import { AuthErrorCodes, type User } from '../../modules/auth/domain/types.js';
+import { findSessionAndUserById } from '../../modules/auth/infrastructure/repositories/index.js';
+import { AuthErrorCodes } from '../../modules/auth/domain/types.js';
 import { verifyAccessToken } from '../../modules/auth/infrastructure/crypto/jwt.js';
 
 declare module 'fastify' {
@@ -124,46 +124,45 @@ export async function authenticate(
       );
     }
 
-    // 5-7. Database lookups (only after the in-process fast paths)
-    const session = await findSessionById(decoded.jti);
-    if (!session) {
+    // 5-7. Database lookup (single joined query for session + user)
+    const record = await findSessionAndUserById(decoded.jti);
+    if (!record) {
       log.warn({ reqId: request.id, sessionId: decoded.jti }, 'Session not found');
       return unauthorized(reply, 'SESSION_INVALID', 'Session not found');
     }
 
-    if (session.status !== 'active') {
+    if (record.session_status !== 'active') {
       log.warn(
-        { reqId: request.id, sessionId: decoded.jti, status: session.status },
+        { reqId: request.id, sessionId: decoded.jti, status: record.session_status },
         'Session inactive',
       );
       return unauthorized(reply, 'SESSION_INVALID', 'Session inactive');
     }
 
-    if (new Date(session.expires_at) < new Date()) {
+    if (new Date(record.session_expires_at) < new Date()) {
       log.warn({ reqId: request.id, sessionId: decoded.jti }, 'Session expired');
       return unauthorized(reply, 'SESSION_EXPIRED', 'Session expired');
     }
 
-    if (session.user_id !== decoded.sub) {
+    if (record.session_user_id !== decoded.sub) {
       log.error(
         {
           reqId: request.id,
           tokenUser: decoded.sub,
-          sessionUser: session.user_id,
+          sessionUser: record.session_user_id,
         },
         'Session-user mismatch',
       );
       return unauthorized(reply, 'SESSION_MISMATCH', 'Invalid session mapping');
     }
 
-    const user: User | null = await findUserById(decoded.sub);
-    if (!user || user.deleted_at) {
+    if (!record.user_id || record.user_deleted_at) {
       log.warn({ reqId: request.id, userId: decoded.sub }, 'User not found or deleted');
       return unauthorized(reply, AuthErrorCodes.USER_NOT_FOUND, 'User not found');
     }
 
-    if (user.status === 'suspended') {
-      log.warn({ reqId: request.id, userId: user.id }, 'Suspended account access attempt');
+    if (record.user_status === 'suspended') {
+      log.warn({ reqId: request.id, userId: record.user_id }, 'Suspended account access attempt');
       return unauthorized(
         reply,
         AuthErrorCodes.USER_SUSPENDED,
@@ -173,10 +172,10 @@ export async function authenticate(
     }
 
     request.user = {
-      id: user.id,
-      email: user.email,
-      isAdmin: user.is_admin === true,
-      currentOrgId: user.current_org_id ?? null,
+      id: record.user_id,
+      email: record.user_email!,
+      isAdmin: record.user_is_admin === true,
+      currentOrgId: record.user_current_org_id ?? null,
       sessionId: decoded.jti,
       mfaVerified: decoded.mfa_verified === true,
       stepUpFresh: hasFreshStepUp(decoded.jti),

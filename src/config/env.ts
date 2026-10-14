@@ -1,7 +1,9 @@
+import './dns.js';
 import { z } from 'zod';
 import { config } from 'dotenv';
+import { parsePostgresAddressFamily } from './postgres-network.js';
 
-config()
+config({ quiet: true });
 
 const envSchema = z.object({
   // Server
@@ -12,12 +14,32 @@ const envSchema = z.object({
   HOST: z.string().default('0.0.0.0'),
   // Admission-control thresholds. Keep these below the process/container hard
   // limits so Fastify can shed load and recover instead of being OOM-killed.
-  PRESSURE_MAX_EVENT_LOOP_DELAY_MS: z.coerce.number().int().min(50).default(1000),
+  PRESSURE_MAX_EVENT_LOOP_DELAY_MS: z.coerce.number().int().min(50).default(1500),
+  PRESSURE_CRITICAL_EVENT_LOOP_DELAY_MS: z.coerce.number().int().min(500).default(3500),
   PRESSURE_MAX_EVENT_LOOP_UTILIZATION: z.coerce.number().min(0.5).max(1).default(0.95),
   PRESSURE_MAX_HEAP_MB: z.coerce.number().int().min(64).default(420),
   PRESSURE_MAX_RSS_MB: z.coerce.number().int().min(128).default(768),
   PRESSURE_LOG_INTERVAL_MS: z.coerce.number().int().min(1000).default(10_000),
+  PRESSURE_SAMPLING_INTERVAL_MS: z.coerce.number().int().min(100).default(500),
+  PRESSURE_CONSECUTIVE_BREACHES: z.coerce.number().int().min(1).default(2),
+  PRESSURE_TIERED_SHEDDING_ENABLED: z
+    .string()
+    .optional()
+    .transform((val) => val !== 'false'),
   SHUTDOWN_TIMEOUT_MS: z.coerce.number().int().min(5000).default(20_000),
+  // ── Memory diagnostics & heap monitoring ────────────────────────────────
+  MEMORY_DIAGNOSTICS_ENABLED: z
+    .string()
+    .optional()
+    .transform((value) => value !== 'false'),
+  MEMORY_CHECK_INTERVAL_MS: z.coerce.number().int().min(1000).default(60_000),
+  MEMORY_GROWTH_THRESHOLD: z.coerce.number().min(0.01).max(2.0).default(0.20),
+  MEMORY_CONSECUTIVE_SAMPLES: z.coerce.number().int().min(2).max(10).default(3),
+  MEMORY_MIN_HEAP_THRESHOLD_MB: z.coerce.number().int().min(10).default(128),
+  MEMORY_DIAGNOSTIC_LOG_SAMPLES: z
+    .string()
+    .optional()
+    .transform((value) => value === 'true'),
   APP_NAME: z.string().default('Pulsiv'),
   APP_URL: z.string().url().default('http://localhost:5173'),
   BACKEND_URL: z.string().url().default('http://localhost:5000/api'),
@@ -27,10 +49,40 @@ const envSchema = z.object({
     .default('127.0.0.1,::1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16'),
   // Primary Database (PostgreSQL)
   DATABASE_URL: z.string(),
-  DB_POOL_MAX: z.coerce.number().int().min(1).max(100).default(10),
+  // 0/unset preserves Node's default address selection. Use 4 or 6 only when
+  // connectivity testing in that specific environment proves it is required.
+  DB_FAMILY: z
+    .unknown()
+    .optional()
+    .transform((value, ctx) => {
+      try {
+        return parsePostgresAddressFamily(value);
+      } catch (error) {
+        ctx.addIssue({
+          code: 'custom',
+          message: error instanceof Error ? error.message : 'Invalid DB_FAMILY',
+        });
+        return z.NEVER;
+      }
+    }),
+  // Raised 10 -> 20. The primary pool serves request-path metadata reads
+  // (API key resolution, quota checks, project/org lookups) for the whole API
+  // tier; at 10 a burst of concurrent requests queued on pool acquisition.
+  // Budget note: this is PER PROCESS. See docs/deployment/environment-configuration.md
+  // for the fleet-wide connection accounting before raising it further.
+  DB_POOL_MAX: z.coerce.number().int().min(1).max(100).default(20),
   DB_POOL_MIN: z.coerce.number().int().min(0).max(100).default(0),
+  // Dedicated notification subsystem pool maximum. Sized to bound notification
+  // worker concurrency so delivery workers cannot exhaust primary API connections.
+  NOTIFICATION_POOL_MAX: z.coerce.number().int().min(1).max(50).default(10),
   DB_IDLE_TIMEOUT_MS: z.coerce.number().int().min(0).default(30000),
   DB_CONNECTION_TIMEOUT_MS: z.coerce.number().int().min(1000).default(30000),
+  // Startup datastore retry budget. Sized so a managed-Postgres checkpoint or
+  // pooler hiccup (10-20s) cannot exhaust every attempt before the DB recovers.
+  // Defaults: 8 attempts, 2s -> 4s -> 8s -> 15s (capped) ≈ 74s of backoff.
+  STARTUP_DB_RETRY_MAX_ATTEMPTS: z.coerce.number().int().min(1).max(50).default(8),
+  STARTUP_DB_RETRY_BASE_DELAY_MS: z.coerce.number().int().min(100).default(2000),
+  STARTUP_DB_RETRY_MAX_DELAY_MS: z.coerce.number().int().min(100).default(15000),
   DB_STATEMENT_TIMEOUT_MS: z.coerce.number().int().min(0).default(30000),
   DB_QUERY_TIMEOUT_MS: z.coerce.number().int().min(0).default(0),
   DB_KEEPALIVE_INITIAL_DELAY_MS: z.coerce.number().int().min(0).default(10000),
@@ -46,12 +98,24 @@ const envSchema = z.object({
   DB_SSL_REJECT_UNAUTHORIZED: z
     .string()
     .optional()
-    .transform((value) => value !== 'false'),
+    .transform((value) => {
+      if (value === undefined) return undefined;
+      return value === 'true';
+    }),
+
+  // SDK Configuration & Remote Delivery
+  SDK_INIT_DEADLINE_MS: z.coerce.number().int().min(1000).max(60000).default(30000),
+  SDK_INIT_MAX_ACTIVE_FLIGHTS: z.coerce.number().int().min(1).max(1024).default(256),
 
   // Log Database (Primary + Replica)
   LOG_DB_PRIMARY: z.string().optional(),
   LOG_DB_REPLICA: z.string().optional(),
-  LOG_POOL_MAX: z.coerce.number().int().min(1).max(500).default(10),
+  // Raised 10 -> 20. This pool serves Log DB READS (dashboards, analytics) in
+  // the API tier and Log DB reads/migrations in the worker tiers. Ingest WRITES
+  // no longer draw from it — they use the dedicated pool sized by
+  // INGESTION_WRITE_POOL_SIZE (see shared/workers/ingestion-worker-main.ts) —
+  // so raising this buys read concurrency without affecting write admission.
+  LOG_POOL_MAX: z.coerce.number().int().min(1).max(500).default(20),
   // Do not pin warm log connections in every API replica while idle.
   LOG_POOL_MIN: z.coerce.number().int().min(0).max(500).default(0),
   // Read-path statement timeout (ms). Bounds runaway analytical reads.
@@ -84,7 +148,10 @@ const envSchema = z.object({
   LOG_DB_SSL_REJECT_UNAUTHORIZED: z
     .string()
     .optional()
-    .transform((v) => v !== 'false'),
+    .transform((value) => {
+      if (value === undefined) return undefined;
+      return value === 'true';
+    }),
 
   // ── Log DB TimescaleDB tuning ──────────────────────────────────────────
   // When enabled, connect() promotes the event tables to TimescaleDB
@@ -97,19 +164,32 @@ const envSchema = z.object({
   LOG_DB_CHUNK_INTERVAL: z.string().default('1 day'),
   LOG_DB_COMPRESS_AFTER: z.string().default('7 days'),
   LOG_DB_RETENTION: z.string().default('90 days'),
-  // Ingestion workers write into the dedicated Log DB event schema. Keep this
-  // enabled so workers fail fast instead of processing jobs against stale/missing
-  // Log DB tables. Set to false only when migrations are handled externally.
+
+  // Ingestion workers write into the dedicated Log DB event schema. When
+  // enabled, startup applies unattended-safe migrations. In production, this
+  // defaults to false so migrations run as an explicit release/deployment step.
+  // In development and test environments, this defaults to true for developer convenience.
   LOG_DB_AUTO_MIGRATE: z
     .string()
     .optional()
-    .transform((value) => value !== 'false'),
+    .transform((value) => {
+      if (value !== undefined) return value === 'true' || value === '1';
+      return process.env.NODE_ENV !== 'production';
+    }),
 
   // ClickHouse (Optional)
   CLICKHOUSE_URL: z.string().optional(),
 
   // Redis
   REDIS_URL: z.string(),
+  // Redis is an optional acceleration layer by default. Set true only when the
+  // deployment requires Redis for readiness and startup correctness.
+  REDIS_REQUIRED: z
+    .string()
+    .optional()
+    .transform((value) => value === 'true' || value === '1'),
+  REDIS_CONNECT_TIMEOUT_MS: z.coerce.number().int().min(1000).default(10000),
+  REDIS_COMMAND_TIMEOUT_MS: z.coerce.number().int().min(500).default(5000),
 
   // Security
   // JWT_SECRET signs short-lived access tokens. JWT_REFRESH_SECRET signs
@@ -250,10 +330,31 @@ const envSchema = z.object({
   INGESTION_DB_CONNECTION_TIMEOUT_MS: z.coerce.number().int().min(1000).default(30_000),
   INGESTION_LOG_DB_SYNCHRONOUS_COMMIT: z
     .enum(['on', 'off', 'local', 'remote_write', 'remote_apply'])
-    .default('on'),
+    .default('off'),
   INGESTION_LOG_DB_LOCK_TIMEOUT_MS: z.coerce.number().int().min(0).default(2_000),
-  INGESTION_LOG_DB_STATEMENT_TIMEOUT_MS: z.coerce.number().int().min(0).default(0),
-  INGESTION_LOG_DB_IDLE_TX_TIMEOUT_MS: z.coerce.number().int().min(0).default(30_000),
+  // Per-transaction statement timeout for ingest writes. MUST stay well below
+  // INGESTION_JOB_EXPIRE_SECONDS (300s): pg-boss re-delivers an expired job
+  // WITHOUT cancelling the still-running transaction, so an unbounded statement
+  // produces duplicate work AND doubles connection demand while the original
+  // transaction keeps its connection hostage. 0 disables (previous default) and
+  // is unsafe under load — a single pathological batch could pin one of the
+  // pool's connections indefinitely. 60s is ~2 orders of magnitude above the
+  // observed p99 for a 200-event batch, so it only fires on genuine pathology.
+  INGESTION_LOG_DB_STATEMENT_TIMEOUT_MS: z.coerce.number().int().min(0).default(60_000),
+  // Ingestion write transactions already have lock and statement timeouts.
+  // Leave idle-in-transaction disabled by default because the worker can spend
+  // CPU time preparing large telemetry batches inside the transaction boundary,
+  // which PostgreSQL treats as idle and may otherwise terminate mid-batch.
+  INGESTION_LOG_DB_IDLE_TX_TIMEOUT_MS: z.coerce.number().int().min(0).default(0),
+  // Dedicated telemetry write pool for the ingestion worker process. Isolates
+  // ingest writes from the shared Log DB pool (LOG_POOL_MAX) so a burst of
+  // dashboard reads in the API process cannot steal ingest write capacity, and
+  // vice versa.
+  INGESTION_WRITE_POOL_SIZE: z.coerce.number().int().min(2).max(200).default(24),
+  // Hard ceiling on concurrent ingest transactions (write-admission permits).
+  // Bounded to (pool - reserve) at runtime by resolveWritePermits(), so this can
+  // under-use the pool but can never oversubscribe it.
+  INGESTION_WRITE_CONCURRENCY: z.coerce.number().int().min(1).max(200).default(16),
   INGESTION_FAST_REQUEST_MIN_DURATION_MS: z.coerce.number().min(0).default(1000),
   MAX_QUEUE_DEPTH: z.coerce.number().int().min(0).default(50_000),
   MAX_GAUGE_AGE_MS: z.coerce.number().int().min(1000).default(10_000),
@@ -279,7 +380,7 @@ const envSchema = z.object({
   // ── Enterprise ingestion pipeline (pg-boss) ─────────────────────────────
   // Events per pg-boss job. Chunks bound job payload size and worker unit of
   // work; smaller = fairer scheduling, larger = fewer round trips.
-  INGESTION_JOB_CHUNK_SIZE: z.coerce.number().int().min(10).max(1000).default(200),
+  INGESTION_JOB_CHUNK_SIZE: z.coerce.number().int().min(10).max(1000).default(500),
   // Approximate serialized event bytes per pg-boss job. Count-based chunking
   // remains authoritative, but this keeps large payload batches from creating
   // oversized worker transactions.
@@ -299,54 +400,35 @@ const envSchema = z.object({
   INGESTION_FAIRNESS_MAX_DEFERS: z.coerce.number().int().min(0).max(20).default(5),
   INGESTION_FAIRNESS_DEFER_DELAY_SECONDS: z.coerce.number().int().min(1).max(60).default(2),
   // Per-event-type worker concurrency (pg-boss localConcurrency / batchSize).
-  INGESTION_TYPE_WORKER_CONCURRENCY: z.coerce.number().int().min(1).max(256).default(8),
+  INGESTION_TYPE_WORKER_CONCURRENCY: z.coerce.number().int().min(1).max(256).default(2),
   INGESTION_TYPE_WORKER_BATCH_SIZE: z.coerce.number().int().min(1).max(100).default(4),
+  // Gateway backpressure queue-depth probe cache TTL.
+  INGESTION_QUEUE_DEPTH_CACHE_MS: z.coerce.number().int().min(250).max(60_000).default(3_000),
   // Metrics HTTP endpoint exposed by worker processes.
   INGESTION_WORKER_METRICS_PORT: z.coerce.number().int().min(1).max(65535).default(9465),
-  // Cron schedules (pg-boss) for the usage rollup and alert rule evaluator.
-  INGESTION_USAGE_ROLLUP_CRON: z.string().default('* * * * *'),
-  INGESTION_ALERT_EVAL_CRON: z.string().default('* * * * *'),
+  // ── Enterprise PGMQ / Queue Configuration ──────────────────────────────
+  QUEUE_BATCH_SIZE: z.coerce.number().int().min(1).max(500).default(50),
+  QUEUE_VISIBILITY_TIMEOUT_SECONDS: z.coerce.number().int().min(1).max(3600).default(60),
+  QUEUE_POLL_SECONDS: z.coerce.number().int().min(0).max(60).default(0),
+  QUEUE_MAX_ATTEMPTS: z.coerce.number().int().min(1).max(20).default(5),
+  QUEUE_HEARTBEAT_INTERVAL_SECONDS: z.coerce.number().int().min(1).max(300).default(15),
+  QUEUE_DRAIN_TIMEOUT_MS: z.coerce.number().int().min(1000).max(60000).default(30000),
+  QUEUE_POOL_MAX: z.coerce.number().int().min(2).max(200).default(20),
+  QUEUE_COMMAND_POOL_MAX: z.coerce.number().int().min(1).max(50).default(15),
+  QUEUE_MAX_IDLE_POLL_MS: z.coerce.number().int().min(100).max(60000).default(5000),
 
   // ── Alerting v2 rollout flags ───────────────────────────────────────────────
-  // docs/alerting-redesign/07-migration-plan.md §7 (zero-downtime sequence).
-  // Flags are read at boot, so a rollback is a restart — never a migration.
-  //
-  // ALERTING_V2_WRITE: when true, alerting/connector runtime writes are mirrored
-  // into the typed *_v2 Log DB tables (Increment 1 creates them; Increment 5
-  // begins dual-write). Legacy tables stay authoritative until ALERTING_V2_READ.
-  // A v2 mirror failure is logged and MUST NOT fail the request.
   ALERTING_V2_WRITE: z
     .string()
     .optional()
     .transform((value) => value === 'true'),
-  // ALERTING_V2_READ: when true, reads come from the typed *_v2 runtime tables.
-  // Requires ALERTING_V2_WRITE plus a passing verification gate
-  // (07-migration-plan.md §9). Defined here so Increment 1 ships the complete,
-  // documented rollout switch rather than adding flags piecemeal later.
-  ALERTING_V2_READ: z
-    .string()
-    .optional()
-    .transform((value) => value === 'true'),
-  // DEV-002 (docs/alerting-redesign/DEVIATIONS.md): the scheduled evaluators read telemetry
-  // through an injected pool. When the telemetry pool differs from the control-plane pool,
-  // repointing changes WHAT the evaluator can see, so firing is suppressed by default until
-  // Increment 8's parity harness has run. Tri-state:
-  //   'true'  → always dry-run (evaluate + log, never fire or auto-resolve)
-  //   'false' → always fire (use only after parity validation)
-  //   unset   → dry-run automatically IF the telemetry pool differs from the config pool,
-  //             so single-database deployments keep their current behaviour exactly.
   ALERTING_EVAL_DRY_RUN: z.enum(['true', 'false']).optional(),
-
-  // Boot assertion for ADR-0006: the alerting runtime pool MUST be able to see the
-  // telemetry and v2 runtime tables. Converts audit finding B1 (evaluator querying a
-  // database with no telemetry) from a silent failure into a startup crash. Only
-  // disable for local bootstrap before Log DB migrations have been applied.
   ALERTING_RUNTIME_POOL_ASSERT: z
     .string()
     .optional()
     .transform((value) => value !== 'false'),
 
-  // ── Connector global guards (alerting redesign Increment 7) ─────────────
+  // ── Connector global guards ─────────────────────────────────────────────
   CONNECTOR_GLOBAL_LIMITS: z
     .string()
     .optional()
@@ -357,60 +439,35 @@ const envSchema = z.object({
   CONNECTOR_CIRCUIT_RESET_SECONDS: z.coerce.number().int().min(1).default(60),
   ESCALATION_V2: z.string().optional().transform((value) => value === 'true'),
 
-  // ── Analytics engine (docs/analytics/00-architecture-overview.md §7) ────
-  // Dedicated worker process that turns canonical Log DB telemetry into
-  // dashboard rollups. Completely independent from ingestion: separate
-  // process, separate pool, separate queues, read-only on events_*.
+  // ── Analytics engine ───────────────────────────────────────────────────
   ANALYTICS_ENGINE_ENABLED: z
     .string()
     .optional()
     .transform((value) => value !== 'false'),
-  // Per-queue local concurrency for analytics domain workers.
   ANALYTICS_WORKER_CONCURRENCY: z.coerce.number().int().min(1).max(64).default(4),
-  // Hard ceiling on rows a single worker run may fold into rollups. Bounds the
-  // read pressure any one analytics batch can put on the Log DB.
   ANALYTICS_BATCH_MAX_ROWS: z.coerce.number().int().min(1000).max(5_000_000).default(50_000),
-  // Maximum catch-up span per run. Large backlogs are consumed in slices so a
-  // cold start cannot issue an unbounded scan.
   ANALYTICS_MAX_WINDOW_SPAN_MINUTES: z.coerce.number().int().min(1).max(1440).default(60),
-  // Recompute lookback for late-arriving events. Buckets newer than
-  // (now - grace) are recomputed on every pass.
   ANALYTICS_LATE_EVENT_GRACE_SECONDS: z.coerce.number().int().min(0).max(86_400).default(900),
-  // Per-statement guard for analytics reads (0 disables).
   ANALYTICS_STATEMENT_TIMEOUT_MS: z.coerce.number().int().min(0).default(30_000),
-  // Dedicated Log DB pool for the analytics process. Kept small so analytics
-  // reads can never starve the ingestion writer pool.
   ANALYTICS_DB_POOL_MAX: z.coerce.number().int().min(1).max(64).default(4),
-  // Health + Prometheus endpoint exposed by the analytics worker process.
   ANALYTICS_HEALTH_PORT: z.coerce.number().int().min(1).max(65535).default(9301),
-  // Watermark lag beyond which API responses report meta.freshness.stale.
   ANALYTICS_FRESHNESS_STALE_SECONDS: z.coerce.number().int().min(30).default(300),
-  // Analytics-owned retention pruning (never touches events_*).
   ANALYTICS_RETENTION_ENABLED: z
     .string()
     .optional()
     .transform((value) => value !== 'false'),
-  // Boot assertion that the analytics pool is attached to the database that
-  // owns events_* — mirrors ALERTING_RUNTIME_POOL_ASSERT.
   ANALYTICS_POOL_ASSERT: z
     .string()
     .optional()
     .transform((value) => value !== 'false'),
-  // Per-bucket entity ceiling for Shape B rollups. Overflow is folded into a
-  // single __other__ row so route/metric-name explosions stay bounded.
   ANALYTICS_ENTITY_TOPK: z.coerce.number().int().min(50).max(50_000).default(1_000),
-  // Apdex satisfied threshold (ms). Tolerating zone is 4x this value.
   ANALYTICS_APDEX_THRESHOLD_MS: z.coerce.number().int().min(10).max(60_000).default(500),
-  // Inactivity gap that closes a reconstructed session.
   ANALYTICS_SESSION_IDLE_MINUTES: z.coerce.number().int().min(1).max(1440).default(30),
 });
 
 export const env = envSchema.parse(process.env);
 
 // Defense-in-depth: refuse to boot if any two crypto secrets are identical.
-// Reusing one secret across JWT signing, refresh-token signing, and cookie
-// signing means a compromise in one subsystem trivially compromises the
-// others. This guard catches misconfiguration during startup.
 (function assertSecretsAreDistinct(): void {
   const distinct = new Set([
     env.JWT_SECRET,
@@ -422,6 +479,22 @@ export const env = envSchema.parse(process.env);
   if (distinct.size < 5) {
     throw new Error(
       'Auth misconfiguration: JWT_SECRET, JWT_REFRESH_SECRET, COOKIE_SECRET, AUTH_TOKEN_SECRET, and ENCRYPTION_KEY must each be unique.',
+    );
+  }
+})();
+
+// Ingestion durability invariant: an ingest transaction must be forced to abort
+// BEFORE pg-boss considers its job expired and re-delivers it.
+(function assertIngestionTimeoutsAreOrdered(): void {
+  const statementTimeoutMs = env.INGESTION_LOG_DB_STATEMENT_TIMEOUT_MS;
+  const expiryMs = env.INGESTION_JOB_EXPIRE_SECONDS * 1000;
+  if (statementTimeoutMs > 0 && statementTimeoutMs >= expiryMs) {
+    throw new Error(
+      'Ingestion misconfiguration: INGESTION_LOG_DB_STATEMENT_TIMEOUT_MS ' +
+        `(${statementTimeoutMs}ms) must be strictly less than INGESTION_JOB_EXPIRE_SECONDS ` +
+        `(${env.INGESTION_JOB_EXPIRE_SECONDS}s = ${expiryMs}ms). Otherwise pg-boss re-delivers ` +
+        'the job while the original transaction is still running, causing duplicate work and ' +
+        'doubled connection demand.',
     );
   }
 })();

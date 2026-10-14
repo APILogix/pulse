@@ -152,6 +152,26 @@ export interface AppendHistoryInput {
   metadata?: Record<string, unknown>;
 }
 
+/**
+ * Canonical alerting -> automation domain event.
+ * See docs/automationv2/27-alerting-automation-event-contract.md for the full
+ * contract and field derivation.
+ */
+export interface AppendDomainOutboxInput {
+  organizationId: string;
+  projectId?: string | null;
+  environment?: string | null;
+  alertKey: string;
+  alertEventId: string;
+  eventType: 'alert.event.created' | 'alert.event.resolved';
+  /** `alert:{eventType}:{alert_events_v2.idempotency_key}` */
+  dedupeKey: string;
+  severity: LogDbSeverity;
+  occurredAt: Date;
+  payload: Record<string, unknown>;
+  metadata?: Record<string, unknown>;
+}
+
 export interface NotificationJobInsert {
   organizationId: string;
   projectId?: string | null;
@@ -273,6 +293,46 @@ export interface UpsertRuleEvalStateInput {
   recoveredAt?: Date | null;
 }
 
+/** Scope identity for an atomic evaluation-state transition. */
+interface RuleEvalScopeIdentity {
+  scopeHash: string;
+  organizationId: string;
+  ruleId: string;
+  bindingId?: string | null;
+  projectId?: string | null;
+  environment?: string | null;
+  service?: string | null;
+  endpoint?: string | null;
+  evaluatedAt: Date;
+}
+
+export interface ClaimBreachDecisionInput extends RuleEvalScopeIdentity {
+  /** Effective `consecutiveBreaches` required before firing (>= 1). */
+  requiredBreaches: number;
+  /** Effective cooldown in seconds (0 disables cooldown gating). */
+  cooldownSeconds: number;
+}
+
+export interface ClaimRecoveryInput extends RuleEvalScopeIdentity {}
+
+/** A row resolved by the auto-resolve sweep. */
+export interface AutoResolvedAlertRow {
+  alert_key: string;
+  organization_id: string;
+  project_id: string | null;
+  latest_event_id: string;
+  severity: LogDbSeverity;
+}
+
+export interface BreachDecision {
+  consecutiveBreaches: number;
+  /** True for exactly one caller per cooldown window. Authoritative fire gate. */
+  fired: boolean;
+  lastFiredAt: Date | null;
+  /** True when state could not be determined; callers MUST NOT fire. */
+  indeterminate: boolean;
+}
+
 /** Throttle inputs derived from the append-only ledger (replaces alert_throttle_windows). */
 export interface ThrottleWindowState {
   ruleActionId: string;
@@ -283,6 +343,10 @@ export interface ThrottleWindowState {
 function json(value: Record<string, unknown> | undefined | null): string {
   return JSON.stringify(value ?? {});
 }
+
+export const ALERT_EVENTS_V2_COLUMNS = 'id, organization_id, project_id, environment, service, endpoint, rule_id, binding_id, rule_revision, kind, severity, priority, fingerprint, dedup_key, correlation_key, group_key, source, engine, idempotency_key, observed_value, threshold_value, evidence, policy_snapshot, labels, annotations, occurred_at, created_at';
+export const ALERT_EVENT_STATE_COLUMNS = 'alert_key, organization_id, project_id, latest_event_id, state, severity, duplicate_count, first_seen_at, last_seen_at, last_notified_at, acknowledged_by, acknowledged_at, acknowledgment_expires_at, resolved_at, resolution_reason, auto_resolve_at, escalation_policy_id, escalation_step_number, escalation_repeat_count, next_escalation_at, incident_id, updated_at';
+export const ALERT_DELIVERY_ATTEMPTS_V2_COLUMNS = 'id, organization_id, project_id, alert_event_id, notification_job_id, channel_kind, connector_id, route_id, recipient_user_id, attempt_number, status, response_status_code, external_message_id, error_category, error_message, latency_ms, created_at';
 
 export class AlertRuntimeRepository {
   /**
@@ -361,7 +425,7 @@ export class AlertRuntimeRepository {
               $21::jsonb, $22::jsonb, $23::jsonb, $24::jsonb, $25
          FROM reserved
        ON CONFLICT DO NOTHING
-       RETURNING *`,
+       RETURNING id, organization_id, project_id, environment, service, endpoint, rule_id, binding_id, rule_revision, kind, severity, priority, fingerprint, dedup_key, correlation_key, group_key, source, engine, idempotency_key, observed_value, threshold_value, evidence, policy_snapshot, labels, annotations, occurred_at, ingested_at`,
       [
         input.organizationId,
         input.projectId ?? null,
@@ -399,8 +463,7 @@ export class AlertRuntimeRepository {
     client?: PoolClient,
   ): Promise<AlertEventV2Row | null> {
     const result = await this.exec(client).query<AlertEventV2Row>(
-      `SELECT * FROM alert_events_v2 WHERE id = $1 AND organization_id = $2
-       ORDER BY created_at DESC LIMIT 1`,
+      `SELECT ${ALERT_EVENTS_V2_COLUMNS} FROM alert_events_v2 WHERE id = $1 AND organization_id = $2 ORDER BY created_at DESC LIMIT 1`,
       [id, organizationId],
     );
     return result.rows[0] ?? null;
@@ -410,7 +473,7 @@ export class AlertRuntimeRepository {
 
   async getState(alertKey: string, client?: PoolClient): Promise<AlertEventStateRow | null> {
     const result = await this.exec(client).query<AlertEventStateRow>(
-      `SELECT * FROM alert_event_state WHERE alert_key = $1`,
+      `SELECT ${ALERT_EVENT_STATE_COLUMNS} FROM alert_event_state WHERE alert_key = $1`,
       [alertKey],
     );
     return result.rows[0] ?? null;
@@ -425,7 +488,7 @@ export class AlertRuntimeRepository {
    */
   async lockState(client: PoolClient, alertKey: string): Promise<AlertEventStateRow | null> {
     const result = await client.query<AlertEventStateRow>(
-      `SELECT * FROM alert_event_state WHERE alert_key = $1 FOR UPDATE`,
+      `SELECT ${ALERT_EVENT_STATE_COLUMNS} FROM alert_event_state WHERE alert_key = $1 FOR UPDATE`,
       [alertKey],
     );
     return result.rows[0] ?? null;
@@ -459,7 +522,7 @@ export class AlertRuntimeRepository {
          escalation_step_number = EXCLUDED.escalation_step_number,
          next_escalation_at     = EXCLUDED.next_escalation_at,
          incident_id            = COALESCE(EXCLUDED.incident_id, alert_event_state.incident_id)
-       RETURNING *`,
+       RETURNING ${ALERT_EVENT_STATE_COLUMNS}`,
       [
         input.alertKey,
         input.organizationId,
@@ -490,7 +553,7 @@ export class AlertRuntimeRepository {
           SET duplicate_count = duplicate_count + 1,
               last_seen_at = GREATEST(last_seen_at, $2)
         WHERE alert_key = $1
-        RETURNING *`,
+        RETURNING ${ALERT_EVENT_STATE_COLUMNS}`,
       [alertKey, seenAt],
     );
     return result.rows[0] ?? null;
@@ -518,6 +581,66 @@ export class AlertRuntimeRepository {
         input.newState ?? null,
         json(input.changesSummary),
         json(input.metadata),
+      ],
+    );
+  }
+
+  /**
+   * Append a durable alert domain event for the automation bridge.
+   *
+   * Storage note: this reuses `telemetry_outbox` (`signal_kind =
+   * 'alert_domain_event'`, `fast_path = FALSE`) rather than a dedicated table.
+   * A dedicated table was the original design (see
+   * docs/automationv2/27-alerting-automation-event-contract.md) but the Log DB
+   * is currently at its storage quota and cannot allocate new relations;
+   * widening this table's existing CHECK constraint is a catalog-only change
+   * that does not require new storage. `fast_path = FALSE` means
+   * TelemetryOutboxRelay's own claim query (`WHERE fast_path = TRUE`) can never
+   * see these rows — AlertDomainOutboxRelay claims by `signal_kind` instead, so
+   * the two relays never compete for the same row.
+   *
+   * MUST be called with the same `client` as the enclosing
+   * AlertDecisionEngine.decide() transaction, so the outbox row commits
+   * atomically with alert_events_v2/alert_event_state/alert_event_history_v2.
+   *
+   * Idempotency: `event_id` carries the dedupe key (derived from
+   * alert_events_v2.idempotency_key by the caller), reserved through the same
+   * `alert_runtime_idempotency_keys` table telemetry_outbox already uses
+   * (namespace 'telemetry_outbox', consistent with how that table already
+   * dedupes on `signal_kind || ':' || event_id`) — so a re-delivered or
+   * accidentally-duplicated call is a safe no-op.
+   */
+  async appendDomainOutbox(input: AppendDomainOutboxInput, client?: PoolClient): Promise<void> {
+    await this.exec(client).query(
+      `WITH reserved AS (
+         INSERT INTO alert_runtime_idempotency_keys (namespace, organization_id, idempotency_key)
+         VALUES ('telemetry_outbox', $1, 'alert_domain_event:' || $2)
+         ON CONFLICT DO NOTHING
+         RETURNING 1
+       )
+       INSERT INTO telemetry_outbox (
+         organization_id, project_id, environment, signal_kind, event_id,
+         severity, fast_path, attributes, occurred_at
+       )
+       SELECT $1, $3, $4, 'alert_domain_event', $2,
+              $5::logdb_severity, FALSE, $6::jsonb, $7
+       WHERE EXISTS (SELECT 1 FROM reserved)
+       ON CONFLICT DO NOTHING`,
+      [
+        input.organizationId,
+        input.dedupeKey,
+        input.projectId ?? null,
+        input.environment ?? null,
+        input.severity,
+        JSON.stringify({
+          eventType: input.eventType,
+          alertKey: input.alertKey,
+          alertEventId: input.alertEventId,
+          dedupeKey: input.dedupeKey,
+          payload: input.payload,
+          metadata: input.metadata ?? {},
+        }),
+        input.occurredAt.toISOString(),
       ],
     );
   }
@@ -832,7 +955,7 @@ export class AlertRuntimeRepository {
            FROM alert_notification_jobs
           WHERE status = 'pending'
             AND (notify_after IS NULL OR notify_after <= NOW())
-          ORDER BY created_at ASC
+          ORDER BY priority DESC, created_at ASC
           LIMIT $1
           FOR UPDATE SKIP LOCKED
        )
@@ -980,10 +1103,7 @@ export class AlertRuntimeRepository {
 
   async listDeliveryAttempts(alertEventId: string, limit = 200): Promise<Array<Record<string, unknown>>> {
     const result = await this.db.query(
-      `SELECT * FROM alert_delivery_attempts_v2
-        WHERE alert_event_id = $1
-        ORDER BY created_at DESC
-        LIMIT $2`,
+      `SELECT ${ALERT_DELIVERY_ATTEMPTS_V2_COLUMNS} FROM alert_delivery_attempts_v2 WHERE alert_event_id = $1 ORDER BY created_at DESC LIMIT $2`,
       [alertEventId, Math.max(1, Math.min(limit, 1000))],
     );
     return result.rows as Array<Record<string, unknown>>;
@@ -1108,6 +1228,191 @@ export class AlertRuntimeRepository {
    * write on a read-mostly CONFIG table in the control plane. At a 5s cadence that
    * is untenable, and it also violated ADR-0006.
    */
+  /**
+   * Atomically advance breach state and claim the right to fire for one evaluation scope.
+   *
+   * Correctness contract (ADR: alerting hardening):
+   *   - The consecutive-breach counter is incremented **in the database**, never
+   *     computed in the application from a stale read, so concurrent evaluations
+   *     of the same scope cannot lose updates.
+   *   - The cooldown gate is decided **in the same statement** from the row's
+   *     previous `last_fired_at`, while that row is locked by the upsert. Exactly
+   *     one concurrent evaluation can observe `fired = true` for a given cooldown
+   *     window, so duplicate alerts are impossible even when Redis is unavailable.
+   *
+   * Structure: the `locked` CTE upserts the row (taking a row lock) and returns its
+   * PREVIOUS counters; the outer UPDATE then applies the transition derived from
+   * those previous values. Because both run in one statement they share one
+   * transaction and one lock, eliminating the read-then-write race.
+   */
+  async claimBreachDecision(input: ClaimBreachDecisionInput, client?: PoolClient): Promise<BreachDecision> {
+    const fireCondition = `(
+      (CASE WHEN l.prev_breaching THEN l.prev_breaches + 1 ELSE 1 END) >= $10::int
+      AND (
+        $11::int <= 0
+        OR l.prev_fired_at IS NULL
+        OR l.prev_fired_at <= $9::timestamptz - ($11::int * INTERVAL '1 second')
+      )
+    )`;
+
+    const result = await this.exec(client).query<{
+      consecutive_breaches: number;
+      fired: boolean;
+      last_fired_at: Date | null;
+    }>(
+      `WITH locked AS (
+         INSERT INTO alert_rule_eval_state (
+           scope_hash, organization_id, rule_id, binding_id, project_id, environment,
+           service, endpoint, consecutive_breaches, is_breaching, last_evaluated_at
+         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 0, FALSE, $9)
+         ON CONFLICT (scope_hash) DO UPDATE SET last_evaluated_at = $9
+         RETURNING consecutive_breaches AS prev_breaches,
+                   is_breaching         AS prev_breaching,
+                   last_fired_at        AS prev_fired_at
+       )
+       UPDATE alert_rule_eval_state s
+          SET consecutive_breaches = CASE WHEN l.prev_breaching THEN l.prev_breaches + 1 ELSE 1 END,
+              is_breaching         = TRUE,
+              last_evaluated_at    = $9,
+              last_fired_at        = CASE WHEN ${fireCondition} THEN $9 ELSE s.last_fired_at END
+         FROM locked l
+        WHERE s.scope_hash = $1
+       RETURNING s.consecutive_breaches,
+                 ${fireCondition} AS fired,
+                 s.last_fired_at`,
+      [
+        input.scopeHash,
+        input.organizationId,
+        input.ruleId,
+        input.bindingId ?? null,
+        input.projectId ?? null,
+        input.environment ?? null,
+        input.service ?? null,
+        input.endpoint ?? null,
+        input.evaluatedAt,
+        // `consecutive_breaches` is a Postgres INTEGER column (32-bit, max
+        // 2147483647). Callers that want to "advance the counter without ever
+        // firing" (see engines.ts fast-path skip) pass Number.MAX_SAFE_INTEGER
+        // (2^53-1), which overflows int4 and raises error 22003. Clamp to the
+        // int4 max here so any such sentinel is representable, instead of
+        // failing every evaluation tick.
+        Math.min(2147483647, Math.max(1, input.requiredBreaches)),
+        Math.max(0, input.cooldownSeconds),
+      ],
+    );
+
+    const row = result.rows[0];
+    if (!row) {
+      // Defensive: the outer UPDATE always matches the row the CTE just upserted.
+      // Reaching here means the row vanished concurrently (manual delete/retention).
+      // Fail closed - do not fire on an indeterminate state.
+      return { consecutiveBreaches: 0, fired: false, lastFiredAt: null, indeterminate: true };
+    }
+    return {
+      consecutiveBreaches: Number(row.consecutive_breaches),
+      fired: row.fired === true,
+      lastFiredAt: row.last_fired_at,
+      indeterminate: false,
+    };
+  }
+
+  /**
+   * Claim and resolve alerts whose `auto_resolve_at` deadline has passed.
+   *
+   * Semantics: this is a TIMEOUT-based resolution, not a verified recovery. The
+   * alert is closed because it stopped being re-asserted for the configured
+   * window, so `resolution_reason` is set to 'auto_resolved' to distinguish it
+   * from a real evaluated recovery (`recover` -> 'resolved').
+   *
+   * Correctness properties:
+   *   - Concurrency-safe: `FOR UPDATE SKIP LOCKED` means two sweep workers (or
+   *     two replicas) never claim the same row.
+   *   - Idempotent: the same statement both selects on `state = 'firing' AND
+   *     auto_resolve_at <= NOW()` and clears those predicates, so a replay
+   *     cannot resolve the same alert twice or emit a duplicate history row.
+   *   - Only `firing` alerts are eligible. An `acknowledged` alert is owned by a
+   *     human; auto-resolving it would hide it from whoever is handling it.
+   *   - Uses the existing partial index `idx_alert_event_state_autoresolve`
+   *     (`(auto_resolve_at) WHERE state = 'firing' AND auto_resolve_at IS NOT
+   *     NULL`) - the predicates below are chosen to match it, so no new index
+   *     is required.
+   *
+   * `organizationId` is optional: the scheduled sweep runs across tenants (like
+   * the escalation sweep), but callers may scope it for targeted use or tests.
+   */
+  async claimAutoResolvableAlerts(
+    limit: number,
+    organizationId?: string | null,
+    client?: PoolClient,
+  ): Promise<AutoResolvedAlertRow[]> {
+    const boundedLimit = Math.max(1, Math.min(limit, 1000));
+    const result = await this.exec(client).query<AutoResolvedAlertRow>(
+      `UPDATE alert_event_state s
+          SET state             = 'resolved',
+              resolved_at       = NOW(),
+              resolution_reason = 'auto_resolved',
+              auto_resolve_at   = NULL,
+              next_escalation_at = NULL,
+              updated_at        = NOW()
+        WHERE s.alert_key IN (
+          SELECT alert_key
+            FROM alert_event_state
+           WHERE state = 'firing'
+             AND auto_resolve_at IS NOT NULL
+             AND auto_resolve_at <= NOW()
+             AND ($2::uuid IS NULL OR organization_id = $2::uuid)
+           ORDER BY auto_resolve_at ASC
+           LIMIT $1
+           FOR UPDATE SKIP LOCKED
+        )
+       RETURNING s.alert_key,
+                 s.organization_id,
+                 s.project_id,
+                 s.latest_event_id,
+                 s.severity`,
+      [boundedLimit, organizationId ?? null],
+    );
+    return result.rows;
+  }
+
+  /**
+   * Atomically clear breach state for a scope and report whether this call is the
+   * one that observed the breach->healthy edge (so exactly one recovery alert is
+   * emitted even under concurrent evaluation).
+   */
+  async claimRecovery(input: ClaimRecoveryInput, client?: PoolClient): Promise<{ recovered: boolean }> {
+    const result = await this.exec(client).query<{ recovered: boolean }>(
+      `WITH locked AS (
+         INSERT INTO alert_rule_eval_state (
+           scope_hash, organization_id, rule_id, binding_id, project_id, environment,
+           service, endpoint, consecutive_breaches, is_breaching, last_evaluated_at
+         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 0, FALSE, $9)
+         ON CONFLICT (scope_hash) DO UPDATE SET last_evaluated_at = $9
+         RETURNING is_breaching AS prev_breaching
+       )
+       UPDATE alert_rule_eval_state s
+          SET consecutive_breaches = 0,
+              is_breaching         = FALSE,
+              last_evaluated_at    = $9,
+              last_recovered_at    = CASE WHEN l.prev_breaching THEN $9 ELSE s.last_recovered_at END
+         FROM locked l
+        WHERE s.scope_hash = $1
+       RETURNING l.prev_breaching AS recovered`,
+      [
+        input.scopeHash,
+        input.organizationId,
+        input.ruleId,
+        input.bindingId ?? null,
+        input.projectId ?? null,
+        input.environment ?? null,
+        input.service ?? null,
+        input.endpoint ?? null,
+        input.evaluatedAt,
+      ],
+    );
+    return { recovered: result.rows[0]?.recovered === true };
+  }
+
   async upsertRuleEvalState(input: UpsertRuleEvalStateInput, client?: PoolClient): Promise<void> {
     await this.exec(client).query(
       `INSERT INTO alert_rule_eval_state (

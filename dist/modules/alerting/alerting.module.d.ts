@@ -14,12 +14,14 @@ import type { FastifyInstance, FastifyPluginOptions } from 'fastify';
 import { AlertingRepository } from './repository.js';
 import { AlertingService } from './service.js';
 import { ProjectAlertQueryService } from './runtime/project-alert-query.service.js';
+import { IncidentsService } from './incidents/incidents.service.js';
 declare module 'fastify' {
     interface FastifyInstance {
         alerting: {
             repository: AlertingRepository;
             service: AlertingService;
             projectAlerts: ProjectAlertQueryService;
+            incidents: IncidentsService;
         };
     }
 }

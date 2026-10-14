@@ -156,6 +156,25 @@ describe('ErrorIngestionService', () => {
     expect(metrics.recordStage).toHaveBeenCalledWith('error_group_attach', 'error', expect.any(Number));
   });
 
+  it('groups confirmed writer inserts without a second insert or premature domain publication', async () => {
+    const record = event();
+    grouping.handleGroupsBatch.mockResolvedValue([
+      { inputIndex: 0, result: { id: 'group-id', isNew: true, isRegression: false, status: 'OPEN' } },
+    ]);
+    const result = await service.ingestBatch(client, [{
+      groupParams: { organizationId: 'org-1', projectId: 'proj-1', fingerprint: 'hash', eventId: 'evt-1', severity: 'error' },
+      eventRecord: record,
+    }], true);
+    expect(errors.insertManyIfNew).not.toHaveBeenCalled();
+    expect(grouping.handleGroupsBatch).toHaveBeenCalledTimes(1);
+    expect(errors.attachGroups).toHaveBeenCalledWith(client, [{
+      organizationId: 'org-1', eventId: 'evt-1', occurredAt: record.occurred_at, groupId: 'group-id',
+    }]);
+    expect(result.inserted).toBe(1);
+    expect(result.domainEvents).toHaveLength(1);
+    expect(domainEventBus.publish).not.toHaveBeenCalled();
+  });
+
   it('does not group duplicate rows skipped by the bulk insert', async () => {
     const first = event();
     const duplicate = { ...event(), id: '2' };

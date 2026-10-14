@@ -4,6 +4,7 @@ import {
   isPublicId,
   extractPublicIdPrefix,
   PUBLIC_ID_PREFIXES,
+  generatePublicId,
 } from '../../../src/shared/utils/public-id-generator.js';
 
 describe('PublicIdGenerator Utility', () => {
@@ -41,8 +42,8 @@ describe('PublicIdGenerator Utility', () => {
     expect(extractPublicIdPrefix('invalid')).toBe(null);
   });
 
-  it('contains prefix constants for all 11 user-facing entities', () => {
-    expect(Object.keys(PUBLIC_ID_PREFIXES)).toHaveLength(11);
+  it('contains prefix constants for all 12 user-facing entities', () => {
+    expect(Object.keys(PUBLIC_ID_PREFIXES)).toHaveLength(12);
     expect(PUBLIC_ID_PREFIXES.requests).toBe('REQ');
     expect(PUBLIC_ID_PREFIXES.errors).toBe('ERR');
     expect(PUBLIC_ID_PREFIXES.errorGroups).toBe('ISS');
@@ -54,6 +55,17 @@ describe('PublicIdGenerator Utility', () => {
     expect(PUBLIC_ID_PREFIXES.replays).toBe('RPL');
     expect(PUBLIC_ID_PREFIXES.profiles).toBe('PRF');
     expect(PUBLIC_ID_PREFIXES.cronCheckins).toBe('CRN');
+    expect(PUBLIC_ID_PREFIXES.metrics).toBe('MTR');
+  });
+
+  it('generates valid public IDs via generatePublicId', () => {
+    const reqId = generatePublicId('REQ');
+    expect(isPublicId(reqId)).toBe(true);
+    expect(reqId.startsWith('REQ-')).toBe(true);
+
+    const mtrId = generatePublicId('MTR', 42);
+    expect(mtrId).toBe('MTR-000000042');
+    expect(isPublicId(mtrId)).toBe(true);
   });
 });
 

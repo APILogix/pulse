@@ -63,15 +63,13 @@ function securityStatus(input) {
     return { status: 'secure', actions_needed: 0 };
 }
 export async function getAccountOverview(userId) {
-    const [user, mfaMethods, backupCodesRemaining, activeSessions, trustedDevices, passkeys, recentActivity,] = await Promise.all([
+    const [user, mfaMethods, securityCounts, recentActivity,] = await Promise.all([
         requireUser(userId),
         repo.getVerifiedMfaDevices(userId),
-        repo.countBackupCodes(userId),
-        repo.countActiveSessions(userId),
-        repo.countTrustedDevices(userId),
-        repo.countPasskeys(userId),
+        repo.getAccountSecurityCounts(userId),
         repo.getRecentActivity(userId),
     ]);
+    const { backupCodesRemaining, activeSessions, trustedDevices, passkeys } = securityCounts;
     const emailVerified = Boolean(user.email_verified || user.email_verified_at);
     const mfaEnabled = mfaMethods.length > 0 || user.mfa_enabled;
     const health = securityStatus({ emailVerified, mfaEnabled, backupCodesRemaining });
@@ -153,13 +151,14 @@ export async function deleteAvatar(userId, request) {
     await logSecurityEvent(userId, 'profile_updated', 'Profile avatar removed', request);
     return toProfile(updated);
 }
-async function verifyPassword(user, password) {
-    if (!user.password_hash)
+async function verifyPassword(userId, password) {
+    const passwordHash = await repo.getUserPasswordHash(userId);
+    if (!passwordHash)
         return;
     if (!password) {
         throw new UserAccountError('Password required', 400, 'PASSWORD_REQUIRED');
     }
-    const ok = await bcrypt.compare(password, user.password_hash);
+    const ok = await bcrypt.compare(password, passwordHash);
     if (!ok) {
         throw new UserAccountError('Password incorrect', 401, 'PASSWORD_INCORRECT');
     }
@@ -171,7 +170,7 @@ function requireMfaIfEnabled(user, mfaCode) {
 }
 export async function requestDataExport(userId, input, request) {
     const user = await requireUser(userId);
-    await verifyPassword(user, input.password);
+    await verifyPassword(userId, input.password);
     requireMfaIfEnabled(user, input.mfa_code);
     const jobId = await pgboss.send('user-data-export', { user_id: userId });
     await logSecurityEvent(userId, 'data_export_requested', 'Account data export requested', request, { job_id: jobId });
@@ -179,7 +178,7 @@ export async function requestDataExport(userId, input, request) {
 }
 export async function scheduleDeletion(userId, input, request) {
     const user = await requireUser(userId);
-    await verifyPassword(user, input.password);
+    await verifyPassword(userId, input.password);
     requireMfaIfEnabled(user, input.mfa_code);
     if (input.confirmation_text !== user.email) {
         throw new UserAccountError('Confirmation text must match your email address', 400, 'CONFIRMATION_MISMATCH');

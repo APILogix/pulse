@@ -37,9 +37,24 @@ const { AlertRuntimeRepository } = await import(
 );
 type AlertRuntimeRepositoryType = InstanceType<typeof AlertRuntimeRepository>;
 
+// IMPORTANT: this deliberately does NOT default to LOG_DB_PRIMARY. That Neon
+// project has repeatedly run at or near its 512 MB storage quota, and this
+// test creates a real scratch database via CREATE DATABASE. If the test
+// process is killed or crashes mid-run (which is exactly what happens when
+// the target project is already near its quota — migrations fail, the test
+// throws, and afterAll may never get a chance to run), the scratch database
+// is silently orphaned. That happened here: 8 databases named
+// pulse_alert_rt_* (3–14 days old, 148 MB total) were found still present on
+// LOG_DB_PRIMARY during an unrelated production-readiness review and had to
+// be dropped by hand. DATABASE_URL (the Primary control-plane Neon project)
+// is a separate host with comfortable headroom, so scratch-database-creating
+// tests default there now, exactly like test/helpers/automation-scratch.ts
+// and test/helpers/logdb-scratch.ts already do for the same reason. Set
+// ALERTING_TEST_LOGDB_URL explicitly if you need to target LOG_DB_PRIMARY
+// (e.g. once its storage is on a larger plan).
 const SOURCE_URL = process.env.ALERTING_TEST_LOGDB_URL
-  ?? process.env.LOG_DB_PRIMARY
-  ?? process.env.DATABASE_URL;
+  ?? process.env.DATABASE_URL
+  ?? process.env.LOG_DB_PRIMARY;
 
 const SCRATCH_DB = `pulse_alert_rt_${Date.now()}`;
 
@@ -69,15 +84,24 @@ describe.skipIf(!SOURCE_URL)('AlertRuntimeRepository (live Log DB schema)', () =
   });
 
   afterAll(async () => {
-    if (scratchPool) await scratchPool.end();
+    // HARDENED: each step is independently guarded so a failure in one (e.g.
+    // scratchPool.end() erroring because the connection already dropped)
+    // cannot skip the DROP DATABASE step below it. This is exactly the kind
+    // of unguarded chain that leaves scratch databases orphaned — see the
+    // comment above SOURCE_URL for the real incident this caused.
+    if (scratchPool) await scratchPool.end().catch(() => undefined);
     if (adminPool) {
       await adminPool.query(
         `SELECT pg_terminate_backend(pid) FROM pg_stat_activity
           WHERE datname = $1 AND pid <> pg_backend_pid()`,
         [SCRATCH_DB],
-      );
-      await adminPool.query(`DROP DATABASE IF EXISTS ${SCRATCH_DB}`);
-      await adminPool.end();
+      ).catch(() => undefined);
+      await adminPool.query(`DROP DATABASE IF EXISTS ${SCRATCH_DB}`).catch((err) => {
+        // Surface this loudly — an orphaned scratch DB is exactly the failure
+        // mode this hardening exists to prevent.
+        console.error(`FAILED TO DROP SCRATCH DATABASE ${SCRATCH_DB} — it may need manual cleanup:`, err);
+      });
+      await adminPool.end().catch(() => undefined);
     }
   });
 

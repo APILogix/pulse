@@ -48,6 +48,11 @@ export declare const RawExplorerQuerySchema: z.ZodObject<{
     isRegression: z.ZodOptional<z.ZodUnion<readonly [z.ZodString, z.ZodBoolean]>>;
     regression: z.ZodOptional<z.ZodUnion<readonly [z.ZodString, z.ZodBoolean]>>;
     release: z.ZodOptional<z.ZodString>;
+    endpoint: z.ZodOptional<z.ZodString>;
+    route: z.ZodOptional<z.ZodString>;
+    sdkVersion: z.ZodOptional<z.ZodString>;
+    appVersion: z.ZodOptional<z.ZodString>;
+    minOccurrences: z.ZodOptional<z.ZodCoercedNumber<unknown>>;
 }, z.core.$strict>;
 /** Reject tenant and projection controls before endpoint-specific handling. */
 export declare function assertPublicExplorerQuery(input: unknown): void;

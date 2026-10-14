@@ -40,6 +40,37 @@ function shouldDestroyTransactionClient(error: unknown): boolean {
 // SESSION QUERIES
 // ============================================================================
 
+export const USER_SESSION_COLUMNS = `
+  id,
+  user_id,
+  refresh_token_hash,
+  previous_refresh_token_hash,
+  previous_refresh_rotated_at,
+  access_token_jti,
+  device_fingerprint,
+  device_name,
+  device_type,
+  ip_address,
+  ip_geo_country,
+  ip_geo_city,
+  user_agent,
+  created_at,
+  last_active_at,
+  expires_at,
+  absolute_expires_at,
+  status,
+  terminated_at,
+  terminated_by,
+  termination_reason,
+  mfa_verified_at,
+  mfa_expires_at,
+  sso_provider_id,
+  sso_provider_type,
+  login_method,
+  saml_name_id,
+  saml_session_index
+`;
+
 /**
  * Insert a new session row. Callers MUST pre-allocate the session UUID and
  * the SHA-256 of the issued refresh JWT so the row is created in a single
@@ -80,7 +111,7 @@ export async function createSession(
        $6, $7, $8::inet, $9, $10,
        $11, $12, $13, $14, $15, $16, $17, $18, 'active'
      )
-     RETURNING *`,
+     RETURNING ${USER_SESSION_COLUMNS}`,
     [
       data.id,
       data.user_id,
@@ -107,7 +138,7 @@ export async function createSession(
 
 /**
  * Look up a session whose current OR previous refresh-token hash matches the
- * presented value. Constrained by `(id, user_id)` so we only ever return the
+ * presented value. Constrained by \`(id, user_id)\` so we only ever return the
  * exact session the JWT claims it belongs to.
  */
 export async function findSessionByAnyRefreshTokenHash(
@@ -118,7 +149,7 @@ export async function findSessionByAnyRefreshTokenHash(
 ): Promise<{ session: UserSession; matchedPrevious: boolean } | null> {
   const db = client || pool;
   const result = await db.query<UserSession>(
-    `SELECT * FROM user_sessions
+    `SELECT ${USER_SESSION_COLUMNS} FROM user_sessions
      WHERE id = $2 AND user_id = $3
        AND (refresh_token_hash = $1 OR previous_refresh_token_hash = $1)
      LIMIT 1`,
@@ -138,7 +169,7 @@ export async function findSessionById(
   client?: PoolClient,
 ): Promise<UserSession | null> {
   const db = client || pool;
-  let query = `SELECT * FROM user_sessions WHERE id = $1`;
+  let query = `SELECT ${USER_SESSION_COLUMNS} FROM user_sessions WHERE id = $1`;
   const params: unknown[] = [id];
   if (userId) {
     query += ` AND user_id = $2`;
@@ -148,16 +179,76 @@ export async function findSessionById(
   return result.rows[0] || null;
 }
 
+export interface AuthenticatedSessionAndUser {
+  session_id: string;
+  session_user_id: string;
+  session_status: string;
+  session_expires_at: Date;
+  user_id: string | null;
+  user_email: string | null;
+  user_is_admin: boolean;
+  user_current_org_id: string | null;
+  user_status: string | null;
+  user_deleted_at: Date | null;
+}
+
+/**
+ * Single-query lookup joining user_sessions and users for high-throughput authentication.
+ * Eliminates serial N+1 database round-trips while retrieving only the necessary columns.
+ */
+export async function findSessionAndUserById(
+  sessionId: string,
+  client?: PoolClient,
+): Promise<AuthenticatedSessionAndUser | null> {
+  const db = client || pool;
+  const result = await db.query<AuthenticatedSessionAndUser>(
+    `SELECT
+       s.id AS session_id,
+       s.user_id AS session_user_id,
+       s.status AS session_status,
+       s.expires_at AS session_expires_at,
+       u.id AS user_id,
+       u.email AS user_email,
+       COALESCE(u.is_admin, false) AS user_is_admin,
+       u.current_org_id AS user_current_org_id,
+       u.status AS user_status,
+       u.deleted_at AS user_deleted_at
+     FROM user_sessions s
+     LEFT JOIN users u ON u.id = s.user_id
+     WHERE s.id = $1
+     LIMIT 1`,
+    [sessionId],
+  );
+  return result.rows[0] || null;
+}
+
+export const USER_SESSION_SUMMARY_COLUMNS = `
+  id,
+  user_id,
+  device_name,
+  device_type,
+  ip_address,
+  ip_geo_country,
+  ip_geo_city,
+  user_agent,
+  created_at,
+  last_active_at,
+  expires_at,
+  status
+`;
+
 export async function listActiveSessionsByUser(
   userId: string,
   client?: PoolClient,
+  limit = 200,
 ): Promise<UserSession[]> {
   const db = client || pool;
   const result = await db.query<UserSession>(
-    `SELECT * FROM user_sessions
+    `SELECT ${USER_SESSION_SUMMARY_COLUMNS} FROM user_sessions
      WHERE user_id = $1 AND status = 'active'
-     ORDER BY last_active_at DESC`,
-    [userId],
+     ORDER BY last_active_at DESC
+     LIMIT $2`,
+    [userId, limit],
   );
   return result.rows;
 }
@@ -203,7 +294,11 @@ export async function revokeOldestSessions(
        SELECT id FROM user_sessions
        WHERE user_id = $1 AND status = 'active'
        ORDER BY last_active_at ASC
-       OFFSET $2
+       LIMIT GREATEST(0, (
+         SELECT COUNT(*) - $2
+         FROM user_sessions
+         WHERE user_id = $1 AND status = 'active'
+       ))
      )`,
     [userId, keepCount],
   );
@@ -351,14 +446,28 @@ export async function cleanupExpiredSessions(
 export async function purgeOldRevokedSessions(
   olderThanDays = 90,
   client?: PoolClient,
+  batchSize = 5000,
 ): Promise<number> {
   const db = client || pool;
-  const result = await db.query(
-    `DELETE FROM user_sessions
-     WHERE status IN ('revoked', 'expired', 'terminated_by_admin')
-       AND COALESCE(terminated_at, expires_at) < NOW() - ($1::interval)`,
-    [`${olderThanDays} days`],
-  );
-  return result.rowCount ?? 0;
+  let totalDeleted = 0;
+  while (true) {
+    const result = await db.query(
+      `DELETE FROM user_sessions
+       WHERE id IN (
+         SELECT id FROM user_sessions
+         WHERE status IN ('revoked', 'expired', 'terminated_by_admin')
+           AND (
+             (terminated_at IS NOT NULL AND terminated_at < NOW() - ($1::interval))
+             OR (terminated_at IS NULL AND expires_at < NOW() - ($1::interval))
+           )
+         LIMIT $2
+       )`,
+      [`${olderThanDays} days`, batchSize],
+    );
+    const count = result.rowCount ?? 0;
+    totalDeleted += count;
+    if (count < batchSize) break;
+  }
+  return totalDeleted;
 }
 

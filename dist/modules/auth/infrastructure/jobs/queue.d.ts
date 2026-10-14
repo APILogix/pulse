@@ -1,18 +1,12 @@
 /**
- * Auth automation pg-boss queue wiring.
- *
- * Runs scheduled Postgres-backed housekeeping for auth-owned durable
- * automation tables. This remains Redis-free and safe across multiple worker
- * or standalone cron processes because pg-boss delivers each scheduled job to
- * exactly one consumer.
+ * Auth automation PGMQ queue wiring.
  */
 import type { FastifyBaseLogger } from 'fastify';
 export declare const AUTH_AUTOMATION_JOBS: {
-    readonly daily: "auth.automation.daily";
+    readonly daily: "auth_automation_daily";
 };
 export interface AuthAutomationSchedule {
-    /** Cron for the daily auth purge pass. Default: 02:15 daily. */
-    dailyCron?: string;
+    dailyIntervalMs?: number;
 }
 export declare function registerAuthAutomationWorkers(logger: FastifyBaseLogger, schedule?: AuthAutomationSchedule): Promise<{
     stop: () => Promise<void>;

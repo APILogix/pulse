@@ -18,13 +18,17 @@ export declare class UsageCounter {
     private readonly bufferLimit;
     private readonly driveRollup;
     private timer;
-    private flushing;
+    private flushPromise;
+    private flushRequested;
     private stopped;
     private schemaReady;
+    private static readonly MAX_BUFFER_HARD_LIMIT;
     constructor(pool: Pool, log: Logger, opts?: UsageCounterOptions);
     start(): void;
     increment(projectId: string, orgId: string, counterType: CounterType, by?: number, dimensions?: UsageDimensions): void;
     flush(): Promise<void>;
+    private executeWithRetry;
+    private flushOnce;
     private ensureSchema;
     private runRollup;
     getUsage(projectId: string, counterType: CounterType, periodStart?: Date): Promise<number>;

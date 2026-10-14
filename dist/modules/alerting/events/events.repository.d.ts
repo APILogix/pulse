@@ -44,6 +44,11 @@ export interface DeliveryAttemptInsert {
     projectAlertChannelId?: string | null;
     recipientUserId?: string | null;
 }
+export declare const ALERT_EVENTS_COLUMNS = "id, organization_id, rule_id, status, severity, fingerprint, source, source_id, payload, payload_size_bytes, normalized_payload, group_id, group_key, is_group_parent, parent_event_id, duplicate_count, started_at, ended_at, last_notified_at, next_escalation_at, auto_resolve_at, acknowledged_by, acknowledged_at, acknowledgment_expires_at, resolved_by, resolved_at, resolution_reason, suppressed_by, suppressed_at, suppression_reason, labels, annotations, created_at, updated_at, escalation_policy_id, escalation_step_number, escalation_repeat_count, project_id";
+export declare const ALERT_DELIVERY_ATTEMPTS_COLUMNS = "id, organization_id, event_id, connector_id, route_id, batch_id, status, request_payload, request_headers, response_payload, response_status_code, error_message, error_details, error_category, latency_ms, retry_count, next_retry_at, max_retries, external_message_id, external_delivery_id, created_at, updated_at";
+export declare const ALERT_EVENT_BATCHES_COLUMNS = "id, organization_id, status, worker_id, event_count, processed_count, success_count, failure_count, started_at, completed_at, duration_ms, error_message, error_details, retry_count, metadata, created_at, updated_at, event_ids, skipped_count, pg_boss_job_id";
+export declare const ALERT_THROTTLE_WINDOWS_COLUMNS = "id, rule_action_id, window_start, notification_count, last_notified_at, created_at, updated_at";
+export declare const ALERT_DEAD_LETTER_EVENTS_COLUMNS = "id, organization_id, source_queue, pg_boss_job_id, batch_id, event_ids, job_payload, error_message, status, retry_count, max_retries, last_retry_at, retried_at, discarded_at, discarded_by, metadata, created_at, updated_at";
 export declare class EventsRepository {
     /**
      * Pool is injected explicitly (ADR-0006). This is the LEGACY runtime repository: it
@@ -85,7 +90,7 @@ export declare class EventsRepository {
         metadata?: Record<string, unknown>;
     }, client?: PoolClient): Promise<void>;
     getEventHistory(eventId: string): Promise<Array<Record<string, unknown>>>;
-    getEventDeliveries(eventId: string): Promise<AlertDeliveryAttemptRow[]>;
+    getEventDeliveries(eventId: string, limit?: number): Promise<AlertDeliveryAttemptRow[]>;
     /**
      * Atomically claim up to `limit` pending events for the org and enqueue them
      * as a single batch. SKIP LOCKED makes concurrent batch creation safe.

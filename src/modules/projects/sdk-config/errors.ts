@@ -11,6 +11,7 @@
  */
 
 export type SdkConfigErrorCode =
+  | "unavailable"
   | "protected_field"
   | "unknown_field"
   | "limit_violation"

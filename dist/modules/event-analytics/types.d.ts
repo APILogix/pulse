@@ -94,10 +94,10 @@ export declare const PaginationSchema: z.ZodObject<{
     offset: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
 }, z.core.$strip>;
 export declare const SeverityFilterSchema: z.ZodEnum<{
+    fatal: "fatal";
     error: "error";
     info: "info";
     debug: "debug";
-    fatal: "fatal";
     warning: "warning";
 }>;
 export declare const ListErrorsQuerySchema: z.ZodObject<{
@@ -118,10 +118,10 @@ export declare const ListErrorsQuerySchema: z.ZodObject<{
     limit: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
     offset: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
     severity: z.ZodOptional<z.ZodEnum<{
+        fatal: "fatal";
         error: "error";
         info: "info";
         debug: "debug";
-        fatal: "fatal";
         warning: "warning";
     }>>;
     service: z.ZodOptional<z.ZodString>;
@@ -260,9 +260,9 @@ export declare const ListLogsQuerySchema: z.ZodObject<{
     offset: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
     level: z.ZodOptional<z.ZodEnum<{
         error: "error";
+        warn: "warn";
         info: "info";
         debug: "debug";
-        warn: "warn";
     }>>;
     service: z.ZodOptional<z.ZodString>;
     search: z.ZodOptional<z.ZodString>;

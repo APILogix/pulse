@@ -1,6 +1,7 @@
 import { pool } from '../../../../config/database.js';
 import { logger } from '../../../../config/logger.js';
-import { toUser } from './user.repository.js';
+import { toUser, USER_COLUMNS } from './user.repository.js';
+import { USER_SESSION_COLUMNS } from './session.repository.js';
 import { quotaGuard } from '../../../billing/entitlements/quota-guard.js';
 const repositoryLogger = logger.child({ component: 'auth-repository' });
 const MFA_DEVICE_SELECT = `
@@ -61,7 +62,7 @@ export async function scheduleAccountDeletion(userId, scheduledAt, client) {
     const result = await db.query(`UPDATE users
      SET deletion_scheduled_at = $2, updated_at = NOW()
      WHERE id = $1 AND deleted_at IS NULL
-     RETURNING *`, [userId, scheduledAt]);
+     RETURNING ${USER_COLUMNS}`, [userId, scheduledAt]);
     return toUser(result.rows[0]);
 }
 export async function clearScheduledAccountDeletion(userId, client) {
@@ -69,16 +70,18 @@ export async function clearScheduledAccountDeletion(userId, client) {
     const result = await db.query(`UPDATE users
      SET deletion_scheduled_at = NULL, updated_at = NOW()
      WHERE id = $1 AND deleted_at IS NULL
-     RETURNING *`, [userId]);
+     RETURNING ${USER_COLUMNS}`, [userId]);
     return toUser(result.rows[0]);
 }
-export async function listUsersDueForDeletion(client) {
+export async function listUsersDueForDeletion(client, limit = 200) {
     const db = client || pool;
-    const result = await db.query(`SELECT * FROM users
+    const result = await db.query(`SELECT id FROM users
      WHERE deleted_at IS NULL
        AND deletion_scheduled_at IS NOT NULL
-       AND deletion_scheduled_at <= NOW()`);
-    return result.rows.map((row) => toUser(row));
+       AND deletion_scheduled_at <= NOW()
+     ORDER BY deletion_scheduled_at ASC
+     LIMIT $1`, [limit]);
+    return result.rows;
 }
 export async function listOrgAuthPoliciesForUser(userId, client) {
     const db = client || pool;
@@ -114,7 +117,7 @@ export async function findSsoProvidersByEmailDomain(domain, client) {
      FROM organization_sso_providers osp
      JOIN organizations o ON o.id = osp.org_id AND o.deleted_at IS NULL
      WHERE osp.is_active = TRUE
-       AND LOWER(osp.domain) = $1
+       AND osp.domain = $1
      ORDER BY o.name ASC`, [normalizedDomain]);
     return result.rows;
 }
@@ -160,7 +163,7 @@ export async function findSamlProviderForEmailDomain(domain, client) {
      FROM organization_sso_providers osp
      JOIN organizations o ON o.id = osp.org_id AND o.deleted_at IS NULL
      WHERE osp.is_active = TRUE AND osp.provider_type = 'saml'
-       AND LOWER(osp.domain) = $1
+       AND osp.domain = $1
        AND osp.entity_id IS NOT NULL
        AND osp.sso_url IS NOT NULL
        AND osp.x509_certificate IS NOT NULL
@@ -189,7 +192,7 @@ export async function findOidcProviderForEmailDomain(domain, client) {
      FROM organization_sso_providers osp
      JOIN organizations o ON o.id = osp.org_id AND o.deleted_at IS NULL
      WHERE osp.is_active = TRUE AND osp.provider_type = 'oidc'
-       AND LOWER(osp.domain) = $1
+       AND osp.domain = $1
        AND osp.oidc_issuer IS NOT NULL
      ORDER BY osp.created_at ASC
      LIMIT 1`, [domain.trim().toLowerCase()]);
@@ -202,7 +205,7 @@ export async function createSsoJitUser(data, client) {
        id, email, full_name, password_hash, status, email_verified, email_verified_at,
        data_processing_consent
      ) VALUES ($1, $2, $3, NULL, 'active', TRUE, NOW(), TRUE)
-     RETURNING *`, [data.id, data.email, data.full_name]);
+     RETURNING ${USER_COLUMNS}`, [data.id, data.email, data.full_name]);
     return toUser(result.rows[0]);
 }
 export async function addOrgMemberSsoProvision(orgId, userId, role, client) {
@@ -235,7 +238,7 @@ export async function updateMFADeviceName(deviceId, userId, deviceName, client) 
     const result = await db.query(`UPDATE user_mfa_devices
      SET device_name = $3, updated_at = NOW()
      WHERE id = $1 AND user_id = $2 AND is_active = TRUE
-     RETURNING *`, [deviceId, userId, deviceName]);
+     RETURNING ${MFA_DEVICE_SELECT}`, [deviceId, userId, deviceName]);
     return result.rows[0] || null;
 }
 export async function findWebAuthnDeviceByCredentialId(credentialId, client) {
@@ -579,7 +582,7 @@ export async function updateLinkedIdentityLastUsed(linkId, client) {
 }
 export async function findActiveSessionBySamlNameId(nameId, client) {
     const db = client || pool;
-    const result = await db.query(`SELECT * FROM user_sessions
+    const result = await db.query(`SELECT ${USER_SESSION_COLUMNS} FROM user_sessions
      WHERE saml_name_id = $1 AND status = 'active'
      ORDER BY last_active_at DESC LIMIT 1`, [nameId]);
     return result.rows[0] || null;

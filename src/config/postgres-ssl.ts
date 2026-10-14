@@ -1,3 +1,4 @@
+import './dns.js';
 import type { PoolConfig } from 'pg';
 
 export interface PostgresSslOptions {
@@ -19,6 +20,22 @@ const MANAGED_POSTGRES_HOST_SUFFIXES = [
 ];
 
 /**
+ * Strips sslmode/ssl query parameters from connection string so pg-connection-string
+ * does not override pool SSL options with weaker or conflicting defaults.
+ */
+export function sanitizePostgresConnectionString(connectionString: string): string {
+  try {
+    const url = new URL(connectionString);
+    if (url.searchParams.has('sslmode') || url.searchParams.has('ssl')) {
+      url.searchParams.delete('sslmode');
+      url.searchParams.delete('ssl');
+      return url.toString();
+    }
+  } catch {}
+  return connectionString;
+}
+
+/**
  * Resolves SSL configuration for PostgreSQL connections.
  * Automatically enables SSL for Neon, Supabase, and other managed Postgres platforms
  * while respecting explicit overrides and URL query parameters.
@@ -27,8 +44,8 @@ export function resolvePostgresSslConfig(
   connectionString: string,
   options: PostgresSslOptions = {},
 ): PoolConfig['ssl'] {
-  if (options.enabled !== undefined) {
-    return options.enabled ? { rejectUnauthorized: options.rejectUnauthorized ?? false } : false;
+  if (options.enabled === false) {
+    return false;
   }
 
   try {
@@ -40,12 +57,22 @@ export function resolvePostgresSslConfig(
       return false;
     }
 
-    if (sslMode === 'require' || sslMode === 'verify-ca' || sslMode === 'verify-full') {
-      return { rejectUnauthorized: sslMode !== 'require' && (options.rejectUnauthorized ?? false) };
+    // Explicit rejectUnauthorized option takes highest precedence
+    if (options.rejectUnauthorized !== undefined) {
+      return { rejectUnauthorized: options.rejectUnauthorized };
     }
 
-    if (sslMode === 'prefer' || sslMode === 'allow' || sslParam === 'true' || sslParam === '1') {
-      return { rejectUnauthorized: options.rejectUnauthorized ?? false };
+    // Full certificate validation requested by URL query parameters
+    if (sslMode === 'verify-full' || sslMode === 'verify-ca') {
+      return { rejectUnauthorized: true };
+    }
+
+    if (options.enabled === true) {
+      return { rejectUnauthorized: false };
+    }
+
+    if (sslMode === 'require' || sslMode === 'prefer' || sslMode === 'allow' || sslParam === 'true' || sslParam === '1') {
+      return { rejectUnauthorized: false };
     }
 
     const host = url.hostname.toLowerCase();
@@ -54,7 +81,7 @@ export function resolvePostgresSslConfig(
     );
 
     if (isManagedCloudDb) {
-      return { rejectUnauthorized: options.rejectUnauthorized ?? false };
+      return { rejectUnauthorized: false };
     }
   } catch {
     return false;
@@ -121,7 +148,7 @@ export function isTransientPostgresError(err: unknown): boolean {
     return true;
   }
 
-  if (code && ['ECONNREFUSED', 'EHOSTUNREACH', 'ENETUNREACH', 'EAI_AGAIN'].includes(code)) {
+  if (code && ['ECONNREFUSED', 'EHOSTUNREACH', 'ENETUNREACH', 'EAI_AGAIN', '53300', '53000'].includes(code)) {
     return true;
   }
 
@@ -130,7 +157,11 @@ export function isTransientPostgresError(err: unknown): boolean {
     message.includes('Connection terminated') ||
     message.includes('timeout exceeded') ||
     message.includes('connect ECONNREFUSED') ||
-    message.includes('getaddrinfo EAI_AGAIN')
+    message.includes('getaddrinfo EAI_AGAIN') ||
+    message.includes('too many clients') ||
+    message.includes('remaining connection slots') ||
+    message.includes('too_many_connections') ||
+    message.includes('connection limit exceeded')
   );
 }
 

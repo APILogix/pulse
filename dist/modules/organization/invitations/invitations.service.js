@@ -47,7 +47,10 @@ export class InvitationsService {
     }
     async inviteMember(meta, orgId, email, role) {
         const org = await this.deps.requireMutableOrg(orgId);
-        await this.deps.requireMember(orgId, meta.actorUserId, "admin");
+        const actorMember = await this.deps.requireMember(orgId, meta.actorUserId, "admin");
+        if (role === "owner" && actorMember?.role !== "owner") {
+            throw new ForbiddenError("Only organization owners can invite new owners");
+        }
         await this.deps.enforceBillingLimit(orgId, "member");
         const token = generateToken();
         const tokenHash = hashToken(token);

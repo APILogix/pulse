@@ -15,6 +15,7 @@ import {
   buildListStatement,
   buildSummaryStatement,
   buildStatisticsStatement,
+  buildCombinedAggregateStatement,
   buildScopePredicates,
 } from '../../src/modules/observability/query-engine/sql-builder.js';
 import { buildExplorerQuery } from '../../src/modules/observability/query-engine/query-schema.js';
@@ -244,6 +245,16 @@ describe('SQL builder', () => {
 
   it('returns null statistics for resources without a statistics map', () => {
     expect(buildStatisticsStatement(errorsResource, ctx(), baseQuery(), [])).toBeNull();
+  });
+
+  it('generates combined aggregate statement consolidating summary and statistics', () => {
+    const combined = buildCombinedAggregateStatement(requestsResource, ctx(), baseQuery(), []);
+    expect(combined).not.toBeNull();
+    expect(combined?.sql).toContain('AS "s__total"');
+    expect(combined?.sql).toContain('AS "st__p95"');
+    expect(combined?.sql).toContain('FROM events_requests');
+    expect(combined?.summaryKeys).toContain('total');
+    expect(combined?.statsKeys).toContain('p95');
   });
 });
 

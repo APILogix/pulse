@@ -1,9 +1,12 @@
-import { type FeatureKey, type KillswitchKey, type SchemaV1Config } from "./schema-v1.js";
+import { type FeatureKey, type KillswitchKey, type PersistenceGovernance, type SchemaV1Config } from "./schema-v1.js";
 export interface ApiKeyMapping {
     organizationId: string;
     projectId: string;
     defaultEnvironmentId: string;
     allowedEnvironmentIds: string[];
+    keyId?: string;
+    allowedIps?: string[];
+    allowedEndpoints?: string[];
 }
 export interface DeliveryRequestHints {
     environmentId?: string | null;
@@ -32,6 +35,9 @@ export declare function resolveDeliveryScope(mapping: ApiKeyMapping, hints: Deli
 export interface OperatorOverride {
     killswitches?: Partial<Record<KillswitchKey, boolean>>;
     features?: Partial<Record<FeatureKey, false>>;
+    limits?: {
+        persistenceGovernance?: Partial<PersistenceGovernance>;
+    };
 }
 export interface DeliveryBuildInput {
     compiled: SchemaV1Config;

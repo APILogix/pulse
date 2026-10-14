@@ -1,15 +1,22 @@
-const PARTITIONED_TABLES = [
-    'spans', 'traces', 'metrics', 'logs', 'profiles',
-    'cron_checkins', 'replays', 'messages', 'sdk_sessions',
-    'errors', 'requests',
+export const PARTITIONED_TABLES = [
+    'events_errors',
+    'events_requests',
+    'events_logs',
+    'events_metrics',
+    'events_spans',
+    'events_traces',
+    'events_messages',
+    'events_profiles',
+    'events_replays',
+    'events_cron_checkins',
 ];
 // Default retention: 90 days. Per-table overrides could come from
 // telemetry_retention_policies later.
-const DEFAULT_RETENTION_MONTHS = 3;
-function partitionName(table, year, month) {
+export const DEFAULT_RETENTION_MONTHS = 3;
+export function partitionName(table, year, month) {
     return `${table}_y${year}_m${String(month).padStart(2, '0')}`;
 }
-function monthBounds(year, month) {
+export function monthBounds(year, month) {
     // month is 1-based. Build [first-of-month, first-of-next-month).
     const from = `${year}-${String(month).padStart(2, '0')}-01`;
     const nextMonth = month === 12 ? 1 : month + 1;

@@ -18,7 +18,7 @@ const requestFields: Record<string, FieldDef> = {
   name: { column: 'name', type: 'string', filterable: true, searchable: true, projectable: true, label: 'Name' },
   tracePublicId: {
     column: 'trace_public_id',
-    selectExpr: 'CASE WHEN events_requests.trace_id IS NOT NULL THEN (SELECT t.public_id FROM events_traces t WHERE t.trace_id = events_requests.trace_id AND t.organization_id = events_requests.organization_id LIMIT 1) ELSE NULL END',
+    selectExpr: 'CASE WHEN events_requests.trace_id IS NOT NULL THEN (SELECT t.public_id FROM events_traces t WHERE t.trace_id = events_requests.trace_id AND t.organization_id = events_requests.organization_id AND t.project_id IS NOT DISTINCT FROM events_requests.project_id LIMIT 1) ELSE NULL END',
     type: 'string',
     filterable: true,
     searchable: true,

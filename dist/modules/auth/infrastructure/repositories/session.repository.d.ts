@@ -11,6 +11,7 @@
  */
 import type { PoolClient } from 'pg';
 import type { UserSession } from '../../domain/types.js';
+export declare const USER_SESSION_COLUMNS = "\n  id,\n  user_id,\n  refresh_token_hash,\n  previous_refresh_token_hash,\n  previous_refresh_rotated_at,\n  access_token_jti,\n  device_fingerprint,\n  device_name,\n  device_type,\n  ip_address,\n  ip_geo_country,\n  ip_geo_city,\n  user_agent,\n  created_at,\n  last_active_at,\n  expires_at,\n  absolute_expires_at,\n  status,\n  terminated_at,\n  terminated_by,\n  termination_reason,\n  mfa_verified_at,\n  mfa_expires_at,\n  sso_provider_id,\n  sso_provider_type,\n  login_method,\n  saml_name_id,\n  saml_session_index\n";
 /**
  * Insert a new session row. Callers MUST pre-allocate the session UUID and
  * the SHA-256 of the issued refresh JWT so the row is created in a single
@@ -38,7 +39,7 @@ export declare function createSession(data: {
 }, client?: PoolClient): Promise<UserSession>;
 /**
  * Look up a session whose current OR previous refresh-token hash matches the
- * presented value. Constrained by `(id, user_id)` so we only ever return the
+ * presented value. Constrained by \`(id, user_id)\` so we only ever return the
  * exact session the JWT claims it belongs to.
  */
 export declare function findSessionByAnyRefreshTokenHash(tokenHash: string, sessionId: string, userId: string, client?: PoolClient): Promise<{
@@ -46,7 +47,25 @@ export declare function findSessionByAnyRefreshTokenHash(tokenHash: string, sess
     matchedPrevious: boolean;
 } | null>;
 export declare function findSessionById(id: string, userId?: string, client?: PoolClient): Promise<UserSession | null>;
-export declare function listActiveSessionsByUser(userId: string, client?: PoolClient): Promise<UserSession[]>;
+export interface AuthenticatedSessionAndUser {
+    session_id: string;
+    session_user_id: string;
+    session_status: string;
+    session_expires_at: Date;
+    user_id: string | null;
+    user_email: string | null;
+    user_is_admin: boolean;
+    user_current_org_id: string | null;
+    user_status: string | null;
+    user_deleted_at: Date | null;
+}
+/**
+ * Single-query lookup joining user_sessions and users for high-throughput authentication.
+ * Eliminates serial N+1 database round-trips while retrieving only the necessary columns.
+ */
+export declare function findSessionAndUserById(sessionId: string, client?: PoolClient): Promise<AuthenticatedSessionAndUser | null>;
+export declare const USER_SESSION_SUMMARY_COLUMNS = "\n  id,\n  user_id,\n  device_name,\n  device_type,\n  ip_address,\n  ip_geo_country,\n  ip_geo_city,\n  user_agent,\n  created_at,\n  last_active_at,\n  expires_at,\n  status\n";
+export declare function listActiveSessionsByUser(userId: string, client?: PoolClient, limit?: number): Promise<UserSession[]>;
 export declare function listOtherActiveSessionIds(userId: string, currentSessionId: string, client?: PoolClient): Promise<string[]>;
 export declare function countActiveSessionsByUser(userId: string, client?: PoolClient): Promise<number>;
 export declare function revokeOldestSessions(userId: string, keepCount: number, client?: PoolClient): Promise<number>;
@@ -77,5 +96,5 @@ export declare function revokeAllSessionsForUser(userId: string, reason: string,
 export declare function rotateRefreshToken(sessionId: string, userId: string, oldHash: string, newHash: string, newExpiresAt: Date, client?: PoolClient): Promise<boolean>;
 export declare function touchSessionActivity(sessionId: string, userId: string, client?: PoolClient): Promise<void>;
 export declare function cleanupExpiredSessions(client?: PoolClient): Promise<number>;
-export declare function purgeOldRevokedSessions(olderThanDays?: number, client?: PoolClient): Promise<number>;
+export declare function purgeOldRevokedSessions(olderThanDays?: number, client?: PoolClient, batchSize?: number): Promise<number>;
 //# sourceMappingURL=session.repository.d.ts.map

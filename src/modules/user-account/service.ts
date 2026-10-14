@@ -75,20 +75,16 @@ export async function getAccountOverview(userId: string) {
   const [
     user,
     mfaMethods,
-    backupCodesRemaining,
-    activeSessions,
-    trustedDevices,
-    passkeys,
+    securityCounts,
     recentActivity,
   ] = await Promise.all([
     requireUser(userId),
     repo.getVerifiedMfaDevices(userId),
-    repo.countBackupCodes(userId),
-    repo.countActiveSessions(userId),
-    repo.countTrustedDevices(userId),
-    repo.countPasskeys(userId),
+    repo.getAccountSecurityCounts(userId),
     repo.getRecentActivity(userId),
   ]);
+
+  const { backupCodesRemaining, activeSessions, trustedDevices, passkeys } = securityCounts;
 
   const emailVerified = Boolean(user.email_verified || user.email_verified_at);
   const mfaEnabled = mfaMethods.length > 0 || user.mfa_enabled;
@@ -188,12 +184,13 @@ export async function deleteAvatar(userId: string, request: FastifyRequest) {
   return toProfile(updated);
 }
 
-async function verifyPassword(user: repo.UserAccountRow, password?: string): Promise<void> {
-  if (!user.password_hash) return;
+async function verifyPassword(userId: string, password?: string): Promise<void> {
+  const passwordHash = await repo.getUserPasswordHash(userId);
+  if (!passwordHash) return;
   if (!password) {
     throw new UserAccountError('Password required', 400, 'PASSWORD_REQUIRED');
   }
-  const ok = await bcrypt.compare(password, user.password_hash);
+  const ok = await bcrypt.compare(password, passwordHash);
   if (!ok) {
     throw new UserAccountError('Password incorrect', 401, 'PASSWORD_INCORRECT');
   }
@@ -211,7 +208,7 @@ export async function requestDataExport(
   request: FastifyRequest,
 ) {
   const user = await requireUser(userId);
-  await verifyPassword(user, input.password);
+  await verifyPassword(userId, input.password);
   requireMfaIfEnabled(user, input.mfa_code);
 
   const jobId = await pgboss.send('user-data-export', { user_id: userId });
@@ -226,7 +223,7 @@ export async function scheduleDeletion(
   request: FastifyRequest,
 ) {
   const user = await requireUser(userId);
-  await verifyPassword(user, input.password);
+  await verifyPassword(userId, input.password);
   requireMfaIfEnabled(user, input.mfa_code);
   if (input.confirmation_text !== user.email) {
     throw new UserAccountError('Confirmation text must match your email address', 400, 'CONFIRMATION_MISMATCH');

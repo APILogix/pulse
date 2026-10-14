@@ -4,6 +4,7 @@ import type { ErrorRepository } from '../repositories/error.repository.js';
 import { domainEventBus } from '../../../shared/events/domain-event-bus.js';
 import type { ErrorGroupEventRecord } from '../models/error-group.model.js';
 import type { UpsertErrorGroupParams, GroupMutationResult } from '../repositories/error-group.repository.js';
+import type { Logger } from 'pino';
 import type { WorkerMetrics } from '../../ingestion/workers/metrics-server.js';
 
 export interface IngestionResult {
@@ -26,6 +27,11 @@ export class ErrorIngestionService {
     private readonly errorGroupingService: ErrorGroupingService,
     private readonly errorRepository: ErrorRepository,
     private readonly metrics?: WorkerMetrics,
+    /**
+     * Optional so existing callers and unit tests keep working unchanged. Used
+     * to surface the per-event grouping fallback, which is otherwise invisible.
+     */
+    private readonly log?: Pick<Logger, 'warn'>,
   ) {}
 
   async ingestError(
@@ -121,6 +127,9 @@ export class ErrorIngestionService {
   async ingestBatch(
     client: PoolClient,
     errors: ErrorBatchItem[],
+    // Only for TelemetryWriter's confirmed inserts in this same transaction.
+    // Re-inserting those rows would classify every one as a duplicate and skip grouping.
+    alreadyPersisted = false,
   ): Promise<{
     inserted: number;
     domainEvents: Array<{ groupResult: GroupMutationResult; eventRecord: Omit<ErrorGroupEventRecord, 'error_group_id'> }>;
@@ -133,7 +142,11 @@ export class ErrorIngestionService {
     }
 
     const insertStart = Date.now();
-    const insertedRows = await this.errorRepository.insertManyIfNew(
+    const insertedRows = alreadyPersisted ? errors.map(({ eventRecord }) => ({
+      organizationId: eventRecord.organization_id,
+      eventId: eventRecord.event_id,
+      occurredAt: eventRecord.occurred_at,
+    })) : await this.errorRepository.insertManyIfNew(
       client,
       errors.map(({ eventRecord }) => ({ ...eventRecord, error_group_id: null })),
     );
@@ -180,6 +193,26 @@ export class ErrorIngestionService {
         );
       } catch (err) {
         if (!(err instanceof Error) || err.message !== 'BULK_ERROR_GROUP_MERGED_GROUP_FALLBACK_REQUIRED') throw err;
+        // ── THE ONLY O(N) DATABASE PATH LEFT IN ERROR INGESTION ──────────────
+        // Reached when a matched error_groups row has `merged_into` set, i.e. the
+        // group was merged into another and the set-based statement cannot follow
+        // the merge chain. The fallback resolves groups ONE EVENT AT A TIME, and
+        // each `handleGroup` costs INSERT + SELECT ... FOR UPDATE + UPDATE, so
+        // query count degrades from O(1) to roughly 3N + constant.
+        //
+        // It used to be completely silent: no log, no metric. That made it
+        // impossible to tell from telemetry whether a latency regression came
+        // from this path or from the DB. Both are emitted now so the fallback
+        // rate is a first-class signal — if it is anything other than rare, the
+        // merge-chain resolution needs to move into the set-based statement.
+        // Optional-called: `metrics` is a partial stub in several unit tests, and
+        // a missing counter must never convert a recoverable grouping fallback
+        // into a failed ingest batch.
+        this.metrics?.recordErrorGroupMergeFallback?.(insertedErrors.length);
+        this.log?.warn(
+          { events: insertedErrors.length, reason: 'merged_group_in_batch' },
+          'error grouping fell back to per-event resolution; query count degrades to O(N)',
+        );
         groupResults = [];
         for (const [inputIndex, error] of insertedErrors.entries()) {
           groupResults.push({

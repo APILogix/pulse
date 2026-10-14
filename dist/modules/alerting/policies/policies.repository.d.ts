@@ -13,6 +13,8 @@
 import type { PoolClient } from 'pg';
 import { pool } from '../../../config/database.js';
 import { type AlertEscalationPolicyRow, type AlertEscalationStepRow } from '../types.js';
+export declare const ALERT_ESCALATION_POLICIES_COLUMNS = "id, organization_id, name, description, repeat_interval_minutes, max_repeats, is_active, created_at, updated_at, deleted_at";
+export declare const ALERT_ESCALATION_STEPS_COLUMNS = "id, policy_id, step_number, wait_minutes, connector_ids, route_ids, notify_on_call, custom_message_template, template_id, is_active, created_at, updated_at";
 export declare class PoliciesRepository {
     private readonly db;
     /** ADR-0006: escalation policies/steps are control-plane configuration. */

@@ -1,7 +1,9 @@
+import './dns.js';
 import { Pool } from 'pg';
 import { env } from './env.js';
 import { logger } from './logger.js';
-import { isExpectedServerlessDisconnect, resolvePostgresSslConfig } from './postgres-ssl.js';
+import { checkPostgresHealth, getSafePostgresConnectionMetadata, withPostgresAddressFamily, } from './postgres-network.js';
+import { isExpectedServerlessDisconnect, resolvePostgresSslConfig, sanitizePostgresConnectionString, } from './postgres-ssl.js';
 const dbLogger = logger.child({ component: 'log-database' });
 /** PostgreSQL error codes that must never be retried — retrying cannot help. */
 const NON_RETRYABLE_PG_CODES = new Set([
@@ -39,6 +41,10 @@ const RETRYABLE_CONNECTION_CODES = new Set([
  *   maintenance are never aborted. Reads stay bounded to contain runaway
  *   analytical queries. Timeouts are applied with `SET LOCAL` inside a
  *   transaction so they can never leak onto a pooled connection.
+ * - **No session state on pooled connections.** Every per-request setting
+ *   (statement timeout, RLS tenant scope) is transaction-scoped. Nothing is
+ *   applied at checkout time, so a connection returned to the pool carries no
+ *   residue from its previous borrower. See `applyTenantScope()`.
  * - **Dual pool.** Primary handles writes/DDL; replica absorbs read traffic and
  *   transparently falls back to primary when absent or unhealthy.
  * - **TimescaleDB.** On connect (when enabled) the event tables are promoted to
@@ -51,6 +57,7 @@ const RETRYABLE_CONNECTION_CODES = new Set([
 class LogDatabaseManager {
     primaryPool;
     replicaPool = null;
+    replicaHealthy = false;
     isShuttingDown = false;
     timescaleReady = false;
     constructor() {
@@ -62,6 +69,7 @@ class LogDatabaseManager {
         if (env.LOG_DB_REPLICA && env.LOG_DB_REPLICA !== env.LOG_DB_PRIMARY) {
             dbLogger.info('Replica pool configured — read queries will be routed to the replica');
             this.replicaPool = this.createPool(env.LOG_DB_REPLICA, 'log_replica');
+            this.replicaHealthy = true;
         }
     }
     /**
@@ -74,8 +82,8 @@ class LogDatabaseManager {
      */
     createPool(connectionString, appName) {
         const ssl = this.resolveSslConfig(connectionString, appName);
-        const config = {
-            connectionString,
+        const config = withPostgresAddressFamily({
+            connectionString: sanitizePostgresConnectionString(connectionString),
             max: env.LOG_POOL_MAX,
             min: env.LOG_POOL_MIN,
             idleTimeoutMillis: env.LOG_DB_IDLE_TIMEOUT,
@@ -85,7 +93,16 @@ class LogDatabaseManager {
             keepAliveInitialDelayMillis: env.LOG_DB_KEEPALIVE_MS,
             allowExitOnIdle: false,
             ssl,
-        };
+        }, env.DB_FAMILY);
+        dbLogger.info({
+            pool: appName,
+            ...getSafePostgresConnectionMetadata(connectionString, {
+                family: env.DB_FAMILY,
+                ssl,
+                poolMax: env.LOG_POOL_MAX,
+                poolMin: env.LOG_POOL_MIN,
+            }),
+        }, 'Log PostgreSQL configuration');
         const pool = new Pool(config);
         this.setupPoolMonitoring(pool, appName);
         return pool;
@@ -101,8 +118,15 @@ class LogDatabaseManager {
         return ssl;
     }
     setupPoolMonitoring(pool, name) {
-        pool.on('connect', () => {
+        pool.on('connect', (client) => {
             dbLogger.debug({ pool: name }, 'New connection added to pool');
+            client.on('error', (err) => {
+                if (isExpectedServerlessDisconnect(err)) {
+                    dbLogger.debug({ pool: name, err: err.message }, 'Client log DB connection closed by server (Neon/PgBouncer)');
+                    return;
+                }
+                dbLogger.debug({ pool: name, err: err.message }, 'PostgreSQL client socket error on active/checked-out log DB connection');
+            });
         });
         // Idle server-side disconnects are expected with managed providers; only
         // surface genuinely unexpected pool errors at error level.
@@ -120,7 +144,7 @@ class LogDatabaseManager {
      */
     async connect() {
         dbLogger.info('Testing log database connections');
-        const primaryClient = await this.primaryPool.connect();
+        const primaryClient = await this.connectStartupPool(this.primaryPool, 'LOG_DB_PRIMARY');
         let primaryTime;
         try {
             const res = await primaryClient.query('SELECT NOW() AS time, current_database() AS db');
@@ -132,14 +156,21 @@ class LogDatabaseManager {
         }
         let replicaTime;
         if (this.replicaPool) {
-            const replicaClient = await this.replicaPool.connect();
             try {
-                const replicaRes = await replicaClient.query('SELECT NOW() AS time, current_database() AS db');
-                replicaTime = replicaRes.rows[0]?.time;
-                dbLogger.info({ db: replicaRes.rows[0]?.db, time: replicaTime }, 'Log DB replica connected');
+                const replicaClient = await this.connectStartupPool(this.replicaPool, 'LOG_DB_REPLICA');
+                try {
+                    const replicaRes = await replicaClient.query('SELECT NOW() AS time, current_database() AS db');
+                    replicaTime = replicaRes.rows[0]?.time;
+                    this.replicaHealthy = true;
+                    dbLogger.info({ db: replicaRes.rows[0]?.db, time: replicaTime }, 'Log DB replica connected');
+                }
+                finally {
+                    replicaClient.release();
+                }
             }
-            finally {
-                replicaClient.release();
+            catch (error) {
+                this.replicaHealthy = false;
+                dbLogger.warn({ err: error instanceof Error ? error.message : String(error) }, 'Log DB replica unavailable at startup — reads will use primary');
             }
         }
         if (env.LOG_DB_ENABLE_TIMESCALE) {
@@ -147,17 +178,34 @@ class LogDatabaseManager {
         }
         return { primary: primaryTime, ...(replicaTime ? { replica: replicaTime } : {}) };
     }
+    /** Preserve the connection failure while explaining IPv6-only endpoint configuration. */
+    async connectStartupPool(pool, setting) {
+        try {
+            return await pool.connect();
+        }
+        catch (error) {
+            const failure = error;
+            const connectionString = env[setting] ?? env.DATABASE_URL;
+            let host = '';
+            try {
+                host = new URL(connectionString).hostname;
+            }
+            catch { }
+            if (['ETIMEDOUT', 'ENETUNREACH', 'EHOSTUNREACH'].includes(failure.code ?? '') &&
+                failure.address?.includes(':') &&
+                /^db\.[a-z0-9]+\.supabase\.co$/i.test(host)) {
+                throw new Error(`${setting} cannot reach the Supabase direct endpoint over IPv6. ` +
+                    'Use the same project\'s Session pooler connection string from Supabase Connect ' +
+                    '(port 5432, including its pooler username), or restore IPv6 connectivity. ' +
+                    'DNS ipv4first cannot provide IPv4 for an IPv6-only endpoint.', { cause: error });
+            }
+            throw error;
+        }
+    }
     /**
      * Ensure the TimescaleDB extension is available on the log database.
-     *
-     * Table-level hypertable provisioning (chunking, compression, retention) for
-     * the analytics event tables lives in the schema migrations where those
-     * tables are defined (migrations2/004), not here — that keeps DDL in one
-     * authoritative place. This method only guarantees the extension exists so
-     * the log DB is ready to host hypertables.
-     *
-     * Fully non-fatal: if TimescaleDB is unavailable the log DB simply runs as
-     * plain PostgreSQL.
+     * Hypertable provisioning lives in migrations2/004. Extension failures are
+     * non-fatal: the log database continues using plain PostgreSQL.
      */
     async initializeTimescale() {
         const client = await this.primaryPool.connect();
@@ -186,19 +234,70 @@ class LogDatabaseManager {
      * Acquire a pooled connection from the appropriate pool.
      *
      * @param options.operation 'read' routes to the replica when available.
-     * @param options.projectId sets the RLS tenant scope for the session.
+     *
+     * NOTE: this deliberately does not accept a `projectId`. Tenant scope is a
+     * transaction-scoped concern and is applied by `applyTenantScope()` from
+     * inside a transaction — see that method for the reasoning. An option here
+     * that *looked* like it set tenant scope but could not do so safely is worse
+     * than no option at all, because it fails open.
      */
     async getConnection(options) {
         if (this.isShuttingDown) {
             throw new Error('Log database is shutting down — refusing new connections');
         }
-        const useReplica = options?.operation === 'read' && this.replicaPool !== null;
+        const useReplica = options?.operation === 'read' && this.replicaPool !== null && this.replicaHealthy;
         const pool = useReplica ? this.replicaPool : this.primaryPool;
-        const client = await pool.connect();
-        if (options?.projectId) {
-            await client.query('SET app.current_project_id = $1', [options.projectId]);
-        }
-        return client;
+        return pool.connect();
+    }
+    /**
+     * Apply the RLS tenant scope (`app.current_project_id`) for the CURRENT
+     * TRANSACTION only.
+     *
+     * ## Why this exists (a real defect, not a style preference)
+     *
+     * This previously ran in `getConnection()` as:
+     *
+     *     SET app.current_project_id = $1
+     *
+     * before any `BEGIN`. A bare `SET` is **session**-scoped, so the value
+     * survived `COMMIT`, survived `client.release()`, and stayed attached to the
+     * connection sitting in the `pg` pool. The next caller to borrow that
+     * connection silently inherited the previous tenant's project id. Nothing
+     * ever reset it.
+     *
+     * That is a cross-tenant state leak in a multi-tenant system. It is currently
+     * NOT exploitable — a repo-wide search of `database/migrations/**` found no
+     * `CREATE POLICY`, no `ENABLE ROW LEVEL SECURITY`, and no `current_setting`
+     * reader, so no query consumes this GUC on the Log DB today. It is a loaded
+     * gun rather than a fired one: the moment anyone adds an RLS policy (which is
+     * exactly what this setting exists to feed) the leak becomes a tenant
+     * data-disclosure bug, and it would be invisible in testing because it only
+     * manifests on connection reuse under concurrency.
+     *
+     * ## Why `set_config(..., true)` rather than `SET LOCAL`
+     *
+     * `is_local = true` makes the setting transaction-scoped: PostgreSQL reverts
+     * it automatically at COMMIT or ROLLBACK, so it is leak-proof *by
+     * construction* rather than by remembering to reset it. `set_config()` is also
+     * a function call, so the value binds as a real parameter — `SET LOCAL` only
+     * accepts a literal, which would have forced string interpolation of a
+     * caller-supplied value into SQL.
+     *
+     * This matches the pattern already used correctly elsewhere in the codebase
+     * (`src/modules/analytics/repository.ts`).
+     *
+     * ## Caller contract — IMPORTANT
+     *
+     * MUST be called inside an open transaction. Outside one, `is_local = true`
+     * applies to the implicit single-statement transaction and is discarded
+     * immediately, i.e. it becomes a silent no-op that **fails open** on tenant
+     * scoping. It is private for that reason: every call site in this class
+     * issues `BEGIN` first, and that invariant is enforced structurally rather
+     * than by a runtime probe (which would cost an extra round trip per query on
+     * the hot read path).
+     */
+    async applyTenantScope(client, projectId) {
+        await client.query('SELECT set_config($1, $2, true)', ['app.current_project_id', projectId]);
     }
     /**
      * Execute a query with retry + exponential backoff (with jitter).
@@ -214,13 +313,15 @@ class LogDatabaseManager {
         const effectiveTimeout = options.timeout ?? (operation === 'write' ? env.LOG_DB_WRITE_TIMEOUT : env.LOG_QUERY_TIMEOUT);
         let lastError = null;
         for (let attempt = 0; attempt < maxRetries; attempt++) {
-            const client = await this.getConnection({
-                operation,
-                ...(projectId !== undefined ? { projectId } : {}),
-            });
+            const useReplica = operation === 'read' && this.replicaPool !== null && this.replicaHealthy;
+            let client = null;
             try {
+                client = await this.getConnection({ operation });
                 const start = Date.now();
-                const result = await this.runWithTimeout(client, sql, params, effectiveTimeout);
+                // projectId is threaded into runWithTimeout rather than applied at
+                // checkout, so the tenant scope lives inside the same transaction as the
+                // statement it scopes.
+                const result = await this.runWithTimeout(client, sql, params, effectiveTimeout, projectId);
                 const duration = Date.now() - start;
                 if (duration > env.LOG_DB_SLOW_QUERY_MS) {
                     dbLogger.warn({ query: sql.slice(0, 120), duration, rows: result.rowCount, operation }, 'Slow log query detected');
@@ -230,6 +331,14 @@ class LogDatabaseManager {
             catch (err) {
                 lastError = err;
                 const code = err.code;
+                if (useReplica) {
+                    this.replicaHealthy = false;
+                    dbLogger.warn({ error: err.message, code }, 'Log DB replica read failed — retrying once against primary');
+                    if (client)
+                        client.release();
+                    client = null;
+                    return this.queryWithRetry(sql, params, { ...options, maxRetries });
+                }
                 if (code && NON_RETRYABLE_PG_CODES.has(code)) {
                     throw err;
                 }
@@ -242,25 +351,48 @@ class LogDatabaseManager {
                 }
             }
             finally {
-                client.release();
+                client?.release();
             }
         }
         throw lastError ?? new Error('Query failed after retries');
     }
     /**
      * Run a single statement, optionally bounded by a transaction-scoped
-     * `SET LOCAL statement_timeout`. A timeout of 0 means "no statement timeout"
-     * and the query runs directly without transaction overhead.
+     * `SET LOCAL statement_timeout` and/or an RLS tenant scope.
+     *
+     * A transaction is opened when EITHER a bounded timeout OR a tenant scope is
+     * required, because both mechanisms are transaction-scoped. The no-transaction
+     * fast path is only taken when neither is needed.
+     *
+     * Requesting a tenant scope therefore forces a transaction even when the
+     * timeout is 0/unbounded. That is deliberate: applying the scope outside a
+     * transaction would silently discard it and leave the statement unscoped,
+     * which fails open. Correctness wins over saving a round trip.
      */
-    async runWithTimeout(client, sql, params, timeout) {
-        if (!timeout || timeout <= 0) {
+    async runWithTimeout(client, sql, params, timeout, projectId) {
+        const hasBoundedTimeout = typeof timeout === 'number' && timeout > 0;
+        const needsTenantScope = typeof projectId === 'string' && projectId.length > 0;
+        // Fast path: when tenant scoping is not required, avoid wrapping in BEGIN..COMMIT.
+        // Client-side query_timeout bounds execution without incurring 3 extra network round trips
+        // and virtual transaction allocation on PostgreSQL.
+        if (!needsTenantScope) {
+            if (hasBoundedTimeout) {
+                return client.query({
+                    text: sql,
+                    values: params,
+                    query_timeout: Math.floor(timeout),
+                });
+            }
             return client.query(sql, params);
         }
         await client.query('BEGIN');
         try {
-            // SET LOCAL is transaction-scoped: it cannot leak onto the pooled
-            // connection once the transaction ends.
-            await client.query(`SET LOCAL statement_timeout = ${Math.floor(timeout)}`);
+            // Both of the following are transaction-scoped, so neither can leak onto
+            // the pooled connection once this transaction ends.
+            await this.applyTenantScope(client, projectId);
+            if (hasBoundedTimeout) {
+                await client.query(`SET LOCAL statement_timeout = ${Math.floor(timeout)}`);
+            }
             const result = await client.query(sql, params);
             await client.query('COMMIT');
             return result;
@@ -276,13 +408,17 @@ class LogDatabaseManager {
      * ingestion transactions are never aborted.
      */
     async withTransaction(fn, options) {
-        const client = await this.getConnection({
-            operation: 'write',
-            ...(options?.projectId !== undefined ? { projectId: options.projectId } : {}),
-        });
+        const client = await this.getConnection({ operation: 'write' });
         const timeout = options?.timeout ?? env.LOG_DB_WRITE_TIMEOUT;
+        const projectId = options?.projectId;
         try {
             await client.query('BEGIN');
+            // Applied AFTER BEGIN so it is transaction-scoped and reverts on
+            // COMMIT/ROLLBACK. Applying it before BEGIN (the previous behaviour) made
+            // it session-scoped and leaked it onto the pooled connection.
+            if (typeof projectId === 'string' && projectId.length > 0) {
+                await this.applyTenantScope(client, projectId);
+            }
             if (timeout > 0) {
                 await client.query(`SET LOCAL statement_timeout = ${Math.floor(timeout)}`);
             }
@@ -299,100 +435,32 @@ class LogDatabaseManager {
         }
     }
     /**
-     * High-throughput batch insert of raw events plus their specialized rows.
-     *
-     * Uses set-based `UNNEST` inserts (one statement per table regardless of
-     * batch size) inside a single transaction with an unbounded statement timeout
-     * so large batches never get killed mid-flight.
-     */
-    async batchInsertEvents(events) {
-        if (events.length === 0)
-            return;
-        await this.withTransaction(async (client) => {
-            await client.query(`
-        INSERT INTO events (project_id, type, timestamp, payload)
-        SELECT * FROM UNNEST(
-          $1::uuid[], $2::varchar[], $3::timestamptz[], $4::jsonb[]
-        )
-        `, [
-                events.map((e) => e.project_id),
-                events.map((e) => e.type),
-                events.map((e) => e.timestamp),
-                events.map((e) => JSON.stringify(e.payload)),
-            ]);
-            const requests = events.filter((e) => e.type === 'request');
-            const errors = events.filter((e) => e.type === 'error');
-            if (requests.length > 0)
-                await this.insertRequests(client, requests);
-            if (errors.length > 0)
-                await this.insertErrors(client, errors);
-        });
-    }
-    async insertRequests(client, requests) {
-        await client.query(`
-      INSERT INTO request_events (project_id, request_id, url, method, status_code, timestamp)
-      SELECT * FROM UNNEST(
-        $1::uuid[], $2::uuid[], $3::text[], $4::varchar[], $5::int[], $6::timestamptz[]
-      )
-      `, [
-            requests.map((r) => r.project_id),
-            requests.map((r) => r.payload.request_id ?? null),
-            requests.map((r) => r.payload.url ?? null),
-            requests.map((r) => r.payload.method ?? null),
-            requests.map((r) => r.payload.status_code ?? null),
-            requests.map((r) => r.timestamp),
-        ]);
-    }
-    async insertErrors(client, errors) {
-        const { createHash } = await import('crypto');
-        const fingerprints = errors.map((e) => createHash('sha256')
-            .update(`${String(e.payload.error_type)}:${JSON.stringify(e.payload.stack)}`)
-            .digest('hex')
-            .slice(0, 16));
-        await client.query(`
-      INSERT INTO error_events
-        (project_id, request_id, message, error_type, fingerprint, stack, timestamp)
-      SELECT * FROM UNNEST(
-        $1::uuid[], $2::uuid[], $3::text[], $4::varchar[], $5::varchar[], $6::jsonb[], $7::timestamptz[]
-      )
-      `, [
-            errors.map((e) => e.project_id),
-            errors.map((e) => e.payload.request_id ?? null),
-            errors.map((e) => e.payload.message ?? null),
-            errors.map((e) => e.payload.error_type ?? null),
-            fingerprints,
-            errors.map((e) => JSON.stringify(e.payload.stack ?? null)),
-            errors.map((e) => e.timestamp),
-        ]);
-    }
-    /**
      * Health check for load-balancer / readiness probes. Verifies primary and,
      * when configured, replica connectivity. A failed replica is non-fatal (reads
      * fall back to primary) and is reported but does not flip `healthy`.
      */
     async healthCheck() {
-        try {
-            const primaryRes = await this.primaryPool.query('SELECT NOW() AS time');
-            const result = {
-                healthy: true,
-                ...(primaryRes.rows[0]?.time ? { primary: primaryRes.rows[0].time } : {}),
-            };
-            if (this.replicaPool) {
-                try {
-                    const replicaRes = await this.replicaPool.query('SELECT NOW() AS time');
-                    if (replicaRes.rows[0]?.time)
-                        result.replica = replicaRes.rows[0].time;
-                }
-                catch {
-                    dbLogger.warn('Replica health check failed — reads will fall back to primary');
-                }
+        const primaryHealth = await checkPostgresHealth(this.primaryPool);
+        if (!primaryHealth.healthy) {
+            dbLogger.error({ failure: primaryHealth.failure }, 'Log database primary health check failed');
+            return { healthy: false, failure: primaryHealth.failure };
+        }
+        const result = {
+            healthy: true,
+            primary: new Date(),
+        };
+        if (this.replicaPool) {
+            const replicaHealth = await checkPostgresHealth(this.replicaPool);
+            if (replicaHealth.healthy) {
+                this.replicaHealthy = true;
+                result.replica = new Date();
             }
-            return result;
+            else {
+                this.replicaHealthy = false;
+                dbLogger.warn({ failure: replicaHealth.failure }, 'Replica health check failed — reads will fall back to primary');
+            }
         }
-        catch {
-            dbLogger.error('Log database primary health check failed');
-            return { healthy: false };
-        }
+        return result;
     }
     /** Live pool utilization, useful for metrics dashboards and capacity alerts. */
     getPoolStats() {
@@ -417,12 +485,16 @@ class LogDatabaseManager {
     async close() {
         this.isShuttingDown = true;
         dbLogger.info('Closing log database pools');
-        await this.primaryPool.end();
-        dbLogger.info('Log DB primary pool closed');
+        const closes = [
+            this.primaryPool.end().then(() => dbLogger.info('Log DB primary pool closed')),
+        ];
         if (this.replicaPool) {
-            await this.replicaPool.end();
-            dbLogger.info('Log DB replica pool closed');
+            closes.push(this.replicaPool.end().then(() => dbLogger.info('Log DB replica pool closed')));
         }
+        const results = await Promise.allSettled(closes);
+        const failure = results.find((result) => result.status === 'rejected');
+        if (failure)
+            throw failure.reason;
     }
 }
 function sleep(ms) {

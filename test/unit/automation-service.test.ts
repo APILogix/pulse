@@ -132,19 +132,64 @@ describe('AutomationService', () => {
     it('rejects high-risk action without approval', async () => {
       const input = {
         ...validInput,
-        actions: [{ actionKey: 'pause', actionType: 'release.guard.pause', riskLevel: 'high', requiresApproval: false, config: {} }],
+        actions: [{ actionKey: 'assign', actionType: 'incident.assign_owner', riskLevel: 'high', requiresApproval: false, config: {} }],
       };
       await expect(service.createWorkflow(ORG, USER, input, META))
         .rejects.toThrow('must require approval');
     });
 
-    it('rejects dangerous action without approval', async () => {
+    /**
+     * Replaces the old "rejects dangerous action" case, which used
+     * retention.purge_request. That action type has been removed from the product
+     * entirely (irreversible deletion must never be tenant-automatable), so the
+     * stronger guarantee now is that it cannot even be saved.
+     */
+    it('rejects a retired action type outright', async () => {
       const input = {
         ...validInput,
         actions: [{ actionKey: 'purge', actionType: 'retention.purge_request', riskLevel: 'medium', requiresApproval: false, config: {} }],
       };
       await expect(service.createWorkflow(ORG, USER, input, META))
-        .rejects.toThrow('Dangerous action');
+        .rejects.toThrow('Unsupported action type');
+    });
+
+    it('rejects an unknown action type', async () => {
+      const input = {
+        ...validInput,
+        actions: [{ actionKey: 'bogus', actionType: 'not.a.real.action', riskLevel: 'low', requiresApproval: false, config: {} }],
+      };
+      await expect(service.createWorkflow(ORG, USER, input, META))
+        .rejects.toThrow('Unsupported action type');
+    });
+
+    it('rejects webhook.call configured with an inline URL', async () => {
+      const input = {
+        ...validInput,
+        actions: [{
+          actionKey: 'hook',
+          actionType: 'webhook.call',
+          riskLevel: 'medium',
+          requiresApproval: false,
+          config: { url: 'http://169.254.169.254/latest/meta-data/' },
+        }],
+      };
+      await expect(service.createWorkflow(ORG, USER, input, META))
+        .rejects.toThrow('does not accept an inline URL');
+    });
+
+    it('accepts webhook.call that references a connector, without demanding approval', async () => {
+      const input = {
+        ...validInput,
+        actions: [{
+          actionKey: 'hook',
+          actionType: 'webhook.call',
+          riskLevel: 'medium',
+          requiresApproval: false,
+          config: { connectorId: '11111111-1111-4111-8111-111111111111' },
+        }],
+      };
+      const result = await service.createWorkflow(ORG, USER, input, META);
+      expect(result).toHaveProperty('id', 'wf-1');
     });
 
     it('creates workflow successfully with valid input', async () => {

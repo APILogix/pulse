@@ -13,6 +13,12 @@ export interface ScopedEvent {
     apiKeyName?: string | undefined;
     /** Normalized string supplied by the SDK envelope; never an environment UUID. */
     environment: string;
+    /**
+     * Retry-stable storage time computed once from the event and durable gateway
+     * receipt clock. Optional for direct writer callers and legacy tests.
+     */
+    occurredAtMs?: number | undefined;
+    errorGroupId?: string | null | undefined;
     event: NormalizedEvent;
 }
 export interface TimestampContext {
@@ -85,9 +91,10 @@ export declare class TelemetryWriter {
     writeBatchDetailedWithOutbox(clientOrScoped: PoolClient | ScopedEvent[], scopedParam?: ScopedEvent[]): Promise<DetailedWriteResult>;
     writeBatchDetailedInTransaction(db: Queryable, scoped: ScopedEvent[]): Promise<DetailedWriteResult>;
     private writeBatchDetailedUsing;
+    private recordSessions;
     appendTelemetryOutbox(scoped: ScopedEvent[], db?: Queryable): Promise<number>;
     private writeTyped;
-    /** Best-effort event id (events_*.event_id is NOT NULL). */
+    /** Best-effort event id (events_*.event_id is UUID NOT NULL). */
     private eventId;
     private writeErrors;
     private writeMessages;
@@ -96,7 +103,7 @@ export declare class TelemetryWriter {
     private writeTraces;
     private writeTracesInTransaction;
     private writeTraceSpanTree;
-    private collectTraceSpanRows;
+    private buildTraceSpanRow;
     private writeMetrics;
     private writeLogs;
     private writeProfiles;

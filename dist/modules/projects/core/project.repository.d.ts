@@ -23,7 +23,6 @@ type ProjectRow = {
 };
 export declare class ProjectRepository {
     private readonly db;
-    private static projectSettingsDefaultsRepaired;
     constructor(db?: Pool);
     withTransaction<T>(callback: (client: PoolClient) => Promise<T>): Promise<T>;
     listProjects(orgId: string, query: ListProjectsQuery, client?: PoolClient): Promise<{
@@ -41,7 +40,6 @@ export declare class ProjectRepository {
         metadata?: Record<string, unknown>;
         createdBy?: string | null;
     }, client?: PoolClient): Promise<Project>;
-    private ensureProjectSettingsDefaults;
     /**
      * Seed the per-project usage counter row. Environment + SDK-configuration
      * provisioning is orchestrated explicitly by the service layer (a single

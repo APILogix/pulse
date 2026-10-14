@@ -26,13 +26,20 @@ type ProjectSettingsRow = {
   updated_at: Date;
 };
 
+const PROJECT_SETTINGS_COLUMNS = `
+  id, project_id, organization_id, data_retention_days, sampling_rate, allowed_domains, blocked_domains,
+  pii_scrubbing_enabled, ip_collection_enabled, release_tracking_enabled, session_replay_enabled,
+  performance_monitoring_enabled, error_monitoring_enabled, log_ingestion_enabled, metric_ingestion_enabled,
+  trace_ingestion_enabled, profile_ingestion_enabled, version, created_at, updated_at
+`;
+
 export class SettingsRepository {
   constructor(private readonly db: Pool = pool) {}
 
   async findByProjectId(projectId: string, client?: PoolClient): Promise<ProjectSettings | null> {
     const db = client ?? this.db;
     const result = await db.query<ProjectSettingsRow>(
-      `SELECT * FROM project_settings WHERE project_id = $1 LIMIT 1`,
+      `SELECT ${PROJECT_SETTINGS_COLUMNS} FROM project_settings WHERE project_id = $1 LIMIT 1`,
       [projectId],
     );
     return result.rows[0] ? this.mapRow(result.rows[0]) : null;
@@ -54,7 +61,7 @@ export class SettingsRepository {
          true, true, 1
        )
        ON CONFLICT (project_id) DO NOTHING
-       RETURNING *`,
+       RETURNING ${PROJECT_SETTINGS_COLUMNS}`,
       [projectId, organizationId],
     );
     if (result.rows[0]) return this.mapRow(result.rows[0]);
@@ -101,7 +108,7 @@ export class SettingsRepository {
       `UPDATE project_settings
           SET ${assignments.join(", ")}, updated_at = NOW(), version = version + 1
         WHERE project_id = $${projectIndex}${versionClause}
-        RETURNING *`,
+        RETURNING ${PROJECT_SETTINGS_COLUMNS}`,
       values,
     );
     if (!result.rows[0]) {

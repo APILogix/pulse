@@ -1,7 +1,8 @@
 /**
  * SCIM 2.0 User provisioning for organization members.
  */
-import { createHash, randomUUID } from 'crypto';
+import { createHash } from 'crypto';
+import { v7 as uuidv7 } from 'uuid';
 import { logAudit } from '../../shared/middleware/audit-logger.js';
 import * as repository from '../auth/infrastructure/repositories/index.js';
 import { AuthError, AuthErrorCodes } from '../auth/domain/types.js';
@@ -143,7 +144,7 @@ export async function getUser(orgId, externalId) {
 export async function createUser(orgId, body, actor) {
     const externalId = body.externalId ||
         body.id ||
-        randomUUID();
+        uuidv7();
     const userName = body.userName?.trim();
     if (!userName) {
         throw new AuthError('userName is required', AuthErrorCodes.VALIDATION_ERROR, 400);
@@ -161,7 +162,7 @@ export async function createUser(orgId, body, actor) {
     let user = await repository.findUserByEmailHash(emailToHash(email));
     if (!user) {
         user = await repository.createSsoJitUser({
-            id: randomUUID(),
+            id: uuidv7(),
             email,
             full_name: fullName,
         });
@@ -343,7 +344,7 @@ async function resolveScimMemberUserId(orgId, memberValue) {
 export async function createGroup(orgId, body, actor) {
     const externalId = body.externalId ||
         body.id ||
-        randomUUID();
+        uuidv7();
     const displayName = body.displayName?.trim();
     if (!displayName) {
         throw new AuthError('displayName is required', AuthErrorCodes.VALIDATION_ERROR, 400);

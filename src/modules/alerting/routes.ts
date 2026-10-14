@@ -8,9 +8,15 @@ import { templatesRoutes } from './templates/templates.routes.js';
 import { routingRoutes } from './routing/routing.routes.js';
 import { metricsRoutes } from './metrics/metrics.routes.js';
 import { policyRoutes } from './policy/policy.routes.js';
+import { incidentsRoutes } from './incidents/incidents.routes.js';
 
 export async function alertingRoutes(fastify: FastifyInstance): Promise<void> {
   await fastify.register(rulesRoutes);
+  // Incidents (durable operational occurrences, PRIMARY db). Registered before
+  // eventsRoutes: `/incidents/summary` must be matched ahead of any
+  // `/incidents/:incidentId` style pattern, and Fastify's radix router prefers
+  // static segments, so ordering here is for readability rather than correctness.
+  await fastify.register(incidentsRoutes);
   // Rule bindings + effective rule resolution (ADR-0004). Registered after rulesRoutes so the
   // more specific /rules/:ruleId/bindings paths sit alongside the rule CRUD routes.
   await fastify.register(bindingsRoutes);

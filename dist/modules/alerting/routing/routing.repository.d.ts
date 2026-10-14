@@ -13,6 +13,7 @@
 import type { PoolClient } from 'pg';
 import { pool } from '../../../config/database.js';
 import { type AlertRoutingRuleRow } from '../types.js';
+export declare const ALERT_ROUTING_RULES_COLUMNS = "id, organization_id, name, description, priority, conditions, target_connector_ids, target_route_ids, fallback_connector_ids, template_id, is_active, created_at, updated_at, deleted_at";
 export declare class RoutingRepository {
     private readonly db;
     /** ADR-0006: routing rules are control-plane configuration. */

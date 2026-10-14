@@ -28,6 +28,29 @@ export interface AlertFingerprintResult {
  */
 export declare function resolveGroupingDimensions(input: AlertFingerprintInput): string[];
 /**
+ * THE canonical alert identity hash. This is the single source of truth for
+ * "what makes two alert occurrences the same alert".
+ *
+ * Every consumer of alert identity MUST derive its key from this function:
+ *   - Redis cooldown key
+ *   - alert_events_v2.fingerprint / dedup_key / correlation_key
+ *   - alert_event_state.alert_key
+ *
+ * Previously two structurally different hashes existed (one here, one in
+ * decision.engine.ts). They agreed only by convention, so a divergence in how a
+ * route/dimension was normalized could make the cooldown gate and the durable
+ * dedup key disagree about alert identity. Keep this the only hashing site.
+ */
+export declare function alertIdentityHash(parts: {
+    organizationId: string;
+    projectId?: string | null;
+    environment?: string | null;
+    ruleId: string;
+    policyId?: string | null;
+    /** Pre-normalized, sorted dimension key, or 'global' when ungrouped. */
+    dimensionKey: string;
+}): string;
+/**
  * Computes a deterministic alert fingerprint with normalized grouping dimensions.
  */
 export declare function computeAlertFingerprint(input: AlertFingerprintInput): AlertFingerprintResult;

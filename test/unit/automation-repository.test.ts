@@ -393,12 +393,15 @@ describe('AutomationRepository', () => {
       expect(result.event.id).toBe('evt-existing');
       expect(result.event.payload).toEqual({ old: true });
 
-      // Verify ON CONFLICT
+      // The ON CONFLICT target must be unpredicated so it matches the
+      // `UNIQUE (organization_id, dedupe_key) NULLS NOT DISTINCT` index. The previous
+      // `WHERE organization_id IS NOT NULL` variant paired with a partial index, which
+      // let two NULL-org (platform) events with the same dedupe_key both insert.
       const insertSql = (mockClient.query as any).mock.calls[0][0] as string;
-      expect(insertSql).toContain('ON CONFLICT (organization_id, dedupe_key) WHERE organization_id IS NOT NULL DO NOTHING');
-      // Verify org-scoped lookup
+      expect(insertSql).toContain('ON CONFLICT (organization_id, dedupe_key) DO NOTHING');
+      // The follow-up lookup must still resolve NULL-org rows, hence IS NOT DISTINCT FROM.
       const selectSql = (mockClient.query as any).mock.calls[1][0] as string;
-      expect(selectSql).toContain('organization_id = $2');
+      expect(selectSql).toContain('organization_id IS NOT DISTINCT FROM $2::uuid');
     });
   });
 
@@ -648,21 +651,36 @@ describe('AutomationRepository', () => {
   // =========================================================================
 
   describe('hasEntitlement', () => {
-    it('queries using effective entitlements SQL with past_due support', async () => {
-      mockSequentialReturns(mockClient, [
-        { rows: [{ has_access: true }] },
-      ]);
+    /**
+     * This previously asserted that hasEntitlement built its own SQL string containing
+     * `past_due`, `organization_feature_overrides` and `subscription_addons`.
+     *
+     * The repository no longer inlines that query: it delegates to the canonical
+     * EntitlementsService (`entitlementsService.getEffectiveBooleanFeature`). That is
+     * the better design — one implementation of entitlement resolution instead of a
+     * copy per module that can drift on subtleties like whether `past_due` still counts
+     * as entitled. So the test now pins the delegation rather than a duplicated SQL
+     * string, and asserts the repository issues NO direct query of its own.
+     *
+     * The canonical SQL itself (past_due / overrides / add-ons) is the
+     * EntitlementsService's own responsibility to test.
+     */
+    it('delegates entitlement checks to the canonical EntitlementsService', async () => {
+      const { entitlementsService } = await import('../../src/modules/billing/entitlements/service.js');
+      const spy = vi
+        .spyOn(entitlementsService, 'getEffectiveBooleanFeature')
+        .mockResolvedValue(true as never);
+
+      (mockClient.query as any).mockClear();
 
       const result = await repo.hasEntitlement('org-001', 'module_automation_enabled');
-      expect(result).toBe(true);
 
-      const sql = (mockClient.query as any).mock.calls[0][0] as string;
-      // Canonical entitlements include past_due
-      expect(sql).toContain('past_due');
-      // Includes overrides
-      expect(sql).toContain('organization_feature_overrides');
-      // Includes add-ons
-      expect(sql).toContain('subscription_addons');
+      expect(result).toBe(true);
+      expect(spy).toHaveBeenCalledWith('org-001', 'module_automation_enabled');
+      // No hand-rolled entitlement SQL may be issued from the repository.
+      expect((mockClient.query as any).mock.calls).toHaveLength(0);
+
+      spy.mockRestore();
     });
   });
 });

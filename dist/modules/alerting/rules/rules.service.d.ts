@@ -25,6 +25,7 @@ export type CreateRuleTemplateOverrides = {
 export declare class RulesService {
     private readonly repo;
     private readonly logger;
+    private readonly bindings;
     constructor(deps: AlertingServiceDeps);
     createRule(orgId: string, meta: RequestMeta, body: CreateRuleBody): Promise<Record<string, unknown>>;
     listRules(orgId: string, query: ListRulesQuery): Promise<{

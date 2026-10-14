@@ -1,11 +1,12 @@
-import type { SdkEventType } from '../pipeline/event-normalizer.js';
-export declare const INGEST_QUEUE_PREFIX = "ingest.";
+import { type SdkEventType } from '../pipeline/event-normalizer.js';
+export declare const INGEST_QUEUE_PREFIX = "ingest_";
 export declare const INGEST_QUEUES: Record<SdkEventType, string>;
+export declare const QUEUE_TO_EVENT_TYPE: ReadonlyMap<string, SdkEventType>;
 export declare const ALL_INGEST_QUEUES: readonly string[];
-/** Shared dead-letter intake queue for every ingest.* queue. */
-export declare const INGEST_DLQ_INTAKE_QUEUE = "ingest.dlq-intake";
+/** Shared dead-letter intake queue for every ingest_* queue. */
+export declare const INGEST_DLQ_INTAKE_QUEUE = "ingest_dlq";
 /** Singleton cron queue driving the org/project usage rollup. */
-export declare const INGEST_USAGE_ROLLUP_QUEUE = "ingest.usage-rollup";
+export declare const INGEST_USAGE_ROLLUP_QUEUE = "ingest_usage_rollup";
 export declare function ingestQueueFor(eventType: SdkEventType): string;
 export type PlanTier = 'free' | 'starter' | 'growth' | 'business' | 'enterprise';
 export declare const PLAN_TIERS: readonly PlanTier[];
@@ -14,10 +15,7 @@ export declare const PLAN_WEIGHT: Record<PlanTier, number>;
 /** Type urgency breaks ties within a tier: actionable signals first. */
 export declare const TYPE_URGENCY: Record<SdkEventType, number>;
 /**
- * Per-org in-flight budget per worker process, by plan tier. This is the
- * tenant-fairness knob: within a tier, one org may hold at most this many
- * concurrently processing jobs before its jobs are deferred (aged) so other
- * tenants' jobs run first.
+ * Per-org in-flight budget per worker process, by plan tier.
  */
 export declare const TENANT_INFLIGHT_LIMIT: Record<PlanTier, number>;
 /** Priority boost granted per fairness deferral so aged jobs win eventually. */
@@ -36,6 +34,8 @@ export interface IngestJobMetadata {
     environment: string;
     /** Fairness defer counter (worker-side). */
     deferCount: number;
+    /** Total serialized byte size of the batch events. */
+    batchBytes?: number | undefined;
     /** True when produced by a DLQ/ops replay instead of live traffic. */
     replay?: boolean | undefined;
     projectSlug?: string | undefined;
@@ -52,7 +52,7 @@ export interface IngestJobPayload {
     metadata: IngestJobMetadata;
 }
 export interface DlqIntakePayload {
-    /** Original ingest.* queue the job failed in. */
+    /** Original ingest_* queue the job failed in. */
     sourceQueue: string;
     organizationId: string;
     projectId: string;
@@ -67,10 +67,11 @@ export interface UsageRollupPayload {
     /** Set by the scheduler; informational only (job is a singleton cron). */
     triggeredAt: string;
 }
-export declare function ingestQueueOptions(): Record<string, unknown>;
-/** createQueue is idempotent; swallow races when several processes boot. */
-export declare function safeCreateQueue(name: string, options?: Record<string, unknown>): Promise<void>;
-/** Provision every ingest queue + shared DLQ intake. Call after pgboss.start(). */
+/**
+ * Provision all ingestion pgmq queues on Supabase.
+ * Idempotent, robust against concurrent multi-process starts, pre-existing queues,
+ * and sequence-to-extension membership collisions.
+ */
 export declare function provisionIngestQueues(): Promise<void>;
 export interface EnqueueResult {
     jobIds: string[];
@@ -85,31 +86,41 @@ export interface EnqueueResult {
     }>;
 }
 /**
- * Enqueue a tenant-scoped batch as one pg-boss job per (type, chunk). Uses the
- * v12 bulk `insert` when available, falling back to per-job `send`.
- *
- * Durability contract: once this resolves, events survive a crash of any
- * process. That is the ONLY hard work the gateway is allowed to do.
+ * Enqueue a tenant-scoped batch as one pgmq message per (type, chunk).
+ * Uses batch sending with PGMQ for maximum throughput.
  */
 export declare function enqueueIngestJobs(jobs: Array<{
     queue: string;
     payload: IngestJobPayload;
-    priority: number;
+    priority?: number;
 }>): Promise<EnqueueResult>;
-export interface IngestQueueDepthSnapshot {
-    /** Jobs waiting to be picked up (created + retry) across all ingest queues. */
+export type EventQueueLifecycleStatus = 'idle' | 'pending' | 'inserting';
+export interface EventTypeQueueStatus {
+    eventType: SdkEventType;
+    queue: string;
+    status: EventQueueLifecycleStatus;
+    /** Total jobs in the queue table */
+    total: number;
+    /** Jobs waiting to be picked up by workers */
     pending: number;
-    /** Pending/retry jobs that are runnable now (start_after <= now). */
-    ready: number;
-    /** Pending/retry jobs delayed by retry/fairness scheduling (start_after > now). */
-    deferred: number;
-    /** Jobs currently being processed. */
-    active: number;
-    /** Failed jobs (pre-dead-letter). */
+    /** Jobs currently leased and actively being inserted */
+    inserting: number;
+    /** Dead-lettered jobs pending replay */
     failed: number;
-    /** Persisted, unreplayed DLQ rows across all ingest queues. */
+    oldestPendingAgeMs: number | null;
+}
+export interface IngestQueueDepthSnapshot {
+    /** Jobs waiting to be picked up across all ingest queues. */
+    pending: number;
+    /** Runnable jobs ready now. */
+    ready: number;
+    /** Delayed/deferred jobs. */
+    deferred: number;
+    /** Active jobs currently leased. */
+    active: number;
+    /** Failed / dead-lettered jobs in dead letter storage. */
+    failed: number;
     deadLettered: number;
-    /** Age of the oldest pending/retry job across all ingest queues. */
     oldestPendingAgeMs: number | null;
     perQueue: Array<{
         queue: string;
@@ -119,29 +130,19 @@ export interface IngestQueueDepthSnapshot {
         deferred: number;
         oldestPendingAgeMs: number | null;
     }>;
+    perEventType?: Record<SdkEventType, EventTypeQueueStatus>;
     dlqPerQueue: Array<{
         queue: string;
         count: number;
     }>;
 }
+export declare function createEmptyQueueDepthSnapshot(): IngestQueueDepthSnapshot;
 /**
- * Queue depth probe. pg-boss v12 exposes no public size API, so we read the
- * job table directly — one grouped scan. Callers (gateway) cache the result
- * at ~1s granularity so the request path stays O(1).
+ * Queue depth probe reading PGMQ telemetry.
  */
-export declare function ingestQueueDepth(pool: {
-    query: (sql: string) => Promise<{
-        rows: Array<{
-            name: string;
-            state: string;
-            n: number;
-            ready: number;
-            deferred: number;
-            oldest_pending_age_ms: number | string | null;
-        } | {
-            queue: string;
-            n: number;
-        }>;
+export declare function ingestQueueDepth(pool?: {
+    query: (sql: string, params?: unknown[]) => Promise<{
+        rows: any[];
     }>;
 }): Promise<IngestQueueDepthSnapshot>;
 //# sourceMappingURL=ingest-queues.d.ts.map

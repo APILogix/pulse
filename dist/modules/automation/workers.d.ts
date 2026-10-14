@@ -1,35 +1,29 @@
 /**
- * Automation Module – pg-boss v12 worker registration.
+ * Automation Module – Supabase PGMQ worker registration.
  *
  * Queues:
- *   - automation-inbox        Process pending inbox events → match → create runs
- *   - automation-run-execute  Execute queued runs sequentially (step-by-step)
- *   - automation-maintenance  Expire approvals, recover stale inbox/runs/steps
- *   - automation-dead-letter  Dead-letter retry for failed inbox events
- *   - automation-schedule     Bounded cron due-scheduling sweep
- *
- * Patterns:
- *   - Safe queue creation (idempotent createQueue)
- *   - Named queues with bounded local concurrency/batch sizes
- *   - Array-normalized job handlers
- *   - pg-boss retry/backoff/expiry/dead-letter options
- *   - Scheduled sweeps with graceful unschedule on stop
- *   - CTE FOR UPDATE SKIP LOCKED in repository claims
- *   - Deterministic per-workflow run idempotency
- *   - Pinned active version actions
- *   - Atomic run+steps creation
- *   - Bounded exponential retries with timeout
+ *   - automation_inbox              Process pending inbox events → match → create runs
+ *   - automation_run_execute        Execute queued runs sequentially (step-by-step)
+ *   - automation_maintenance        Expire approvals, recover stale inbox/runs/steps
+ *   - automation_dead_letter        Dead-letter retry for failed inbox events
+ *   - automation_schedule           Bounded cron due-scheduling sweep
+ *   - automation_alert_domain_event Ingest alert lifecycle events into automation inbox
  */
 import type { FastifyBaseLogger } from 'fastify';
+import { AutomationRepository } from './repository.js';
+import { AutomationAuditRepository } from './audit.js';
 export declare const AUTOMATION_QUEUES: {
-    readonly inbox: "automation-inbox";
-    readonly execute: "automation-run-execute";
-    readonly maintenance: "automation-maintenance";
-    readonly deadLetter: "automation-dead-letter";
-    readonly schedule: "automation-schedule";
+    readonly inbox: "automation_inbox";
+    readonly execute: "automation_run_execute";
+    readonly maintenance: "automation_maintenance";
+    readonly deadLetter: "automation_dead_letter";
+    readonly schedule: "automation_schedule";
+    readonly alertDomainEventIngest: "automation_alert_domain_event";
 };
 export interface InboxJobData {
     batchSize?: number;
+    eventId?: string;
+    orgId?: string;
 }
 export interface ExecuteJobData {
     runId: string;
@@ -50,11 +44,32 @@ export declare function enqueueAutomationJob(job: {
     type: string;
     payload: Record<string, unknown>;
 }): Promise<void>;
-/**
- * Register all automation pg-boss workers.
- * Called from shared/workers/main.ts during lifecycle bootstrap.
- * Returns a stop handle for graceful unschedule.
- */
+export interface StepFailureOutcome {
+    retryScheduled: boolean;
+    retryEnqueued: boolean;
+}
+export interface AlertDomainEventJobData {
+    organizationId: string;
+    projectId: string | null;
+    eventType: string;
+    alertKey: string;
+    alertEventId: string;
+    dedupeKey: string;
+    payload: Record<string, unknown>;
+    metadata: Record<string, unknown>;
+    occurredAt: string;
+}
+export declare function ingestAlertDomainEvent(data: AlertDomainEventJobData, repo: AutomationRepository, auditRepo: AutomationAuditRepository, log: FastifyBaseLogger): Promise<{
+    created: boolean;
+    skippedReason?: 'not_entitled';
+}>;
+export declare function handleStepFailure(step: {
+    id: string;
+    runId?: string;
+    attempt: number;
+    maxAttempts: number;
+    metadata: Record<string, unknown>;
+}, errorCode: string, errorMessage: string, output: Record<string, unknown>, repo: AutomationRepository, log: FastifyBaseLogger, runId?: string, orgId?: string): Promise<StepFailureOutcome>;
 export declare function registerAutomationWorkers(logger: FastifyBaseLogger): Promise<{
     stop: () => Promise<void>;
 }>;

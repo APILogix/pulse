@@ -655,7 +655,10 @@ export async function seedDefaultPresetsForOrgInTransaction(
 
   const result = await client.query<{ seeded: string }>(
     `WITH presets AS (
-       SELECT *
+       SELECT preset_key, name, description, severity, evaluation_category,
+              evaluation_interval_seconds, cooldown_seconds, auto_resolve_after_minutes,
+              deduplication_window_seconds, metadata, field_path, operator,
+              threshold_value, lookback_minutes, aggregate_function
        FROM jsonb_to_recordset($3::jsonb) AS p(
          preset_key text,
          name text,

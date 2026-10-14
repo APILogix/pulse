@@ -1,8 +1,8 @@
 {
-  "timestamp": "2026-08-25T10:28:12.636Z",
+  "timestamp": "2026-10-13T10:37:31.367Z",
   "totalPlans": 5,
-  "totalFeatures": 102,
-  "totalEntitlementsChecked": 510,
+  "totalFeatures": 84,
+  "totalEntitlementsChecked": 420,
   "supportedConnectorsCount": 7,
   "supportedConnectors": [
     "slack",

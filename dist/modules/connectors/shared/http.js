@@ -6,7 +6,7 @@
  * used by the dispatcher and dead-letter queue.
  */
 import { ConnectorDeliveryError } from '../types.js';
-import { validateWebhookUrl } from '../../../shared/utils/ssrf.js';
+import { validateWebhookUrl, validateWebhookUrlAsync } from '../../../shared/utils/ssrf.js';
 const DEFAULT_TIMEOUT_MS = 10_000;
 /**
  * Perform an HTTP request with explicit timeout handling. Network-level failures throw a
@@ -16,7 +16,7 @@ const DEFAULT_TIMEOUT_MS = 10_000;
  */
 export async function httpRequest(url, options = {}) {
     if (!options.skipSsrfCheck) {
-        const ssrf = validateWebhookUrl(url);
+        const ssrf = await validateWebhookUrlAsync(url);
         if (!ssrf.safe) {
             throw new ConnectorDeliveryError(`SSRF protection blocked request: ${ssrf.reason ?? 'unsafe URL'}`, 'invalid_config', false, { url: redactUrl(url) });
         }

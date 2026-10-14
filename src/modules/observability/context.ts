@@ -109,7 +109,7 @@ export class ObservabilityContextResolver {
   private async resolvePlan(organizationId: string): Promise<string> {
     try {
       const result = await this.pool.query<{ plan_key: string | null }>(
-        `SELECT plan_key FROM organizations WHERE id = $1 LIMIT 1`,
+        `SELECT plan_key FROM v_subscription_summary WHERE organization_id = $1 LIMIT 1`,
         [organizationId],
       );
       const planKey = result.rows[0]?.plan_key;

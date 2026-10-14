@@ -24,12 +24,8 @@ export declare class OrganizationService {
     private requireMutableOrg;
     createOrganization(meta: RequestMeta, data: {
         name: string;
-        description?: string;
-        industry?: string;
-        companySize?: string;
-        country?: string;
+        slug?: string;
         timezone?: string;
-        billingEmail?: string;
     }): Promise<import("./types.js").OrganizationDto>;
     switchOrganization(meta: RequestMeta, orgId: string): Promise<import("./types.js").OrganizationDto>;
     getOrganization(orgId: string, userId: string): Promise<import("./types.js").OrganizationDto>;

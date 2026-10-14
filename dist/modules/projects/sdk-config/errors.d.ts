@@ -9,7 +9,7 @@
  * that is backend-owned) from `unknown_field` (a path that does not exist in
  * the schema at all). Both are rejected — never silently ignored.
  */
-export type SdkConfigErrorCode = "protected_field" | "unknown_field" | "limit_violation" | "type_error" | "policy_violation" | "schema_invalid" | "unsupported_schema" | "envelope_invalid" | "identity_hint_mismatch" | "not_found";
+export type SdkConfigErrorCode = "unavailable" | "protected_field" | "unknown_field" | "limit_violation" | "type_error" | "policy_violation" | "schema_invalid" | "unsupported_schema" | "envelope_invalid" | "identity_hint_mismatch" | "not_found";
 export interface SdkConfigErrorDetail {
     /** JSON Pointer (RFC 6901) to the offending path, e.g. `/transport/routes/traces/url`. */
     path: string;

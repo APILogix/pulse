@@ -3,18 +3,27 @@
  *
  * Uses per-connector SMTP credentials when supplied, otherwise falls back to
  * the platform SMTP_* env configuration (same transport the rest of the app
- * uses). Renders a minimal HTML + text body from the notification payload.
+ * uses). Alerts render through the enterprise alert formatter; everything else
+ * renders through the shared Mono notification template.
  */
 import nodemailer from 'nodemailer';
 import { BaseConnector } from '../../shared/base.connector.js';
 import { env } from '../../../../config/env.js';
 import { EmailConfigSchema, ConnectorDeliveryError, } from '../../types.js';
 import { renderEnterpriseAlertEmail } from '../../../alerting/runtime/alert-notification-formatter.js';
+import { standardNotificationTemplate } from '../../../../shared/email/index.js';
+/** Severity → the Mono truth channel, the same mapping alert mail uses. */
+const SEVERITY_TONE = {
+    info: 'info',
+    warning: 'warning',
+    error: 'danger',
+    critical: 'danger',
+};
 const SEVERITY_LABEL = {
-    info: 'ℹ️ Info',
-    warning: '⚠️ Warning',
-    error: '❌ Error',
-    critical: '🚨 Critical',
+    info: 'Info',
+    warning: 'Warning',
+    error: 'Error',
+    critical: 'Critical',
 };
 export class EmailConnector extends BaseConnector {
     type = 'email';
@@ -56,30 +65,23 @@ export class EmailConnector extends BaseConnector {
         }
         return this.transporter;
     }
-    renderHtml(n) {
-        const fieldsHtml = (n.fields ?? [])
-            .map((f) => `<tr><td style="padding:4px 12px 4px 0;font-weight:600;">${escapeHtml(f.label)}</td><td style="padding:4px 0;">${escapeHtml(f.value)}</td></tr>`)
-            .join('');
-        const cta = n.url
-            ? `<p><a href="${escapeAttr(n.url)}" style="display:inline-block;padding:10px 16px;background:#2563eb;color:#fff;text-decoration:none;border-radius:6px;">View details</a></p>`
-            : '';
-        return `<!doctype html><html><body style="font-family:system-ui,Segoe UI,Arial,sans-serif;color:#111;">
-      <p style="font-size:13px;color:#666;">${SEVERITY_LABEL[n.severity] ?? n.severity}</p>
-      <h2 style="margin:0 0 12px;">${escapeHtml(n.title)}</h2>
-      <p style="white-space:pre-wrap;">${escapeHtml(n.body)}</p>
-      ${fieldsHtml ? `<table style="border-collapse:collapse;margin:12px 0;">${fieldsHtml}</table>` : ''}
-      ${cta}
-    </body></html>`;
-    }
-    renderText(n) {
-        const fields = (n.fields ?? []).map((f) => `${f.label}: ${f.value}`).join('\n');
-        return [
-            `[${n.severity.toUpperCase()}] ${n.title}`,
-            '',
-            n.body,
-            fields ? `\n${fields}` : '',
-            n.url ? `\n${n.url}` : '',
-        ].join('\n');
+    /**
+     * Non-alert notifications (connector tests, generic payloads) render through
+     * the shared Mono template, so they arrive in the same sheet as every other
+     * Pulsiv email instead of an unstyled light page.
+     */
+    renderFallback(n, subject) {
+        return standardNotificationTemplate({
+            appName: env.APP_NAME,
+            title: n.title,
+            subject,
+            eyebrowText: SEVERITY_LABEL[n.severity] ?? n.severity,
+            tone: SEVERITY_TONE[n.severity] ?? 'info',
+            message: n.body,
+            details: (n.fields ?? []).map((f) => ({ label: f.label, value: f.value, sans: true })),
+            primaryAction: n.url ? { label: 'View details', url: n.url } : undefined,
+            footerKind: 'alert',
+        });
     }
     async deliver(notification) {
         const cfg = this.config();
@@ -102,8 +104,9 @@ export class EmailConnector extends BaseConnector {
                 : null;
             const subject = enterprise?.subject
                 ?? (typeof notification.metadata?.subject === 'string' ? notification.metadata.subject : `[${notification.severity.toUpperCase()}] ${notification.title}`);
-            const text = enterprise?.text ?? this.renderText(notification);
-            const html = enterprise?.html ?? this.renderHtml(notification);
+            const rendered = enterprise ?? this.renderFallback(notification, subject);
+            const text = rendered.text;
+            const html = rendered.html;
             const destinationTarget = (destination ? [destination] : cfg.to).join(', ');
             console.log(`\n[ALERT_EMAIL_CONNECTOR] 📨 Delivering connector email | To: "${destinationTarget}" | Subject: "${subject}"`);
             if (text) {
@@ -152,11 +155,5 @@ export class EmailConnector extends BaseConnector {
             };
         }
     }
-}
-function escapeHtml(s) {
-    return s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c] ?? c));
-}
-function escapeAttr(s) {
-    return s.replace(/"/g, '%22');
 }
 //# sourceMappingURL=email.connector.js.map

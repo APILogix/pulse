@@ -71,6 +71,18 @@ function applyOperatorOverride(config, override) {
         if (override.features?.[feature] === false)
             config.features[feature] = false;
     }
+    const persistence = override.limits?.persistenceGovernance;
+    if (persistence) {
+        if (typeof persistence.maxPersistPerMinute === "number") {
+            config.limits.persistenceGovernance.maxPersistPerMinute = Math.min(config.limits.persistenceGovernance.maxPersistPerMinute, persistence.maxPersistPerMinute);
+        }
+        if (typeof persistence.adaptive === "boolean") {
+            config.limits.persistenceGovernance.adaptive = persistence.adaptive;
+        }
+        if (typeof persistence.budgetExceededLogIntervalMs === "number") {
+            config.limits.persistenceGovernance.budgetExceededLogIntervalMs = Math.max(config.limits.persistenceGovernance.budgetExceededLogIntervalMs, persistence.budgetExceededLogIntervalMs);
+        }
+    }
 }
 /** Delivery never translates schemas: it clones the canonical snapshot and applies only emergency disables. */
 export function buildDeliverySnapshot(input) {

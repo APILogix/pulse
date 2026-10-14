@@ -107,6 +107,8 @@ export interface IngestResponse {
     accepted: number;
     rejected: number;
     batchId: string;
+    config_u?: boolean;
+    change?: boolean;
     limits?: {
         remaining: number;
         resetAt: number;

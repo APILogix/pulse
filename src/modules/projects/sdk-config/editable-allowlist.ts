@@ -2,6 +2,7 @@ import {
   FEATURE_KEYS,
   INSTRUMENTATION_KEYS,
   KILLSWITCH_KEYS,
+  PERSISTENCE_GOVERNANCE_KEYS,
   PII_DETECTION_KEYS,
   PRIVACY_CAPTURE_KEYS,
   ROUTE_KEYS,
@@ -23,6 +24,7 @@ const ROUTE_SET = new Set<string>(ROUTE_KEYS);
 const CAPTURE_SET = new Set<string>(PRIVACY_CAPTURE_KEYS);
 const PII_SET = new Set<string>(PII_DETECTION_KEYS);
 const TENANT_SET = new Set<string>(TENANT_GOVERNANCE_KEYS);
+const PERSISTENCE_SET = new Set<string>(PERSISTENCE_GOVERNANCE_KEYS);
 
 const LIMIT_SCALAR_KEYS = new Set([
   "maxSpansPerTrace",
@@ -150,6 +152,12 @@ function classifyLimits(rest: string[]): PathClassification {
     return { pathClass: "editable", reason: "allowlisted" };
   }
   if (rest.length === 1 && rest[0] === "tenantGovernance") {
+    return { pathClass: "protected", reason: "container" };
+  }
+  if (rest.length === 2 && rest[0] === "persistenceGovernance" && PERSISTENCE_SET.has(rest[1]!)) {
+    return { pathClass: "editable", reason: "allowlisted" };
+  }
+  if (rest.length === 1 && rest[0] === "persistenceGovernance") {
     return { pathClass: "protected", reason: "container" };
   }
   return { pathClass: "unknown", reason: "unknown" };

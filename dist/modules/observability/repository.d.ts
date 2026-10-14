@@ -61,8 +61,13 @@ export declare class ObservabilityRepository implements QueryExecutor {
     /**
      * Resolve a trace public_id from a trace_id. Used by request detail to build the
      * clickable trace link without loading the full trace payload.
+     * Employs strict partition pruning (30-day temporal window with automatic fallback) to
+     * prevent sequential partition scans across historical chunks.
      */
-    fetchTracePublicId(ctx: QueryContext, traceId: string | null): Promise<string | null>;
+    fetchTracePublicId(ctx: QueryContext, traceId: string | null, timeRange?: {
+        minOccurredAt?: Date;
+        maxOccurredAt?: Date;
+    }): Promise<string | null>;
     /**
      * Resolve a request public_id from a request_id or event_id. Used by error
      * detail to build the clickable request link without loading the full request
@@ -82,6 +87,7 @@ export declare class ObservabilityRepository implements QueryExecutor {
      */
     getErrorGroupHistory(ctx: QueryContext, groupId: string): Promise<Array<Record<string, unknown>>>;
     private parseJsonValue;
+    private errorGroupMatchPredicate;
     /**
      * Fetch related error telemetry events from `events_errors` for an error group.
      */
@@ -118,9 +124,14 @@ export declare class ObservabilityRepository implements QueryExecutor {
     /**
      * Batch resolve trace public_ids for an array of trace_ids.
      */
-    fetchTracePublicIdMap(ctx: QueryContext, traceIds: string[]): Promise<Map<string, string>>;
+    fetchTracePublicIdMap(ctx: QueryContext, traceIds: string[], timeRange?: {
+        minOccurredAt?: Date;
+        maxOccurredAt?: Date;
+    }): Promise<Map<string, string>>;
     /**
      * Batch resolve latest event public_ids for an array of error group IDs or public IDs.
+     * Resolves group UUIDs first via error_groups table, then queries events_errors directly
+     * using indexed error_group_id without Cartesian joins or disk-spill sorting (OBS-Q005).
      */
     fetchLatestEventPublicIdMap(ctx: QueryContext, groupIds: string[]): Promise<Map<string, string>>;
     /**
