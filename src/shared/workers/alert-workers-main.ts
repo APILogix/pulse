@@ -1,6 +1,6 @@
 import '../../config/dns.js';
 import { type Pool } from 'pg';
-import { closeDatabase, pool as canonicalPrimaryPool } from '../../config/database.js';
+import { closeDatabase, pool as canonicalPrimaryPool, notificationPool } from '../../config/database.js';
 import { env } from '../../config/env.js';
 import { logProcessConnectionBudget } from '../../config/connection-budget.js';
 import { logger } from '../../config/logger.js';
@@ -42,7 +42,7 @@ export class AlertWorkerProcess {
 
   constructor(dependencies: AlertWorkerProcessDependencies = {}) {
     this.hasCustomPool = Boolean(dependencies.primaryPool);
-    this.primaryPool = dependencies.primaryPool ?? canonicalPrimaryPool;
+    this.primaryPool = dependencies.primaryPool ?? notificationPool ?? canonicalPrimaryPool;
     this.logDatabase = dependencies.logDatabase ?? logDB;
     this.registerConnectors = dependencies.registerConnectors ?? startConnectorMonitor;
     this.registerAlerting = dependencies.registerAlerting ?? registerAlertingWorkers;
@@ -52,7 +52,7 @@ export class AlertWorkerProcess {
       });
     this.assertConfigPool = dependencies.assertConfigPool
       ?? (async () => {
-        await new AlertConfigRepository().assertConfigPool(log);
+        await new AlertConfigRepository(this.primaryPool).assertConfigPool(log);
       });
     this.exit = dependencies.exit ?? ((code) => process.exit(code));
     this.installSignals = dependencies.installSignalHandlers ?? true;
@@ -80,10 +80,14 @@ export class AlertWorkerProcess {
       }
 
       const [connectors, alerting] = await Promise.all([
-        this.registerConnectors(log, {
-          group: 'alert-delivery',
-          strictQueueCreation: true,
-        }),
+        this.registerConnectors(
+          log,
+          {
+            group: 'alert-delivery',
+            strictQueueCreation: true,
+          },
+          this.primaryPool,
+        ),
         this.registerAlerting(
           log,
           {
@@ -92,6 +96,7 @@ export class AlertWorkerProcess {
           },
           undefined,
           this.logDatabase.getPrimaryPool(),
+          this.primaryPool,
         ),
       ]);
       this.connectorWorkers = connectors;

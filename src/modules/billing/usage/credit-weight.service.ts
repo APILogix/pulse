@@ -12,7 +12,7 @@ export const DEFAULT_CREDIT_WEIGHTS: Readonly<Record<string, number>> = Object.f
   span: 0.2500,
   log: 0.1200,
   metric: 0.1000,
-  profile: 0.5000,
+  profile: 2.0000,
   replay: 2.0000,
   message: 0.3000,
   cron_checkin: 0.2000,

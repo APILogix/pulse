@@ -34,7 +34,7 @@ CREATE TABLE IF NOT EXISTS user_sessions (
   sso_provider_id UUID,
   sso_provider_type VARCHAR(50),
   login_method VARCHAR(32)
-);
+) WITH (fillfactor = 85);
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_sessions_refresh_token
   ON user_sessions(refresh_token_hash);
@@ -44,6 +44,9 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_sessions_previous_refresh_token_unique
   WHERE previous_refresh_token_hash IS NOT NULL;
 
 CREATE INDEX IF NOT EXISTS idx_sessions_user_active
+  ON user_sessions(user_id, status, last_active_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_user_sessions_user_active_last_active
   ON user_sessions(user_id, status, last_active_at DESC);
 
 CREATE INDEX IF NOT EXISTS idx_sessions_cleanup
@@ -60,7 +63,6 @@ CREATE INDEX IF NOT EXISTS idx_user_sessions_sso_provider
   ON user_sessions(sso_provider_id, sso_provider_type)
   WHERE sso_provider_id IS NOT NULL;
 
-CREATE INDEX IF NOT EXISTS idx_user_sessions_user_active_last_active
-  ON user_sessions (user_id, last_active_at DESC)
-  WHERE status = 'active';
-
+CREATE INDEX IF NOT EXISTS idx_user_sessions_terminated_by
+  ON user_sessions(terminated_by)
+  WHERE terminated_by IS NOT NULL;

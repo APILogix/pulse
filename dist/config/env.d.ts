@@ -35,6 +35,7 @@ declare const envSchema: z.ZodObject<{
     DB_FAMILY: z.ZodPipe<z.ZodOptional<z.ZodUnknown>, z.ZodTransform<4 | 6 | undefined, unknown>>;
     DB_POOL_MAX: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
     DB_POOL_MIN: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
+    NOTIFICATION_POOL_MAX: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
     DB_IDLE_TIMEOUT_MS: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
     DB_CONNECTION_TIMEOUT_MS: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
     STARTUP_DB_RETRY_MAX_ATTEMPTS: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
@@ -273,6 +274,7 @@ export declare const env: {
     DB_FAMILY: 4 | 6 | undefined;
     DB_POOL_MAX: number;
     DB_POOL_MIN: number;
+    NOTIFICATION_POOL_MAX: number;
     DB_IDLE_TIMEOUT_MS: number;
     DB_CONNECTION_TIMEOUT_MS: number;
     STARTUP_DB_RETRY_MAX_ATTEMPTS: number;

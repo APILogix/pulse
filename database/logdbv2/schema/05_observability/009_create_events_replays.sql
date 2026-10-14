@@ -5,7 +5,7 @@ CREATE TABLE IF NOT EXISTS events_replays (
   project_id UUID,
   environment TEXT NOT NULL,
   api_key_name TEXT NOT NULL,
-  event_id TEXT NOT NULL,
+  event_id UUID NOT NULL,
   trace_id TEXT,
   span_id TEXT,
   parent_span_id TEXT,

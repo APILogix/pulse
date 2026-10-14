@@ -8,7 +8,7 @@ CREATE TABLE IF NOT EXISTS error_group_regression_outbox (
   fingerprint         TEXT NOT NULL,
   resolved_in_release TEXT,
   reopened_in_release TEXT,
-  triggering_event_id TEXT NOT NULL,
+  triggering_event_id UUID NOT NULL,
   payload             JSONB NOT NULL DEFAULT '{}'::jsonb,
   published_at        TIMESTAMPTZ,
   claimed_at          TIMESTAMPTZ,

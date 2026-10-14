@@ -33,7 +33,8 @@
  *     the event-analytics worker and the ingestion event-processor, NOT
  *     written here — this writer only persists raw events.
  */
-import { v7 as uuidv7 } from 'uuid';
+import { createHash } from 'crypto';
+import { v7 as uuidv7, validate as uuidValidate } from 'uuid';
 import { generatePublicId, PUBLIC_ID_PREFIXES } from '../../../shared/utils/public-id-generator.js';
 import { STATUS_CODES } from 'http';
 import { LIMITS, parseSafeEpochMs, resolveTimestamp } from './event-normalizer.js';
@@ -163,6 +164,37 @@ const TRACE_ATTRIBUTE_DUPLICATES = new Set([
     'application_name', 'applicationName', 'application_version', 'applicationVersion',
     'release', 'timestamp',
 ]);
+const LOG_ATTR_DUPES = new Set([
+    'parentSpanId', 'parent_span_id', 'tenantId', 'tenant_id',
+    'name', 'loggerName', 'logger_name', 'logSource', 'log_source',
+    'logCategory', 'log_category', 'endpoint', 'httpMethod', 'http_method',
+    'statusCode', 'status_code', 'durationMs', 'duration_ms',
+    'environment', 'projectId', 'project_id', 'organizationId', 'organization_id',
+    'sdkName', 'sdk_name', 'sdkVersion', 'sdk_version',
+    'applicationName', 'application_name', 'applicationVersion', 'application_version',
+    'release', 'timestamp', 'eventId', 'event_id',
+    'requestId', 'request_id', 'sessionId', 'session_id',
+    'traceId', 'trace_id', 'spanId', 'span_id', 'level', 'message',
+]);
+const CRON_ATTR_DUPES = new Set([
+    'monitorSlug', 'monitor_slug', 'monitorName', 'monitor_name',
+    'status', 'duration', 'duration_ms',
+    'checkinType', 'checkin_type', 'scheduleType', 'schedule_type',
+    'startedAt', 'started_at', 'finishedAt', 'finished_at',
+    'isSuccess', 'is_success', 'tenantId', 'tenant_id',
+    'environment', 'projectId', 'project_id', 'organizationId', 'organization_id',
+    'sdkName', 'sdk_name', 'sdkVersion', 'sdk_version',
+    'applicationName', 'application_name', 'applicationVersion', 'application_version',
+    'release', 'timestamp', 'eventId', 'event_id',
+    'requestId', 'request_id', 'sessionId', 'session_id',
+    'traceId', 'trace_id', 'spanId', 'span_id',
+]);
+const RE_LOG_HTTP_METHOD = /^(GET|POST|PUT|DELETE|PATCH|OPTIONS|HEAD)\s+/;
+const RE_LOG_ENDPOINT = /^(?:GET|POST|PUT|DELETE|PATCH|OPTIONS|HEAD)\s+([^?\s]+)/;
+const RE_LOG_STATUS_CODE_1 = /HTTP.*?\s([2-5][0-9]{2})\b/;
+const RE_LOG_STATUS_CODE_2 = /\b([2-5][0-9]{2})\b.*?\s\d+ms/;
+const RE_LOG_DURATION_MS = /\b(\d+)\s*ms\b/;
+const RE_LOG_NAME_HTTP = /^(GET|POST|PUT|DELETE|PATCH)\s+/;
 function plainObject(v) {
     return v && typeof v === 'object' && !Array.isArray(v) ? v : null;
 }
@@ -757,6 +789,28 @@ export class TelemetryWriter {
             const BATCH_SIZE = 500;
             for (let i = 0; i < rows.length; i += BATCH_SIZE) {
                 const batch = rows.slice(i, i + BATCH_SIZE);
+                const orgIds = [];
+                const projectIds = [];
+                const sessionIds = [];
+                const userIds = [];
+                const environments = [];
+                const startedAts = [];
+                const endedAts = [];
+                const eventCounts = [];
+                const errorCounts = [];
+                const isCrasheds = [];
+                for (const r of batch) {
+                    orgIds.push(r.orgId);
+                    projectIds.push(r.projectId);
+                    sessionIds.push(r.sessionId);
+                    userIds.push(r.userId);
+                    environments.push(r.environment);
+                    startedAts.push(r.startedAt);
+                    endedAts.push(r.endedAt);
+                    eventCounts.push(r.eventCount);
+                    errorCounts.push(r.errorCount);
+                    isCrasheds.push(r.isCrashed);
+                }
                 await db.query(`INSERT INTO analytics_user_sessions (
             organization_id, project_id, session_id, user_id, environment,
             started_at, ended_at, duration_seconds, event_count, error_count, is_crashed
@@ -786,16 +840,16 @@ export class TelemetryWriter {
             is_crashed = analytics_user_sessions.is_crashed OR EXCLUDED.is_crashed,
             user_id = COALESCE(analytics_user_sessions.user_id, EXCLUDED.user_id),
             environment = COALESCE(analytics_user_sessions.environment, EXCLUDED.environment)`, [
-                    batch.map((r) => r.orgId),
-                    batch.map((r) => r.projectId),
-                    batch.map((r) => r.sessionId),
-                    batch.map((r) => r.userId),
-                    batch.map((r) => r.environment),
-                    batch.map((r) => r.startedAt),
-                    batch.map((r) => r.endedAt),
-                    batch.map((r) => r.eventCount),
-                    batch.map((r) => r.errorCount),
-                    batch.map((r) => r.isCrashed),
+                    orgIds,
+                    projectIds,
+                    sessionIds,
+                    userIds,
+                    environments,
+                    startedAts,
+                    endedAts,
+                    eventCounts,
+                    errorCounts,
+                    isCrasheds,
                 ]);
             }
         }
@@ -804,73 +858,82 @@ export class TelemetryWriter {
         }
     }
     async appendTelemetryOutbox(scoped, db = this.pool) {
-        const rows = scoped
-            .filter((event) => event.orgId !== null)
-            .filter((event) => isFastPathSignal(event))
-            .map((event) => {
+        const orgIds = [];
+        const projectIds = [];
+        const environments = [];
+        const signalKinds = [];
+        const eventIds = [];
+        const severities = [];
+        const fastPaths = [];
+        const attributes = [];
+        const occurredAts = [];
+        for (const event of scoped) {
+            if (event.orgId === null)
+                continue;
+            const isFast = isFastPathSignal(event);
+            if (!isFast)
+                continue;
             const record = rec(event.event);
             const latencyVal = record.latency ?? record.latencyMs ?? record.latency_ms ?? record.durationMs ?? record.duration_ms ?? record.duration;
             const errName = errorNameOf(event.event);
             const fingerprint = errorFingerprint(event.event, errName);
             const rawEvent = event.event;
-            return [
-                event.orgId,
-                event.projectId,
-                event.environment,
-                event.event.type,
-                this.eventId(event.event),
-                outboxSeverity(event.event),
-                isFastPathSignal(event),
-                JSON.stringify({
-                    eventType: event.event.type,
-                    message: str(record.message, 4096),
-                    service: str(record.service, 100),
-                    requestId: str(record.requestId ?? record.request_id ?? rawEvent.requestId ?? rawEvent.request_id, 64),
-                    traceId: str(record.traceId ?? record.trace_id ?? rawEvent.traceId ?? rawEvent.trace_id, 128),
-                    spanId: str(record.spanId ?? record.span_id ?? rawEvent.spanId ?? rawEvent.span_id, 64),
-                    monitorSlug: str(record.monitorSlug, 255),
-                    statusCode: record.statusCode ?? record.status_code,
-                    latency: latencyVal,
-                    latencyMs: latencyVal,
-                    durationMs: latencyVal,
-                    method: record.method,
-                    route: record.route ?? record.endpoint ?? record.url,
-                    url: record.url,
-                    responseSize: record.responseSize ?? record.response_size,
-                    release: str(record.release ?? rawEvent.release, 100),
-                    applicationName: str(record.applicationName ?? record.application_name, 100),
-                    environment: event.environment,
-                    projectSlug: event.projectSlug,
-                    projectName: event.projectName,
-                    orgSlug: event.orgSlug,
-                    orgName: event.orgName,
-                    ...(event.event.type === 'error' ? {
-                        errorName: errName,
-                        name: errName,
-                        fingerprint,
-                        stack: record.stack ?? rawEvent.stack,
-                        stackFrames: record.stackFrames ?? record.stack_frames ?? record.frames ?? rawEvent.stack_frames,
-                        handled: record.handled ?? rawEvent.handled,
-                        mechanism: record.mechanism ?? rawEvent.mechanism,
-                        severity: outboxSeverity(event.event) ?? 'error',
-                    } : {}),
-                }),
-                iso(resolveScopedTimestamp(event.event, event.occurredAtMs)),
-            ];
-        });
-        if (rows.length === 0)
+            orgIds.push(event.orgId);
+            projectIds.push(event.projectId);
+            environments.push(event.environment);
+            signalKinds.push(event.event.type);
+            eventIds.push(this.eventId(event.event));
+            severities.push(outboxSeverity(event.event));
+            fastPaths.push(isFast);
+            attributes.push(JSON.stringify({
+                eventType: event.event.type,
+                message: str(record.message, 4096),
+                service: str(record.service, 100),
+                requestId: str(record.requestId ?? record.request_id ?? rawEvent.requestId ?? rawEvent.request_id, 64),
+                traceId: str(record.traceId ?? record.trace_id ?? rawEvent.traceId ?? rawEvent.trace_id, 128),
+                spanId: str(record.spanId ?? record.span_id ?? rawEvent.spanId ?? rawEvent.span_id, 64),
+                monitorSlug: str(record.monitorSlug, 255),
+                statusCode: record.statusCode ?? record.status_code,
+                latency: latencyVal,
+                latencyMs: latencyVal,
+                durationMs: latencyVal,
+                method: record.method,
+                route: record.route ?? record.endpoint ?? record.url,
+                url: record.url,
+                responseSize: record.responseSize ?? record.response_size,
+                release: str(record.release ?? rawEvent.release, 100),
+                applicationName: str(record.applicationName ?? record.application_name, 100),
+                environment: event.environment,
+                projectSlug: event.projectSlug,
+                projectName: event.projectName,
+                orgSlug: event.orgSlug,
+                orgName: event.orgName,
+                ...(event.event.type === 'error' ? {
+                    errorName: errName,
+                    name: errName,
+                    fingerprint,
+                    stack: record.stack ?? rawEvent.stack,
+                    stackFrames: record.stackFrames ?? record.stack_frames ?? record.frames ?? rawEvent.stack_frames,
+                    handled: record.handled ?? rawEvent.handled,
+                    mechanism: record.mechanism ?? rawEvent.mechanism,
+                    severity: outboxSeverity(event.event) ?? 'error',
+                } : {}),
+            }));
+            occurredAts.push(iso(resolveScopedTimestamp(event.event, event.occurredAtMs)));
+        }
+        if (orgIds.length === 0)
             return 0;
         const result = await db.query(`WITH input AS (
          SELECT organization_id, project_id, environment, signal_kind, event_id,
                 severity, fast_path, attributes, occurred_at
            FROM UNNEST(
-             $1::uuid[], $2::uuid[], $3::text[], $4::text[], $5::text[],
+             $1::uuid[], $2::uuid[], $3::text[], $4::text[], $5::uuid[],
              $6::logdb_severity[], $7::boolean[], $8::jsonb[], $9::timestamptz[]
            ) AS t(organization_id, project_id, environment, signal_kind, event_id,
                   severity, fast_path, attributes, occurred_at)
        ), reserved AS (
          INSERT INTO alert_runtime_idempotency_keys (namespace, organization_id, idempotency_key)
-         SELECT 'telemetry_outbox', organization_id, signal_kind || ':' || event_id
+         SELECT 'telemetry_outbox', organization_id, signal_kind || ':' || event_id::text
            FROM input
          ON CONFLICT DO NOTHING
          RETURNING organization_id, idempotency_key
@@ -884,20 +947,20 @@ export class TelemetryWriter {
            FROM input t
            JOIN reserved r
              ON r.organization_id = t.organization_id
-            AND r.idempotency_key = t.signal_kind || ':' || t.event_id
+            AND r.idempotency_key = t.signal_kind || ':' || t.event_id::text
          ON CONFLICT DO NOTHING
          RETURNING id
        )
        SELECT COUNT(*)::int AS count FROM inserted`, [
-            rows.map((row) => row[0]),
-            rows.map((row) => row[1]),
-            rows.map((row) => row[2]),
-            rows.map((row) => row[3]),
-            rows.map((row) => row[4]),
-            rows.map((row) => row[5]),
-            rows.map((row) => row[6]),
-            rows.map((row) => row[7]),
-            rows.map((row) => row[8]),
+            orgIds,
+            projectIds,
+            environments,
+            signalKinds,
+            eventIds,
+            severities,
+            fastPaths,
+            attributes,
+            occurredAts,
         ]);
         return Number(result.rows[0]?.count ?? 0);
     }
@@ -916,10 +979,17 @@ export class TelemetryWriter {
             default: return { inserted: 0 };
         }
     }
-    /** Best-effort event id (events_*.event_id is NOT NULL). */
+    /** Best-effort event id (events_*.event_id is UUID NOT NULL). */
     eventId(ev) {
         const id = ev.eventId;
-        return typeof id === 'string' && id.length > 0 ? id.slice(0, 64) : uuidv7();
+        if (typeof id === 'string') {
+            if (uuidValidate(id))
+                return id;
+            if (/^[0-9a-f]{32}$/i.test(id)) {
+                return `${id.slice(0, 8)}-${id.slice(8, 12)}-${id.slice(12, 16)}-${id.slice(16, 20)}-${id.slice(20, 32)}`;
+            }
+        }
+        return uuidv7();
     }
     // ── events_errors ─────────────────────────────────────────────────────────
     async writeErrors(list, db) {
@@ -1337,7 +1407,10 @@ export class TelemetryWriter {
         if (!spanId)
             return null;
         const attrs = plainObject(span.attributes) ?? {};
-        const eventId = `${this.eventId(event)}:${spanId}`.slice(0, 64);
+        const rawSpanEventId = span.eventId;
+        const eventId = typeof rawSpanEventId === 'string' && uuidValidate(rawSpanEventId)
+            ? rawSpanEventId
+            : deterministicSpanEventId(this.eventId(event), spanId);
         const kind = spanKind(span.kind);
         const status = spanStatus(span.status);
         const name = str(span.name, 500) ?? spanId;
@@ -1504,22 +1577,22 @@ export class TelemetryWriter {
             const c = plainObject(e.context) ?? {};
             const httpC = plainObject(c.http) ?? {};
             // ── Extraction logic ──────────────────────────────────────────────────────
-            const httpMethod = e.httpMethod ?? str(httpC.method, 16) ?? (msg.match(/^(GET|POST|PUT|DELETE|PATCH|OPTIONS|HEAD)\s+/)?.[1]) ?? null;
-            const endpoint = e.endpoint ?? str(httpC.url, 2048) ?? (msg.match(/^(?:GET|POST|PUT|DELETE|PATCH|OPTIONS|HEAD)\s+([^?\s]+)/)?.[1]) ?? null;
+            const httpMethod = e.httpMethod ?? str(httpC.method, 16) ?? (msg.match(RE_LOG_HTTP_METHOD)?.[1]) ?? null;
+            const endpoint = e.endpoint ?? str(httpC.url, 2048) ?? (msg.match(RE_LOG_ENDPOINT)?.[1]) ?? null;
             let statusCode = e.statusCode ?? num(httpC.status_code);
             if (statusCode == null) {
-                const sc1 = msg.match(/HTTP.*?\s([2-5][0-9]{2})\b/)?.[1];
+                const sc1 = msg.match(RE_LOG_STATUS_CODE_1)?.[1];
                 if (sc1)
                     statusCode = Number(sc1);
                 else {
-                    const sc2 = msg.match(/\b([2-5][0-9]{2})\b.*?\s\d+ms/)?.[1];
+                    const sc2 = msg.match(RE_LOG_STATUS_CODE_2)?.[1];
                     if (sc2)
                         statusCode = Number(sc2);
                 }
             }
             let durationMs = e.durationMs ?? num(httpC.duration_ms);
             if (durationMs == null) {
-                const d = msg.match(/\b(\d+)\s*ms\b/)?.[1];
+                const d = msg.match(RE_LOG_DURATION_MS)?.[1];
                 if (d)
                     durationMs = Number(d);
             }
@@ -1527,7 +1600,7 @@ export class TelemetryWriter {
             const loggerName = str(e.loggerName ?? r.loggerName ?? e.logger, 255) ?? 'unknown';
             const loggerLower = loggerName.toLowerCase();
             const msgLower = msg.toLowerCase();
-            const name = str(e.name, 255) ?? (msg.match(/^(GET|POST|PUT|DELETE|PATCH)\s+/) ? 'HTTP Request' :
+            const name = str(e.name, 255) ?? (msg.match(RE_LOG_NAME_HTTP) ? 'HTTP Request' :
                 (msgLower.includes('error') || e.level === 'error' || e.level === 'fatal') ? 'Error Log' :
                     (loggerLower.includes('db') || loggerLower.includes('postgres')) ? 'Database Query' :
                         (loggerLower.includes('cache') || loggerLower.includes('redis')) ? 'Cache Operation' :
@@ -1547,18 +1620,6 @@ export class TelemetryWriter {
                                     'application');
             // Clean attributes
             const rawAttrs = plainObject(e.attributes) ?? {};
-            const LOG_ATTR_DUPES = new Set([
-                'parentSpanId', 'parent_span_id', 'tenantId', 'tenant_id',
-                'name', 'loggerName', 'logger_name', 'logSource', 'log_source',
-                'logCategory', 'log_category', 'endpoint', 'httpMethod', 'http_method',
-                'statusCode', 'status_code', 'durationMs', 'duration_ms',
-                'environment', 'projectId', 'project_id', 'organizationId', 'organization_id',
-                'sdkName', 'sdk_name', 'sdkVersion', 'sdk_version',
-                'applicationName', 'application_name', 'applicationVersion', 'application_version',
-                'release', 'timestamp', 'eventId', 'event_id',
-                'requestId', 'request_id', 'sessionId', 'session_id',
-                'traceId', 'trace_id', 'spanId', 'span_id', 'level', 'message'
-            ]);
             const cleanAttributes = {};
             for (const [k, v] of Object.entries(rawAttrs)) {
                 if (!LOG_ATTR_DUPES.has(k))
@@ -1643,19 +1704,6 @@ export class TelemetryWriter {
                         : 'scheduled');
             // Clean attributes: remove all fields that have canonical columns
             const rawAttrs = plainObject(e.attributes) ?? {};
-            const CRON_ATTR_DUPES = new Set([
-                'monitorSlug', 'monitor_slug', 'monitorName', 'monitor_name',
-                'status', 'duration', 'duration_ms',
-                'checkinType', 'checkin_type', 'scheduleType', 'schedule_type',
-                'startedAt', 'started_at', 'finishedAt', 'finished_at',
-                'isSuccess', 'is_success', 'tenantId', 'tenant_id',
-                'environment', 'projectId', 'project_id', 'organizationId', 'organization_id',
-                'sdkName', 'sdk_name', 'sdkVersion', 'sdk_version',
-                'applicationName', 'application_name', 'applicationVersion', 'application_version',
-                'release', 'timestamp', 'eventId', 'event_id',
-                'requestId', 'request_id', 'sessionId', 'session_id',
-                'traceId', 'trace_id', 'spanId', 'span_id',
-            ]);
             const cleanAttributes = {};
             for (const [k, v] of Object.entries(rawAttrs)) {
                 if (!CRON_ATTR_DUPES.has(k))
@@ -1781,5 +1829,9 @@ function isFastPathSignal(scoped) {
             || (Number.isFinite(duration) && duration >= env.INGESTION_FAST_REQUEST_MIN_DURATION_MS);
     }
     return false;
+}
+function deterministicSpanEventId(traceEventId, spanId) {
+    const hash = createHash('sha256').update(`${traceEventId}:${spanId}`).digest('hex');
+    return `${hash.slice(0, 8)}-${hash.slice(8, 12)}-4${hash.slice(13, 16)}-a${hash.slice(17, 20)}-${hash.slice(20, 32)}`;
 }
 //# sourceMappingURL=telemetry-writer.js.map

@@ -7,7 +7,7 @@ CREATE TABLE IF NOT EXISTS events_spans (
   id UUID NOT NULL DEFAULT gen_random_uuid(),
   organization_id UUID NOT NULL,
   project_id UUID,
-  event_id VARCHAR(64) NOT NULL,
+  event_id UUID NOT NULL,
   span_id VARCHAR(64) NOT NULL,
   trace_id VARCHAR(64) NOT NULL,
   parent_span_id VARCHAR(64),

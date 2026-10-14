@@ -218,15 +218,15 @@ describe('Alert Notification Formatter & Enterprise Email', () => {
       expect(email.subject).toBe('[FIRING · CRITICAL] High latency p95 — Orders API (production)');
 
       // HTML contains Performance, Request, Correlation, Actions sections
-      expect(email.html).toContain('PERFORMANCE');
+      expect(email.html).toContain('Performance');
       expect(email.html).toContain('1.45s');
       expect(email.html).toContain('500 ms');
       expect(email.html).toContain('+950 ms (+190%)');
-      expect(email.html).toContain('REQUEST');
+      expect(email.html).toContain('Request');
       expect(email.html).toContain('/api/v1/checkout');
       expect(email.html).toContain('POST');
       expect(email.html).toContain('504');
-      expect(email.html).toContain('CORRELATION');
+      expect(email.html).toContain('Correlation');
       expect(email.html).toContain('TRC-000000052');
       expect(email.html).toContain('SPN-000001293');
       expect(email.html).toContain('REQ-000000123');

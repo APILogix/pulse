@@ -63,8 +63,9 @@ CREATE INDEX IF NOT EXISTS idx_users_current_org
 ON users(current_org_id)
 WHERE current_org_id IS NOT NULL;
 
-CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email_hash
-  ON users(email_hash) WHERE deleted_at IS NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_users_lower_email
+  ON users(lower(email))
+  WHERE deleted_at IS NULL;
 
 CREATE INDEX IF NOT EXISTS idx_users_status
   ON users(status) WHERE deleted_at IS NULL;
@@ -86,6 +87,14 @@ CREATE INDEX IF NOT EXISTS idx_users_deletion_requested
   ON users(deletion_requested_at)
   WHERE deletion_requested_at IS NOT NULL;
 
-CREATE INDEX IF NOT EXISTS idx_users_lower_email
-  ON users(lower(email))
-  WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_users_suspended_by
+  ON users(suspended_by)
+  WHERE suspended_by IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_users_deleted_by
+  ON users(deleted_by)
+  WHERE deleted_by IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_users_created_by
+  ON users(created_by)
+  WHERE created_by IS NOT NULL;

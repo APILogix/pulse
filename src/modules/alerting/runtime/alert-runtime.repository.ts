@@ -955,7 +955,7 @@ export class AlertRuntimeRepository {
            FROM alert_notification_jobs
           WHERE status = 'pending'
             AND (notify_after IS NULL OR notify_after <= NOW())
-          ORDER BY created_at ASC
+          ORDER BY priority DESC, created_at ASC
           LIMIT $1
           FOR UPDATE SKIP LOCKED
        )

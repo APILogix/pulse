@@ -1,0 +1,232 @@
+- main [ref=f5e2]:
+  - generic [ref=f5e3]:
+    - generic [ref=f5e4]:
+      - paragraph [ref=f5e5]: Pulse billing catalog
+      - heading "Plan catalog redesign console" [level=1] [ref=f5e6]
+      - paragraph [ref=f5e7]: Compare plan pricing, quotas, features, integrations, and the exact JSON payloads from the billing docs.
+    - generic [ref=f5e8]:
+      - generic [ref=f5e9]: Catalog source
+      - combobox "Catalog source" [ref=f5e10]:
+        - option "Canonical v2 plans" [selected]
+        - option "Enterprise finite-quota v3"
+      - generic [ref=f5e11]: Canonical v2 · schema 2.2.0 · version 2
+      - link "Open proposed v4 JSON" [ref=f5e12] [cursor=pointer]:
+        - /url: ./billing-catalog-redesign-v4.json
+  - region "Billing catalog controls" [ref=f5e13]:
+    - group "Billing interval" [ref=f5e14]:
+      - button "Monthly" [ref=f5e15] [cursor=pointer]
+      - button "Annual" [ref=f5e16] [cursor=pointer]
+    - group "Catalog section" [ref=f5e17]:
+      - button "Summary" [ref=f5e18] [cursor=pointer]
+      - button "Quotas" [ref=f5e19] [cursor=pointer]
+      - button "Features" [ref=f5e20] [cursor=pointer]
+      - button "Integrations" [ref=f5e21] [cursor=pointer]
+      - button "JSON" [ref=f5e22] [cursor=pointer]
+    - generic [ref=f5e23]: Search
+    - searchbox "Search" [ref=f5e24]
+  - region "Plans" [ref=f5e25]:
+    - button "Open Free plan redesign" [ref=f5e26] [cursor=pointer]:
+      - generic [ref=f5e27]:
+        - heading "Free" [level=3] [ref=f5e28]
+        - generic [ref=f5e29]: Fit
+      - text: $0/mo
+      - generic [ref=f5e30]: Perfect for personal projects, prototypes, and evaluation with 50,000 monthly shared event credits.
+    - button "Open Starter plan redesign" [ref=f5e31] [cursor=pointer]:
+      - generic [ref=f5e32]:
+        - heading "Starter" [level=3] [ref=f5e33]
+        - generic [ref=f5e34]: Popular
+      - text: $15/mo
+      - generic [ref=f5e35]: Production-ready observability for small teams with 250,000 monthly shared event credits.
+    - button "Open Growth plan redesign" [ref=f5e36] [cursor=pointer]:
+      - generic [ref=f5e37]:
+        - heading "Growth" [level=3] [ref=f5e38]
+        - generic [ref=f5e39]: Recommended
+      - text: $49/mo
+      - generic [ref=f5e40]: Scaling teams requiring advanced observability, routing, and AI capabilities with 1,500,000 monthly shared event credits.
+    - button "Open Business plan redesign" [ref=f5e41] [cursor=pointer]:
+      - generic [ref=f5e42]:
+        - heading "Business" [level=3] [ref=f5e43]
+        - generic [ref=f5e44]: Best Value
+      - text: $149/mo
+      - generic [ref=f5e45]: Enterprise-ready monitoring with governance, security, and automation with 10,000,000 monthly shared event credits.
+    - button "Open Enterprise plan redesign" [ref=f5e46] [cursor=pointer]:
+      - generic [ref=f5e47]:
+        - heading "Enterprise" [level=3] [ref=f5e48]
+        - generic [ref=f5e49]: Fit
+      - text: Contact Sales
+      - generic [ref=f5e50]: Custom enterprise deployment with 50,000,000 baseline monthly shared event credits, SSO/SCIM, and dedicated support.
+  - generic [ref=f5e51]:
+    - article [ref=f5e52]:
+      - generic [ref=f5e53]:
+        - generic [ref=f5e54]:
+          - paragraph [ref=f5e55]: free
+          - heading "Free" [level=2] [ref=f5e56]
+        - generic [ref=f5e57]: $0/mo
+      - paragraph [ref=f5e58]: Perfect for personal projects, prototypes, and evaluation with 50,000 monthly shared event credits.
+      - generic [ref=f5e59]:
+        - generic [ref=f5e60]:
+          - generic [ref=f5e61]: Monthly credits
+          - strong [ref=f5e62]: 50,000 credits
+        - generic [ref=f5e63]:
+          - generic [ref=f5e64]: Quotas
+          - strong [ref=f5e65]: "25"
+        - generic [ref=f5e66]:
+          - generic [ref=f5e67]: Enabled features
+          - strong [ref=f5e68]: "13"
+        - generic [ref=f5e69]:
+          - generic [ref=f5e70]: Integrations
+          - strong [ref=f5e71]: "1"
+      - generic [ref=f5e72]:
+        - paragraph [ref=f5e73]: Key quotas
+        - generic [ref=f5e74]:
+          - generic [ref=f5e75]:
+            - strong [ref=f5e76]: Max Organizations Per User
+            - generic [ref=f5e77]: organization.max_orgs_per_user
+          - generic [ref=f5e78]: 1 organizations
+          - generic [ref=f5e79]: user · hard_limit
+        - generic [ref=f5e80]:
+          - generic [ref=f5e81]:
+            - strong [ref=f5e82]: Projects Quota
+            - generic [ref=f5e83]: quota.projects
+          - generic [ref=f5e84]: 1 projects
+          - generic [ref=f5e85]: organization · hard_limit
+        - generic [ref=f5e86]:
+          - generic [ref=f5e87]:
+            - strong [ref=f5e88]: Team Members Quota
+            - generic [ref=f5e89]: quota.members
+          - generic [ref=f5e90]: 3 members
+          - generic [ref=f5e91]: organization · hard_limit
+        - generic [ref=f5e92]:
+          - generic [ref=f5e93]:
+            - strong [ref=f5e94]: Environments Quota
+            - generic [ref=f5e95]: quota.environments
+          - generic [ref=f5e96]: 2 environments
+          - generic [ref=f5e97]: project · hard_limit
+        - generic [ref=f5e98]:
+          - generic [ref=f5e99]:
+            - strong [ref=f5e100]: API Keys Quota
+            - generic [ref=f5e101]: quota.api_keys
+          - generic [ref=f5e102]: 2 api_keys
+          - generic [ref=f5e103]: project · hard_limit
+        - generic [ref=f5e104]:
+          - generic [ref=f5e105]:
+            - strong [ref=f5e106]: Monthly Billable Credits
+            - generic [ref=f5e107]: quota.monthly_events
+          - generic [ref=f5e108]: 50,000 credits
+          - generic [ref=f5e109]: organization · overage
+        - generic [ref=f5e110]:
+          - generic [ref=f5e111]:
+            - strong [ref=f5e112]: Rate Limit (RPS)
+            - generic [ref=f5e113]: quota.requests_per_second
+          - generic [ref=f5e114]: 50 requests/sec
+          - generic [ref=f5e115]: organization · throttle
+        - generic [ref=f5e116]:
+          - generic [ref=f5e117]:
+            - strong [ref=f5e118]: SDK Batch Max Queue Size
+            - generic [ref=f5e119]: quota.sdk_batch_queue_size
+          - generic [ref=f5e120]: 100 events
+          - generic [ref=f5e121]: project · hard_limit
+        - generic [ref=f5e122]:
+          - generic [ref=f5e123]:
+            - strong [ref=f5e124]: SDK Offline Queue Limit
+            - generic [ref=f5e125]: quota.sdk_offline_queue_limit
+          - generic [ref=f5e126]: 0 events
+          - generic [ref=f5e127]: project · hard_limit
+        - generic [ref=f5e128]:
+          - generic [ref=f5e129]:
+            - strong [ref=f5e130]: Default Retention Days
+            - generic [ref=f5e131]: quota.retention_days
+          - generic [ref=f5e132]: 7 days
+          - generic [ref=f5e133]: organization · hard_limit
+        - generic [ref=f5e134]:
+          - generic [ref=f5e135]:
+            - strong [ref=f5e136]: Organization Alert Rules Quota
+            - generic [ref=f5e137]: quota.alert_rules
+          - generic [ref=f5e138]: 0 rules
+          - generic [ref=f5e139]: organization · hard_limit
+        - generic [ref=f5e140]:
+          - generic [ref=f5e141]:
+            - strong [ref=f5e142]: Project Alert Rules Quota
+            - generic [ref=f5e143]: quota.project_alert_rules
+          - generic [ref=f5e144]: 0 rules
+          - generic [ref=f5e145]: project · hard_limit
+        - paragraph [ref=f5e146]: Enabled features
+        - generic [ref=f5e147]:
+          - generic [ref=f5e148]:
+            - strong [ref=f5e149]: Organization Management
+            - generic [ref=f5e150]: organization.enabled
+          - generic [ref=f5e151]: "On"
+          - generic [ref=f5e152]: organization · none
+        - generic [ref=f5e153]:
+          - generic [ref=f5e154]:
+            - strong [ref=f5e155]: Projects Platform
+            - generic [ref=f5e156]: projects.enabled
+          - generic [ref=f5e157]: "On"
+          - generic [ref=f5e158]: organization · none
+        - generic [ref=f5e159]:
+          - generic [ref=f5e160]:
+            - strong [ref=f5e161]: SDK Ingestion
+            - generic [ref=f5e162]: sdk.enabled
+          - generic [ref=f5e163]: "On"
+          - generic [ref=f5e164]: organization · none
+        - generic [ref=f5e165]:
+          - generic [ref=f5e166]:
+            - strong [ref=f5e167]: SDK Remote Config
+            - generic [ref=f5e168]: sdk.remote_config
+          - generic [ref=f5e169]: "On"
+          - generic [ref=f5e170]: project · none
+        - generic [ref=f5e171]:
+          - generic [ref=f5e172]:
+            - strong [ref=f5e173]: SDK Exponential Retry
+            - generic [ref=f5e174]: sdk.retry
+          - generic [ref=f5e175]: "On"
+          - generic [ref=f5e176]: project · none
+        - generic [ref=f5e177]:
+          - generic [ref=f5e178]:
+            - strong [ref=f5e179]: SDK Batching
+            - generic [ref=f5e180]: sdk.batching
+          - generic [ref=f5e181]: "On"
+          - generic [ref=f5e182]: project · none
+        - generic [ref=f5e183]:
+          - generic [ref=f5e184]:
+            - strong [ref=f5e185]: Error Tracking
+            - generic [ref=f5e186]: error_tracking.enabled
+          - generic [ref=f5e187]: "On"
+          - generic [ref=f5e188]: organization · none
+        - generic [ref=f5e189]:
+          - generic [ref=f5e190]:
+            - strong [ref=f5e191]: Distributed Tracing
+            - generic [ref=f5e192]: tracing.enabled
+          - generic [ref=f5e193]: "On"
+          - generic [ref=f5e194]: organization · none
+        - generic [ref=f5e195]:
+          - generic [ref=f5e196]:
+            - strong [ref=f5e197]: Structured Logging
+            - generic [ref=f5e198]: logging.enabled
+          - generic [ref=f5e199]: "On"
+          - generic [ref=f5e200]: organization · none
+        - generic [ref=f5e201]:
+          - generic [ref=f5e202]:
+            - strong [ref=f5e203]: Custom Metrics
+            - generic [ref=f5e204]: metrics.enabled
+          - generic [ref=f5e205]: "On"
+          - generic [ref=f5e206]: organization · none
+        - generic [ref=f5e207]:
+          - generic [ref=f5e208]:
+            - strong [ref=f5e209]: Dashboards Platform
+            - generic [ref=f5e210]: dashboards.enabled
+          - generic [ref=f5e211]: "On"
+          - generic [ref=f5e212]: organization · none
+        - generic [ref=f5e213]:
+          - generic [ref=f5e214]:
+            - strong [ref=f5e215]: Integrations Platform
+            - generic [ref=f5e216]: integrations.enabled
+          - generic [ref=f5e217]: "On"
+          - generic [ref=f5e218]: organization · none
+    - complementary [ref=f5e219]:
+      - generic [ref=f5e220]:
+        - generic [ref=f5e221]:
+          - paragraph [ref=f5e222]: Raw selected plan
+          - heading "JSON browser" [level=2] [ref=f5e223]
+        - button "Copy" [ref=f5e224] [cursor=pointer]
+      - generic [ref=f5e225]: "{ \"id\": \"seed-plan-free\", \"key\": \"free\", \"name\": \"Free\", \"tier\": \"free\", \"description\": \"Perfect for personal projects, prototypes, and evaluation with 50,000 monthly shared event credits.\", \"trial_days\": 0, \"sort_order\": 1, \"is_public\": true, \"is_customizable\": false, \"next_plan_key\": \"starter\", \"badge\": null, \"metadata\": { \"highlightedFeatures\": [ \"error_tracking.enabled\", \"tracing.enabled\", \"logging.enabled\" ], \"recommendedFor\": \"Individual developers and hobby projects\", \"ctaText\": \"Get Started Free\" }, \"prices\": [ { \"id\": \"seed-price-free-monthly\", \"provider\": \"system\", \"interval\": \"monthly\", \"currency\": \"USD\", \"amountMinor\": 0, \"isDefault\": true, \"metadata\": { \"display\": \"$0/mo\", \"recommended\": false } }, { \"id\": \"seed-price-free-annual\", \"provider\": \"system\", \"interval\": \"annual\", \"currency\": \"USD\", \"amountMinor\": 0, \"isDefault\": false, \"metadata\": { \"display\": \"$0/year\", \"discount\": \"2 months free\" } } ], \"monthly_event_credit_pool\": 50000, \"quotas\": { \"organization.max_orgs_per_user\": { \"key\": \"organization.max_orgs_per_user\", \"name\": \"Max Organizations Per User\", \"value\": 1, \"unit\": \"organizations\", \"scope\": \"user\", \"enforcement_type\": \"hard_limit\" }, \"quota.projects\": { \"key\": \"quota.projects\", \"name\": \"Projects Quota\", \"value\": 1, \"unit\": \"projects\", \"scope\": \"organization\", \"enforcement_type\": \"hard_limit\" }, \"quota.members\": { \"key\": \"quota.members\", \"name\": \"Team Members Quota\", \"value\": 3, \"unit\": \"members\", \"scope\": \"organization\", \"enforcement_type\": \"hard_limit\" }, \"quota.environments\": { \"key\": \"quota.environments\", \"name\": \"Environments Quota\", \"value\": 2, \"unit\": \"environments\", \"scope\": \"project\", \"enforcement_type\": \"hard_limit\" }, \"quota.api_keys\": { \"key\": \"quota.api_keys\", \"name\": \"API Keys Quota\", \"value\": 2, \"unit\": \"api_keys\", \"scope\": \"project\", \"enforcement_type\": \"hard_limit\" }, \"quota.monthly_events\": { \"key\": \"quota.monthly_events\", \"name\": \"Monthly Billable Credits\", \"value\": 50000, \"unit\": \"credits\", \"scope\": \"organization\", \"enforcement_type\": \"overage\" }, \"quota.requests_per_second\": { \"key\": \"quota.requests_per_second\", \"name\": \"Rate Limit (RPS)\", \"value\": 50, \"unit\": \"requests/sec\", \"scope\": \"organization\", \"enforcement_type\": \"throttle\" }, \"quota.sdk_batch_queue_size\": { \"key\": \"quota.sdk_batch_queue_size\", \"name\": \"SDK Batch Max Queue Size\", \"value\": 100, \"unit\": \"events\", \"scope\": \"project\", \"enforcement_type\": \"hard_limit\" }, \"quota.sdk_offline_queue_limit\": { \"key\": \"quota.sdk_offline_queue_limit\", \"name\": \"SDK Offline Queue Limit\", \"value\": 0, \"unit\": \"events\", \"scope\": \"project\", \"enforcement_type\": \"hard_limit\" }, \"quota.retention_days\": { \"key\": \"quota.retention_days\", \"name\": \"Default Retention Days\", \"value\": 7, \"unit\": \"days\", \"scope\": \"organization\", \"enforcement_type\": \"hard_limit\" }, \"quota.alert_rules\": { \"key\": \"quota.alert_rules\", \"name\": \"Organization Alert Rules Quota\", \"value\": 0, \"unit\": \"rules\", \"scope\": \"organization\", \"enforcement_type\": \"hard_limit\" }, \"quota.project_alert_rules\": { \"key\": \"quota.project_alert_rules\", \"name\": \"Project Alert Rules Quota\", \"value\": 0, \"unit\": \"rules\", \"scope\": \"project\", \"enforcement_type\": \"hard_limit\" }, \"quota.alert_channels\": { \"key\": \"quota.alert_channels\", \"name\": \"Alert Channels Quota\", \"value\": 0, \"unit\": \"channels\", \"scope\": \"organization\", \"enforcement_type\": \"hard_limit\" }, \"quota.project_notification_channels\": { \"key\": \"quota.project_notification_channels\", \"name\": \"Project Notification Channels Quota\", \"value\": 0, \"unit\": \"channels\", \"scope\": \"project\", \"enforcement_type\": \"hard_limit\" }, \"quota.routing_rules\": { \"key\": \"quota.routing_rules\", \"name\": \"Routing Rules Quota\", \"value\": 0, \"unit\": \"rules\", \"scope\": \"organization\", \"enforcement_type\": \"hard_limit\" }, \"quota.project_routing_rules\": { \"key\": \"quota.project_routing_rules\", \"name\": \"Project Routing Rules Quota\", \"value\": 0, \"unit\": \"rules\", \"scope\": \"project\", \"enforcement_type\": \"hard_limit\" }, \"quota.daily_alerts\": { \"key\": \"quota.daily_alerts\", \"name\": \"Daily Alert Notifications\", \"value\": 0, \"unit\": \"notifications\", \"scope\": \"organization\", \"enforcement_type\": \"hard_limit\" }, \"quota.monthly_alerts\": { \"key\": \"quota.monthly_alerts\", \"name\": \"Monthly Alert Notifications\", \"value\": 100, \"unit\": \"notifications\", \"scope\": \"organization\", \"enforcement_type\": \"overage\" }, \"quota.connector_sends\": { \"key\": \"quota.connector_sends\", \"name\": \"Monthly Connector Sends\", \"value\": 100, \"unit\": \"sends\", \"scope\": \"organization\", \"enforcement_type\": \"overage\" }, \"quota.automation_rules\": { \"key\": \"quota.automation_rules\", \"name\": \"Automation Rules Quota\", \"value\": 0, \"unit\": \"rules\", \"scope\": \"organization\", \"enforcement_type\": \"hard_limit\" }, \"quota.dashboards\": { \"key\": \"quota.dashboards\", \"name\": \"Dashboards Quota\", \"value\": 1, \"unit\": \"dashboards\", \"scope\": \"organization\", \"enforcement_type\": \"hard_limit\" }, \"quota.ai_credits\": { \"key\": \"quota.ai_credits\", \"name\": \"Monthly AI Credits\", \"value\": 0, \"unit\": \"credits\", \"scope\": \"organization\", \"enforcement_type\": \"hard_limit\" }, \"quota.connectors\": { \"key\": \"quota.connectors\", \"name\": \"Connector Instances Quota\", \"value\": 2, \"unit\": \"connectors\", \"scope\": \"organization\", \"enforcement_type\": \"hard_limit\" }, \"quota.service_accounts\": { \"key\": \"quota.service_accounts\", \"name\": \"Service Accounts Quota\", \"value\": 0, \"unit\": \"accounts\", \"scope\": \"organization\", \"enforcement_type\": \"hard_limit\" }, \"quota.custom_roles\": { \"key\": \"quota.custom_roles\", \"name\": \"Custom Roles Quota\", \"value\": 0, \"unit\": \"roles\", \"scope\": \"organization\", \"enforcement_type\": \"hard_limit\" } }, \"features\": { \"organization.enabled\": { \"key\": \"organization.enabled\", \"name\": \"Organization Management\", \"value\": true, \"unit\": \"boolean\", \"scope\": \"organization\", \"enforcement_type\": \"none\" }, \"projects.enabled\": { \"key\": \"projects.enabled\", \"name\": \"Projects Platform\", \"value\": true, \"unit\": \"boolean\", \"scope\": \"organization\", \"enforcement_type\": \"none\" }, \"sdk.enabled\": { \"key\": \"sdk.enabled\", \"name\": \"SDK Ingestion\", \"value\": true, \"unit\": \"boolean\", \"scope\": \"organization\", \"enforcement_type\": \"none\" }, \"sdk.remote_config\": { \"key\": \"sdk.remote_config\", \"name\": \"SDK Remote Config\", \"value\": true, \"unit\": \"boolean\", \"scope\": \"project\", \"enforcement_type\": \"none\" }, \"sdk.retry\": { \"key\": \"sdk.retry\", \"name\": \"SDK Exponential Retry\", \"value\": true, \"unit\": \"boolean\", \"scope\": \"project\", \"enforcement_type\": \"none\" }, \"sdk.batching\": { \"key\": \"sdk.batching\", \"name\": \"SDK Batching\", \"value\": true, \"unit\": \"boolean\", \"scope\": \"project\", \"enforcement_type\": \"none\" }, \"sdk.offline_queue\": { \"key\": \"sdk.offline_queue\", \"name\": \"SDK Offline Queue\", \"value\": false, \"unit\": \"boolean\", \"scope\": \"project\", \"enforcement_type\": \"none\" }, \"sdk.dynamic_sampling\": { \"key\": \"sdk.dynamic_sampling\", \"name\": \"SDK Dynamic Sampling\", \"value\": false, \"unit\": \"boolean\", \"scope\": \"project\", \"enforcement_type\": \"none\" }, \"privacy.data_scrubbing\": { \"key\": \"privacy.data_scrubbing\", \"name\": \"PII Data Scrubbing\", \"value\": false, \"unit\": \"boolean\", \"scope\": \"organization\", \"enforcement_type\": \"none\" }, \"privacy.capture_headers\": { \"key\": \"privacy.capture_headers\", \"name\": \"Capture HTTP Headers\", \"value\": false, \"unit\": \"boolean\", \"scope\": \"project\", \"enforcement_type\": \"none\" }, \"privacy.capture_body\": { \"key\": \"privacy.capture_body\", \"name\": \"Capture HTTP Body\", \"value\": false, \"unit\": \"boolean\", \"scope\": \"project\", \"enforcement_type\": \"none\" }, \"privacy.capture_ip\": { \"key\": \"privacy.capture_ip\", \"name\": \"Capture Client IP\", \"value\": false, \"unit\": \"boolean\", \"scope\": \"project\", \"enforcement_type\": \"none\" }, \"error_tracking.enabled\": { \"key\": \"error_tracking.enabled\", \"name\": \"Error Tracking\", \"value\": true, \"unit\": \"boolean\", \"scope\": \"organization\", \"enforcement_type\": \"none\" }, \"tracing.enabled\": { \"key\": \"tracing.enabled\", \"name\": \"Distributed Tracing\", \"value\": true, \"unit\": \"boolean\", \"scope\": \"organization\", \"enforcement_type\": \"none\" }, \"logging.enabled\": { \"key\": \"logging.enabled\", \"name\": \"Structured Logging\", \"value\": true, \"unit\": \"boolean\", \"scope\": \"organization\", \"enforcement_type\": \"none\" }, \"metrics.enabled\": { \"key\": \"metrics.enabled\", \"name\": \"Custom Metrics\", \"value\": true, \"unit\": \"boolean\", \"scope\": \"organization\", \"enforcement_type\": \"none\" }, \"profiling.enabled\": { \"key\": \"profiling.enabled\", \"name\": \"Continuous Profiling\", \"value\": false, \"unit\": \"boolean\", \"scope\": \"organization\", \"enforcement_type\": \"none\" }, \"replay.enabled\": { \"key\": \"replay.enabled\", \"name\": \"Session Replay\", \"value\": false, \"unit\": \"boolean\", \"scope\": \"organization\", \"enforcement_type\": \"none\" }, \"uptime.enabled\": { \"key\": \"uptime.enabled\", \"name\": \"Uptime & Cron Monitoring\", \"value\": false, \"unit\": \"boolean\", \"scope\": \"organization\", \"enforcement_type\": \"none\" }, \"cron_monitoring.enabled\": { \"key\": \"cron_monitoring.enabled\", \"name\": \"Cron Job Monitoring\", \"value\": false, \"unit\": \"boolean\", \"scope\": \"organization\", \"enforcement_type\": \"none\" }, \"alerting.enabled\": { \"key\": \"alerting.enabled\", \"name\": \"Alerting Platform\", \"value\": false, \"unit\": \"boolean\", \"scope\": \"organization\", \"enforcement_type\": \"none\" }, \"alerting.rules\": { \"key\": \"alerting.rules\", \"name\": \"Alert Rules Feature\", \"value\": false, \"unit\": \"boolean\", \"scope\": \"organization\", \"enforcement_type\": \"none\" }, \"alerting.routing.enabled\": { \"key\": \"alerting.routing.enabled\", \"name\": \"Advanced Alert Routing\", \"value\": false, \"unit\": \"boolean\", \"scope\": \"organization\", \"enforcement_type\": \"none\" }, \"alerting.composite\": { \"key\": \"alerting.composite\", \"name\": \"Composite Alerts\", \"value\": false, \"unit\": \"boolean\", \"scope\": \"organization\", \"enforcement_type\": \"none\" }, \"alerting.escalation_policies\": { \"key\": \"alerting.escalation_policies\", \"name\": \"Escalation Policies\", \"value\": false, \"unit\": \"boolean\", \"scope\": \"organization\", \"enforcement_type\": \"none\" }, \"alerting.on_call\": { \"key\": \"alerting.on_call\", \"name\": \"On-Call Schedules\", \"value\": false, \"unit\": \"boolean\", \"scope\": \"organization\", \"enforcement_type\": \"none\" }, \"alerting.incident_timeline\": { \"key\": \"alerting.incident_timeline\", \"name\": \"Incident Timeline\", \"value\": false, \"unit\": \"boolean\", \"scope\": \"organization\", \"enforcement_type\": \"none\" }, \"alerting.managed_email_fallback\": { \"key\": \"alerting.managed_email_fallback\", \"name\": \"Managed Email Fallback\", \"value\": false, \"unit\": \"boolean\", \"scope\": \"organization\", \"enforcement_type\": \"none\" }, \"alerting.ai_alert\": { \"key\": \"alerting.ai_alert\", \"name\": \"AI Alert Insights\", \"value\": false, \"unit\": \"boolean\", \"scope\": \"organization\", \"enforcement_type\": \"none\" }, \"automation.enabled\": { \"key\": \"automation.enabled\", \"name\": \"Automation Platform\", \"value\": false, \"unit\": \"boolean\", \"scope\": \"organization\", \"enforcement_type\": \"none\" }, \"dashboards.enabled\": { \"key\": \"dashboards.enabled\", \"name\": \"Dashboards Platform\", \"value\": true, \"unit\": \"boolean\", \"scope\": \"organization\", \"enforcement_type\": \"none\" }, \"dashboards.custom_dashboards\": { \"key\": \"dashboards.custom_dashboards\", \"name\": \"Custom Dashboards\", \"value\": false, \"unit\": \"boolean\", \"scope\": \"organization\", \"enforcement_type\": \"none\" }, \"analytics.explorer\": { \"key\": \"analytics.explorer\", \"name\": \"Analytics Explorer\", \"value\": false, \"unit\": \"boolean\", \"scope\": \"organization\", \"enforcement_type\": \"none\" }, \"analytics.query_builder\": { \"key\": \"analytics.query_builder\", \"name\": \"Analytics Query Builder\", \"value\": false, \"unit\": \"boolean\", \"scope\": \"organization\", \"enforcement_type\": \"none\" }, \"ai.enabled\": { \"key\": \"ai.enabled\", \"name\": \"AI Insights Platform\", \"value\": false, \"unit\": \"boolean\", \"scope\": \"organization\", \"enforcement_type\": \"none\" }, \"ai.summaries\": { \"key\": \"ai.summaries\", \"name\": \"AI Incident & Log Summaries\", \"value\": false, \"unit\": \"boolean\", \"scope\": \"organization\", \"enforcement_type\": \"none\" }, \"ai.root_cause_analysis\": { \"key\": \"ai.root_cause_analysis\", \"name\": \"AI Root Cause Analysis\", \"value\": false, \"unit\": \"boolean\", \"scope\": \"organization\", \"enforcement_type\": \"none\" }, \"ai.anomaly_detection\": { \"key\": \"ai.anomaly_detection\", \"name\": \"AI Anomaly Detection\", \"value\": false, \"unit\": \"boolean\", \"scope\": \"organization\", \"enforcement_type\": \"none\" }, \"ai.forecasting\": { \"key\": \"ai.forecasting\", \"name\": \"AI Metric Forecasting\", \"value\": false, \"unit\": \"boolean\", \"scope\": \"organization\", \"enforcement_type\": \"none\" }, \"ai.incident_copilot\": { \"key\": \"ai.incident_copilot\", \"name\": \"AI Incident Copilot\", \"value\": false, \"unit\": \"boolean\", \"scope\": \"organization\", \"enforcement_type\": \"none\" }, \"integrations.enabled\": { \"key\": \"integrations.enabled\", \"name\": \"Integrations Platform\", \"value\": true, \"unit\": \"boolean\", \"scope\": \"organization\", \"enforcement_type\": \"none\" }, \"integrations.rest_api\": { \"key\": \"integrations.rest_api\", \"name\": \"REST API Access\", \"value\": true, \"unit\": \"boolean\", \"scope\": \"organization\", \"enforcement_type\": \"none\" }, \"security.enabled\": { \"key\": \"security.enabled\", \"name\": \"Enterprise Security\", \"value\": false, \"unit\": \"boolean\", \"scope\": \"organization\", \"enforcement_type\": \"none\" }, \"security.audit_logs\": { \"key\": \"security.audit_logs\", \"name\": \"Audit Logs\", \"value\": false, \"unit\": \"boolean\", \"scope\": \"organization\", \"enforcement_type\": \"none\" }, \"security.sso\": { \"key\": \"security.sso\", \"name\": \"SAML 2.0 & OIDC SSO\", \"value\": false, \"unit\": \"boolean\", \"scope\": \"organization\", \"enforcement_type\": \"none\" }, \"security.scim\": { \"key\": \"security.scim\", \"name\": \"SCIM 2.0 User Provisioning\", \"value\": false, \"unit\": \"boolean\", \"scope\": \"organization\", \"enforcement_type\": \"none\" }, \"security.custom_roles\": { \"key\": \"security.custom_roles\", \"name\": \"Custom RBAC Roles\", \"value\": false, \"unit\": \"boolean\", \"scope\": \"organization\", \"enforcement_type\": \"none\" }, \"support.dedicated\": { \"key\": \"support.dedicated\", \"name\": \"Dedicated Support\", \"value\": false, \"unit\": \"boolean\", \"scope\": \"organization\", \"enforcement_type\": \"none\" }, \"support.sla\": { \"key\": \"support.sla\", \"name\": \"Support SLA\", \"value\": \"none\", \"unit\": \"string\", \"scope\": \"organization\", \"enforcement_type\": \"none\" }, \"deployment.custom\": { \"key\": \"deployment.custom\", \"name\": \"Custom Deployment\", \"value\": false, \"unit\": \"boolean\", \"scope\": \"organization\", \"enforcement_type\": \"none\" }, \"compliance.hipaa\": { \"key\": \"compliance.hipaa\", \"name\": \"HIPAA Compliance\", \"value\": false, \"unit\": \"boolean\", \"scope\": \"organization\", \"enforcement_type\": \"none\" }, \"compliance.gdpr_dpa\": { \"key\": \"compliance.gdpr_dpa\", \"name\": \"GDPR Data Processing Agreement\", \"value\": false, \"unit\": \"boolean\", \"scope\": \"organization\", \"enforcement_type\": \"none\" } }, \"integrations\": { \"integrations.email\": { \"key\": \"integrations.email\", \"name\": \"Email Connector\", \"value\": true, \"unit\": \"boolean\", \"scope\": \"organization\", \"enforcement_type\": \"none\" }, \"integrations.webhook\": { \"key\": \"integrations.webhook\", \"name\": \"Webhook Connector\", \"value\": false, \"unit\": \"boolean\", \"scope\": \"organization\", \"enforcement_type\": \"none\" }, \"integrations.slack\": { \"key\": \"integrations.slack\", \"name\": \"Slack Connector\", \"value\": false, \"unit\": \"boolean\", \"scope\": \"organization\", \"enforcement_type\": \"none\" }, \"integrations.discord\": { \"key\": \"integrations.discord\", \"name\": \"Discord Connector\", \"value\": false, \"unit\": \"boolean\", \"scope\": \"organization\", \"enforcement_type\": \"none\" }, \"integrations.microsoft_teams\": { \"key\": \"integrations.microsoft_teams\", \"name\": \"Microsoft Teams Connector\", \"value\": false, \"unit\": \"boolean\", \"scope\": \"organization\", \"enforcement_type\": \"none\" }, \"integrations.pagerduty\": { \"key\": \"integrations.pagerduty\", \"name\": \"PagerDuty Connector\", \"value\": false, \"unit\": \"boolean\", \"scope\": \"organization\", \"enforcement_type\": \"none\" }, \"integrations.sms\": { \"key\": \"integrations.sms\", \"name\": \"SMS Connector\", \"value\": false, \"unit\": \"boolean\", \"scope\": \"organization\", \"enforcement_type\": \"none\" } } }"

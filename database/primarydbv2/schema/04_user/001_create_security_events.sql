@@ -34,3 +34,7 @@ CREATE INDEX IF NOT EXISTS idx_security_open
 
 CREATE INDEX IF NOT EXISTS idx_security_ip_time
   ON security_events(ip_address, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_security_events_resolved_by
+  ON security_events(resolved_by)
+  WHERE resolved_by IS NOT NULL;

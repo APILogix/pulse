@@ -19,7 +19,7 @@ import type { Pool } from 'pg';
 import { pgmq, type PgmqMessage } from '../../lib/pgmq.js';
 import { PgmqWorker } from '../../lib/pgmq-worker.js';
 import { env } from '../../config/env.js';
-import { pool } from '../../config/database.js';
+import { pool, notificationPool } from '../../config/database.js';
 import { AlertingRepository } from './repository.js';
 import { AlertEscalationSweep } from './escalation.js';
 import { ConnectorRepository } from '../connectors/repository.js';
@@ -68,6 +68,7 @@ export async function registerAlertingWorkers(
   config: AlertingWorkerConfig = {},
   _projectSubscriptionResolver?: unknown,
   telemetryPool?: Pool,
+  primaryConfigPool?: Pool,
 ): Promise<{ stop: () => Promise<void> }> {
   const cfg = { ...DEFAULTS, ...config };
   const alertDeliveryOnly = cfg.group === 'alert-delivery';
@@ -82,11 +83,12 @@ export async function registerAlertingWorkers(
 
   const entitlement = new NotificationEntitlementService();
   const runtimePool = telemetryPool ?? pool;
-  const projectOwners = new ProjectOwnerRepository(pool);
+  const configPool = primaryConfigPool ?? notificationPool ?? pool;
+  const projectOwners = new ProjectOwnerRepository(configPool);
   const routing = new NotificationRoutingService({
     logger,
-    channelRepository: new AlertChannelRepository(pool),
-    configRepository: new AlertConfigRepository(pool),
+    channelRepository: new AlertChannelRepository(configPool),
+    configRepository: new AlertConfigRepository(configPool),
     entitlementService: entitlement,
     restrictedRouting: new EmailOnlyRestrictedRouting(projectOwners),
   });
@@ -100,7 +102,7 @@ export async function registerAlertingWorkers(
 
   await pgmq.createQueues([...alertJobs], { concurrency: 4 });
 
-  const runtimeEngines = new AlertRuntimeEngines(logger, runtimePool, pool, routing);
+  const runtimeEngines = new AlertRuntimeEngines(logger, runtimePool, configPool, routing);
   const notificationRouter = new AlertNotificationRouter(runtimePool, logger, projectOwners);
   const telemetryOutboxRelay = new TelemetryOutboxRelay(runtimePool, logger);
   const alertDomainOutboxRelay = new AlertDomainOutboxRelay(runtimePool, logger);

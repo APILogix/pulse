@@ -42,6 +42,14 @@ const httpRequestsInFlight = new promClient.Gauge({
 
 
 
+const STATUS_CODE_CACHE: string[] = [];
+for (let i = 100; i < 600; i++) {
+  STATUS_CODE_CACHE[i] = String(i);
+}
+function getStatusCodeString(code: number): string {
+  return STATUS_CODE_CACHE[code] || String(code);
+}
+
 async function metricsPlugin(fastify: FastifyInstance): Promise<void> {
   initializeMetrics();
 
@@ -50,22 +58,24 @@ async function metricsPlugin(fastify: FastifyInstance): Promise<void> {
     return register.metrics();
   });
 
-  fastify.addHook('onRequest', async () => {
+  fastify.addHook('onRequest', async (request: FastifyRequest) => {
     httpRequestsInFlight.inc();
+    if (!(request as any).startTime) {
+      (request as any).startTime = Date.now();
+    }
   });
 
   fastify.addHook('onResponse', async (request: FastifyRequest, reply: FastifyReply) => {
     httpRequestsInFlight.dec();
 
-    const duration = (request as any).startTime
-      ? Math.max(0, (Date.now() - (request as any).startTime) / 1000)
-      : 0;
+    const startTime = (request as any).startTime;
+    const duration = startTime ? Math.max(0, (Date.now() - startTime) / 1000) : 0;
     // Strictly bound route label cardinality to prevent memory leak from random 404/unmatched URLs
-    const route = request.routerPath || 'unmatched';
+    const route = request.routeOptions?.url || request.routerPath || 'unmatched';
     const labels = {
       method: request.method,
       route,
-      status_code: reply.statusCode.toString(),
+      status_code: getStatusCodeString(reply.statusCode),
     };
 
     httpRequestTotal.inc(labels);

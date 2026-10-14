@@ -23,6 +23,8 @@ describe('Weighted Event Credit Pipeline', () => {
       expect(service.getWeightSync('request')).toBe(1.0);
       expect(service.getWeightSync('span')).toBe(0.25);
       expect(service.getWeightSync('error')).toBe(1.5);
+      expect(service.getWeightSync('profile')).toBe(2.0);
+      expect(service.getWeightSync('replay')).toBe(2.0);
       expect(service.getWeightSync('unknown_event')).toBe(1.0); // default fallback
     });
 

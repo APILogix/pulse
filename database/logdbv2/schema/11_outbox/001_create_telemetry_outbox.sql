@@ -5,7 +5,7 @@ CREATE TABLE IF NOT EXISTS telemetry_outbox (
   project_id       UUID,
   environment      TEXT,
   signal_kind      TEXT NOT NULL,
-  event_id         TEXT NOT NULL,
+  event_id         UUID NOT NULL,
   severity         logdb_severity DEFAULT 'info',
   fast_path        BOOLEAN NOT NULL DEFAULT false,
   attributes       JSONB NOT NULL DEFAULT '{}'::jsonb,

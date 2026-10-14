@@ -7,7 +7,7 @@ CREATE TABLE IF NOT EXISTS events_errors (
   id UUID NOT NULL DEFAULT gen_random_uuid(),
   organization_id UUID NOT NULL,
   project_id UUID,
-  event_id VARCHAR(64) NOT NULL,
+  event_id UUID NOT NULL,
   fingerprint VARCHAR(64) NOT NULL,
   message TEXT NOT NULL,
   error_name VARCHAR(256) NOT NULL,

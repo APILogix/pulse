@@ -7,7 +7,7 @@ CREATE TABLE IF NOT EXISTS events_cron_checkins (
   id UUID NOT NULL DEFAULT gen_random_uuid(),
   organization_id UUID NOT NULL,
   project_id UUID,
-  event_id VARCHAR(64) NOT NULL,
+  event_id UUID NOT NULL,
   monitor_slug VARCHAR(255) NOT NULL,
   status cron_status NOT NULL,
   duration_ms INTEGER,

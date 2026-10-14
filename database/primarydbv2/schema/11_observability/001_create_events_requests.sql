@@ -7,7 +7,7 @@ CREATE TABLE IF NOT EXISTS events_requests (
   id UUID NOT NULL DEFAULT gen_random_uuid(),
   organization_id UUID NOT NULL,
   project_id UUID,
-  event_id VARCHAR(64) NOT NULL,
+  event_id UUID NOT NULL,
   request_id VARCHAR(64) NOT NULL,
   url TEXT NOT NULL,
   method VARCHAR(10) NOT NULL,

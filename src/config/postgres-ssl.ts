@@ -148,7 +148,7 @@ export function isTransientPostgresError(err: unknown): boolean {
     return true;
   }
 
-  if (code && ['ECONNREFUSED', 'EHOSTUNREACH', 'ENETUNREACH', 'EAI_AGAIN'].includes(code)) {
+  if (code && ['ECONNREFUSED', 'EHOSTUNREACH', 'ENETUNREACH', 'EAI_AGAIN', '53300', '53000'].includes(code)) {
     return true;
   }
 
@@ -157,7 +157,11 @@ export function isTransientPostgresError(err: unknown): boolean {
     message.includes('Connection terminated') ||
     message.includes('timeout exceeded') ||
     message.includes('connect ECONNREFUSED') ||
-    message.includes('getaddrinfo EAI_AGAIN')
+    message.includes('getaddrinfo EAI_AGAIN') ||
+    message.includes('too many clients') ||
+    message.includes('remaining connection slots') ||
+    message.includes('too_many_connections') ||
+    message.includes('connection limit exceeded')
   );
 }
 

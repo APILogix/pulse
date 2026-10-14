@@ -10,7 +10,7 @@ CREATE TABLE IF NOT EXISTS error_group_history (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   previous_status VARCHAR(32),
   new_status VARCHAR(32),
-  event_id VARCHAR(64),
+  event_id UUID,
   release VARCHAR(100),
   occurred_at TIMESTAMPTZ,
   reason TEXT,

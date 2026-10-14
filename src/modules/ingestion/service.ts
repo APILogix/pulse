@@ -76,6 +76,12 @@ import type {
   RemoteSdkConfigService,
 } from '../projects/sdk-config/sdk-config.service.js';
 import { entitlementsService } from '../billing/entitlements/service.js';
+import { redisLookupCache } from '../../db/redis/lookup-cache.js';
+
+export interface IngestClientHints {
+  configRevision?: number;
+  configHash?: string;
+}
 
 const svcLogger = logger.child({ component: 'ingestion-service' });
 
@@ -519,8 +525,8 @@ export class IngestionService {
    * SDK event types in a single request. Retained for backward compatibility;
    * new SDK transports use the per-signal typed routes via ingestTyped().
    */
-  async ingestBatch(req: IngestRequest, apiKey: string): Promise<IngestResponse> {
-    return this.processIngest(req, null, apiKey);
+  async ingestBatch(req: IngestRequest, apiKey: string, clientHints?: IngestClientHints): Promise<IngestResponse> {
+    return this.processIngest(req, null, apiKey, clientHints);
   }
 
   /**
@@ -535,22 +541,23 @@ export class IngestionService {
     req: IngestRequest,
     apiKey: string,
     type: SdkEventType,
+    clientHints?: IngestClientHints,
   ): Promise<IngestResponse> {
-    return this.processIngest(req, type, apiKey);
+    return this.processIngest(req, type, apiKey, clientHints);
   }
 
   // Named aliases retained for the legacy `POST /v1/ingest/<type>` routes.
-  async ingestRequests(req: IngestRequest, apiKey: string): Promise<IngestResponse> {
-    return this.ingestTyped(req, apiKey, 'request');
+  async ingestRequests(req: IngestRequest, apiKey: string, clientHints?: IngestClientHints): Promise<IngestResponse> {
+    return this.ingestTyped(req, apiKey, 'request', clientHints);
   }
-  async ingestErrors(req: IngestRequest, apiKey: string): Promise<IngestResponse> {
-    return this.ingestTyped(req, apiKey, 'error');
+  async ingestErrors(req: IngestRequest, apiKey: string, clientHints?: IngestClientHints): Promise<IngestResponse> {
+    return this.ingestTyped(req, apiKey, 'error', clientHints);
   }
-  async ingestLogs(req: IngestRequest, apiKey: string): Promise<IngestResponse> {
-    return this.ingestTyped(req, apiKey, 'log');
+  async ingestLogs(req: IngestRequest, apiKey: string, clientHints?: IngestClientHints): Promise<IngestResponse> {
+    return this.ingestTyped(req, apiKey, 'log', clientHints);
   }
-  async ingestMetrics(req: IngestRequest, apiKey: string): Promise<IngestResponse> {
-    return this.ingestTyped(req, apiKey, 'metric');
+  async ingestMetrics(req: IngestRequest, apiKey: string, clientHints?: IngestClientHints): Promise<IngestResponse> {
+    return this.ingestTyped(req, apiKey, 'metric', clientHints);
   }
 
   /**
@@ -561,6 +568,7 @@ export class IngestionService {
     req: IngestRequest,
     expectedType: SdkEventType | null,
     apiKey: string,
+    clientHints?: IngestClientHints,
   ): Promise<IngestResponse> {
     const startedAt = Date.now();
     const timings: Record<string, number> = {};
@@ -711,23 +719,25 @@ export class IngestionService {
       jobsBuilt = jobs.length;
       timings.jobBuildMs = elapsedSince(jobBuildStartedAt);
       const submittedEvents = jobs.reduce((n, job) => n + job.payload.events.length, 0);
-      svcLogger.debug(
-        {
-          batchId,
-          expectedType: expectedType ?? 'mixed',
-          eventTypes: Object.fromEntries(
-            [...acceptedByType.entries()].map(([type, list]) => [type, list.length]),
-          ),
-          queues: jobs.map((job) => ({
-            queue: job.queue,
-            eventType: job.payload.eventType,
-            events: job.payload.events.length,
-            bytes: job.payload.events.reduce<number>((sum, event) => sum + this.eventBytes(event), 0),
-          })),
-          submittedEvents,
-        },
-        'ingestion events queued for workers',
-      );
+      if (svcLogger.isLevelEnabled('debug')) {
+        svcLogger.debug(
+          {
+            batchId,
+            expectedType: expectedType ?? 'mixed',
+            eventTypes: Object.fromEntries(
+              [...acceptedByType.entries()].map(([type, list]) => [type, list.length]),
+            ),
+            queues: jobs.map((job) => ({
+              queue: job.queue,
+              eventType: job.payload.eventType,
+              events: job.payload.events.length,
+              bytes: job.payload.metadata.batchBytes ?? 0,
+            })),
+            submittedEvents,
+          },
+          'ingestion events queued for workers',
+        );
+      }
       const enqueueStartedAt = Date.now();
       let result;
       try {
@@ -830,6 +840,29 @@ export class IngestionService {
       },
     };
     if (errors.length > 0) response.errors = errors;
+
+    if (clientHints) {
+      try {
+        // Tier-0 L1 synchronous fast-path (< 5 microseconds, zero event loop blocking)
+        const cachedRemote = redisLookupCache.getRemoteConfigL1(project.id, environment);
+        if (!cachedRemote) {
+          // Asynchronously warm L1 for future batches without blocking current response
+          void redisLookupCache.getRemoteConfig(project.id, environment).catch(() => {});
+        } else {
+          const currentRev = cachedRemote.version;
+          const currentHash = cachedRemote.configHash;
+          const isOutdatedRev = typeof clientHints.configRevision === 'number' && clientHints.configRevision < currentRev;
+          const isOutdatedHash = typeof clientHints.configHash === 'string' && clientHints.configHash !== currentHash && clientHints.configHash !== cachedRemote.etag;
+          if (isOutdatedRev || isOutdatedHash) {
+            response.config_u = true;
+            response.change = true;
+          }
+        }
+      } catch {
+        // Non-blocking: fail open, do not disrupt telemetry admission
+      }
+    }
+
     return response;
   }
 
@@ -860,7 +893,7 @@ export class IngestionService {
       let chunkBytes = 0;
       for (const item of list) {
         if (chunk.length > 0 && (chunk.length >= this.jobChunkSize || chunkBytes + item.bytes > this.jobMaxBytes)) {
-          jobs.push(this.buildJob(params, type, chunk));
+          jobs.push(this.buildJob(params, type, chunk, chunkBytes));
           chunk = [];
           chunkBytes = 0;
         }
@@ -868,7 +901,7 @@ export class IngestionService {
         chunkBytes += item.bytes;
       }
       if (chunk.length > 0) {
-        jobs.push(this.buildJob(params, type, chunk));
+        jobs.push(this.buildJob(params, type, chunk, chunkBytes));
       }
     }
     return jobs;
@@ -878,6 +911,7 @@ export class IngestionService {
     params: Omit<Parameters<IngestionService['buildJobs']>[0], 'byType'>,
     type: SdkEventType,
     events: unknown[],
+    batchBytes?: number,
   ): { queue: string; payload: IngestJobPayload; priority: number } {
     const metadata: IngestJobMetadata = {
       batchId: params.batchId,
@@ -887,6 +921,7 @@ export class IngestionService {
       receivedAt: params.receivedAt,
       environment: params.environment,
       deferCount: 0,
+      batchBytes,
       projectSlug: params.projectSlug,
       projectName: params.projectName,
       orgSlug: params.orgSlug,

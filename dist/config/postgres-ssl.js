@@ -116,13 +116,17 @@ export function isTransientPostgresError(err) {
     if (isExpectedServerlessDisconnect(err)) {
         return true;
     }
-    if (code && ['ECONNREFUSED', 'EHOSTUNREACH', 'ENETUNREACH', 'EAI_AGAIN'].includes(code)) {
+    if (code && ['ECONNREFUSED', 'EHOSTUNREACH', 'ENETUNREACH', 'EAI_AGAIN', '53300', '53000'].includes(code)) {
         return true;
     }
     return (message.includes('Client has encountered a connection error and is not queryable') ||
         message.includes('Connection terminated') ||
         message.includes('timeout exceeded') ||
         message.includes('connect ECONNREFUSED') ||
-        message.includes('getaddrinfo EAI_AGAIN'));
+        message.includes('getaddrinfo EAI_AGAIN') ||
+        message.includes('too many clients') ||
+        message.includes('remaining connection slots') ||
+        message.includes('too_many_connections') ||
+        message.includes('connection limit exceeded'));
 }
 //# sourceMappingURL=postgres-ssl.js.map

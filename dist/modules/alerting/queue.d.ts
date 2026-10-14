@@ -30,7 +30,7 @@ export interface AlertingWorkerConfig {
 /**
  * Register all Alerting V2 PGMQ workers + dispatch intervals.
  */
-export declare function registerAlertingWorkers(logger: FastifyBaseLogger, config?: AlertingWorkerConfig, _projectSubscriptionResolver?: unknown, telemetryPool?: Pool): Promise<{
+export declare function registerAlertingWorkers(logger: FastifyBaseLogger, config?: AlertingWorkerConfig, _projectSubscriptionResolver?: unknown, telemetryPool?: Pool, primaryConfigPool?: Pool): Promise<{
     stop: () => Promise<void>;
 }>;
 //# sourceMappingURL=queue.d.ts.map

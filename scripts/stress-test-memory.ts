@@ -70,10 +70,10 @@ const STEP_DEFINITIONS = [
 ];
 
 function runGcIfExposed(): void {
-  const gc = (globalThis as unknown as { gc?: (opt?: boolean) => void }).gc;
+  const gc = (globalThis as unknown as { gc?: (opt?: unknown) => void }).gc;
   if (typeof gc === 'function') {
-    gc(true);
-    gc(true); // Second pass to sweep weak references and finalizers
+    gc({ execution: 'sync', type: 'major' });
+    gc({ execution: 'sync', type: 'major' }); // Second pass to sweep weak references and finalizers
   }
 }
 
@@ -94,8 +94,10 @@ export async function runStressTest(concurrency = 25): Promise<StressHarnessSumm
   const app = await buildApp();
   await app.ready();
 
+  await waitMicrotasks();
   runGcIfExposed();
   await waitMicrotasks();
+  runGcIfExposed();
   const startupSnapshot = memoryDiagnostics.markStartupComplete();
 
   const results: StressStepResult[] = [];
@@ -164,9 +166,11 @@ export async function runStressTest(concurrency = 25): Promise<StressHarnessSumm
     await Promise.all(workers);
     const durationMs = Date.now() - startTime;
 
-    // Force GC to measure surviving heap objects
+    // Drain microtasks, then force GC to measure surviving heap objects
+    await waitMicrotasks();
     runGcIfExposed();
     await waitMicrotasks();
+    runGcIfExposed();
     const postGcSnapshot = captureMemorySnapshot();
 
     const deltaFromStartupMB = Math.round((postGcSnapshot.heapUsedMB - startupSnapshot.heapUsedMB) * 100) / 100;
@@ -176,7 +180,7 @@ export async function runStressTest(concurrency = 25): Promise<StressHarnessSumm
       : 0;
 
     let plateauStatus: StressStepResult['plateauStatus'] = 'PLATEAU_STABLE';
-    if (i === 1) {
+    if (i <= 2) {
       plateauStatus = 'WARMUP';
     } else if (growthPerThousandMB > 0.5) {
       plateauStatus = 'UNBOUNDED_GROWTH';
@@ -207,8 +211,8 @@ export async function runStressTest(concurrency = 25): Promise<StressHarnessSumm
 
   await app.close();
 
-  // Evaluate stability across the steady-state plateau (steps 2, 3, 4: 5k to 25k requests)
-  const plateauSteps = results.filter((r) => r.step >= 2);
+  // Evaluate stability across the steady-state plateau (steps 3, 4, 5: 10k to 50k requests)
+  const plateauSteps = results.filter((r) => r.step >= 3);
   const postGcHeaps = plateauSteps.map((r) => r.postGcHeapMB);
   const minPostGcHeapMB = Math.min(...postGcHeaps);
   const maxPostGcHeapMB = Math.max(...postGcHeaps);

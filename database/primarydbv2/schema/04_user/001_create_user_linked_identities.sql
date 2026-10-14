@@ -24,10 +24,5 @@ CREATE INDEX IF NOT EXISTS idx_linked_identities_user_active
   ON user_linked_identities(user_id)
   WHERE revoked_at IS NULL;
 
-CREATE INDEX IF NOT EXISTS idx_linked_identities_provider_subject_active
-  ON user_linked_identities(provider, provider_subject)
-  WHERE revoked_at IS NULL;
-
 CREATE INDEX IF NOT EXISTS idx_user_linked_identities_user_all
   ON user_linked_identities (user_id, linked_at DESC);
-

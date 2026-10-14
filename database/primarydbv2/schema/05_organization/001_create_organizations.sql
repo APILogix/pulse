@@ -27,11 +27,14 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_organizations_active_owner
   ON organizations(owner_user_id)
   WHERE deleted_at IS NULL;
 
+CREATE INDEX IF NOT EXISTS idx_organizations_owner_active
+  ON organizations(owner_user_id)
+  WHERE deleted_at IS NULL;
+
 CREATE UNIQUE INDEX IF NOT EXISTS uq_organizations_active_slug
   ON organizations(slug)
   WHERE deleted_at IS NULL;
 
-CREATE INDEX IF NOT EXISTS idx_organizations_owner_active
-  ON organizations (owner_user_id)
-  WHERE deleted_at IS NULL;
-
+CREATE INDEX IF NOT EXISTS idx_organizations_created_by
+  ON organizations(created_by)
+  WHERE created_by IS NOT NULL;

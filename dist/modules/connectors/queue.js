@@ -10,7 +10,7 @@ import { CONNECTOR_JOBS, connectorTransportQueue, providerFromTransportQueue } f
 import { env } from '../../config/env.js';
 import { listConnectorTypes } from './registry.js';
 import { workerMetrics } from './metrics/worker-metrics.js';
-import { pool } from '../../config/database.js';
+import { pool, notificationPool } from '../../config/database.js';
 import { logDB } from '../../config/log-database.js';
 import { AlertRuntimeRepository } from '../alerting/runtime/alert-runtime.repository.js';
 import { NotificationEntitlementService } from '../alerting/runtime/notification-entitlement.service.js';
@@ -153,13 +153,13 @@ async function processManagedEmailJob(jobData, jobId, runtimeRepository, notific
             throw err;
     }
 }
-export async function registerConnectorWorkers(logger, runtimeRepository = new AlertRuntimeRepository(logDB.getPrimaryPool()), config = {}) {
+export async function registerConnectorWorkers(logger, runtimeRepository = new AlertRuntimeRepository(logDB.getPrimaryPool()), config = {}, primaryPool = notificationPool ?? pool) {
     const alertDeliveryOnly = config.group === 'alert-delivery';
     const log = logger.child({ component: 'connector-workers', group: config.group ?? 'all' });
     const repository = new ConnectorRepository();
     const notificationEntitlement = new NotificationEntitlementService();
-    const owners = new ProjectOwnerRepository(pool);
-    const globalGuards = new ConnectorGlobalGuards(pool);
+    const owners = new ProjectOwnerRepository(primaryPool);
+    const globalGuards = new ConnectorGlobalGuards(primaryPool);
     const dispatcher = new NotificationDispatcher(repository, logger);
     const service = new ConnectorService({
         repository,

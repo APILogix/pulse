@@ -70,13 +70,18 @@ export function classifyRequestTier(url: string, method = 'GET'): RequestTier {
   const path = (url.split('?')[0] ?? '').toLowerCase().replace(/\/+$/, '') || '/';
 
   // ── Tier 0: Critical (Must not be shed during elevated/saturated load) ──
-  // Liveness, readiness, metrics
+  // Liveness, readiness, metrics, diagnostics
   if (
     path === '/health' ||
+    path.startsWith('/health/') ||
     path === '/live' ||
+    path.startsWith('/live/') ||
     path === '/ready' ||
+    path.startsWith('/ready/') ||
     path === '/healthz' ||
-    path === '/metrics'
+    path.startsWith('/healthz/') ||
+    path === '/metrics' ||
+    path.startsWith('/diagnostics/')
   ) {
     return RequestTier.CRITICAL;
   }

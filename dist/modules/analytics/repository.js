@@ -5,40 +5,41 @@ import { logDB } from "../../config/log-database.js";
  * UNION gives the older project-scoped API a single event list without
  * restoring the removed generic events/request_events/error_events schema.
  */
-function getUnifiedEventsSql(type) {
+function getUnifiedEventsSql(type, includePayload = false) {
+    const payloadCol = includePayload ? "payload" : "NULL::jsonb AS payload";
     const errorSql = `
     SELECT id,event_id,'error'::text AS type,project_id,environment,occurred_at,
-           payload,status_code,NULL::text AS method,NULL::text AS url,
+           ${payloadCol},status_code,NULL::text AS method,NULL::text AS url,
            NULL::numeric AS latency_ms,message,error_name,service,trace_id,user_id
       FROM events_errors`;
     const requestSql = `
     SELECT id,event_id,'request'::text AS type,project_id,environment,occurred_at,
-           payload,status_code,method,url,latency_ms,message,NULL::text AS error_name,service,trace_id,user_id
+           ${payloadCol},status_code,method,url,latency_ms,message,NULL::text AS error_name,service,trace_id,user_id
       FROM events_requests`;
     const customSql = [
         `SELECT id,event_id,'log'::text AS type,project_id,environment,occurred_at,
-            payload,status_code,NULL::text AS method,NULL::text AS url,NULL::numeric AS latency_ms,message,NULL::text AS error_name,service,trace_id,user_id
+            ${payloadCol},status_code,NULL::text AS method,NULL::text AS url,NULL::numeric AS latency_ms,message,NULL::text AS error_name,service,trace_id,user_id
        FROM events_logs`,
         `SELECT id,event_id,'metric'::text AS type,project_id,environment,occurred_at,
-            payload,status_code,NULL::text,NULL::text,NULL::numeric,message,NULL::text,service,trace_id,user_id
+            ${payloadCol},status_code,NULL::text,NULL::text,NULL::numeric,message,NULL::text,service,trace_id,user_id
        FROM events_metrics`,
         `SELECT id,event_id,'span'::text AS type,project_id,environment,occurred_at,
-            payload,status_code,NULL::text,NULL::text,NULL::numeric,message,NULL::text,service,trace_id,user_id
+            ${payloadCol},status_code,NULL::text,NULL::text,NULL::numeric,message,NULL::text,service,trace_id,user_id
        FROM events_spans`,
         `SELECT id,event_id,'trace'::text AS type,project_id,environment,occurred_at,
-            payload,status_code,NULL::text,NULL::text,NULL::numeric,message,NULL::text,service,trace_id,user_id
+            ${payloadCol},status_code,NULL::text,NULL::text,NULL::numeric,message,NULL::text,service,trace_id,user_id
        FROM events_traces`,
         `SELECT id,event_id,'message'::text AS type,project_id,environment,occurred_at,
-            payload,status_code,NULL::text,NULL::text,NULL::numeric,message,NULL::text,service,trace_id,user_id
+            ${payloadCol},status_code,NULL::text,NULL::text,NULL::numeric,message,NULL::text,service,trace_id,user_id
        FROM events_messages`,
         `SELECT id,event_id,'profile'::text AS type,project_id,environment,occurred_at,
-            payload,status_code,NULL::text,NULL::text,NULL::numeric,message,NULL::text,service,trace_id,user_id
+            ${payloadCol},status_code,NULL::text,NULL::text,NULL::numeric,message,NULL::text,service,trace_id,user_id
        FROM events_profiles`,
         `SELECT id,event_id,'replay'::text AS type,project_id,environment,occurred_at,
-            payload,status_code,NULL::text,NULL::text,NULL::numeric,message,NULL::text,service,trace_id,user_id
+            ${payloadCol},status_code,NULL::text,NULL::text,NULL::numeric,message,NULL::text,service,trace_id,user_id
        FROM events_replays`,
         `SELECT id,event_id,'cron_checkin'::text AS type,project_id,environment,occurred_at,
-            payload,status_code,NULL::text,NULL::text,NULL::numeric,message,NULL::text,service,trace_id,user_id
+            ${payloadCol},status_code,NULL::text,NULL::text,NULL::numeric,message,NULL::text,service,trace_id,user_id
        FROM events_cron_checkins`,
     ].join('\nUNION ALL\n');
     if (type === "error")
@@ -49,7 +50,7 @@ function getUnifiedEventsSql(type) {
         return customSql;
     return `${errorSql}\nUNION ALL\n${requestSql}\nUNION ALL\n${customSql}`;
 }
-const UNIFIED_EVENTS_SQL = getUnifiedEventsSql();
+const UNIFIED_EVENTS_SQL = getUnifiedEventsSql(undefined, true);
 export class AnalyticsRepository {
     db;
     maxLimit = 100;
@@ -96,7 +97,7 @@ export class AnalyticsRepository {
         const limitParam = ++index;
         const order = query.sort === "asc" ? "ASC" : "DESC";
         const whereSql = where.join(" AND ");
-        const unifiedSql = getUnifiedEventsSql(query.type);
+        const unifiedSql = getUnifiedEventsSql(query.type, false);
         return this.withProjectContext(projectId, async (client) => {
             const startedAt = Date.now();
             const result = await client.query(`WITH unified_events AS (${unifiedSql})
@@ -162,7 +163,8 @@ export class AnalyticsRepository {
            SELECT 'error'::text,to_jsonb(e),e.occurred_at
              FROM events_errors e
             WHERE e.project_id=$1 AND e.trace_id=$2 AND e.environment=$3
-           ORDER BY occurred_at ASC`, [projectId, traceId, environment]);
+           ORDER BY occurred_at ASC
+           LIMIT 500`, [projectId, traceId, environment]);
                 trace = related.rows.map((relatedRow) => ({
                     type: relatedRow.type,
                     ...relatedRow.details,
@@ -192,16 +194,22 @@ export class AnalyticsRepository {
     async getDashboard(projectId, range) {
         return this.withProjectContext(projectId, async (client) => {
             const params = [projectId, range.from, range.to, range.environment ?? null];
-            const [requests, errors, endpoints, topErrors, status] = await Promise.all([
-                this.queryData(client, `SELECT jsonb_build_object(
+            const [reqStats, errors, endpoints, topErrors] = await Promise.all([
+                client.query(`SELECT jsonb_build_object(
              'total',COUNT(*),
              'avg_latency_ms',COALESCE(ROUND(AVG(latency_ms)),0),
              'p95_latency_ms',COALESCE(PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY latency_ms),0),
              'error_rate_pct',COALESCE(ROUND(COUNT(*) FILTER (WHERE status_code >= 500) * 100.0 / NULLIF(COUNT(*),0),2),0)
-           ) AS data
+           ) AS requests,
+           jsonb_build_object(
+             '2xx',COUNT(*) FILTER (WHERE status_code BETWEEN 200 AND 299),
+             '3xx',COUNT(*) FILTER (WHERE status_code BETWEEN 300 AND 399),
+             '4xx',COUNT(*) FILTER (WHERE status_code BETWEEN 400 AND 499),
+             '5xx',COUNT(*) FILTER (WHERE status_code >= 500)
+           ) AS status
            FROM events_requests
-           WHERE project_id=$1 AND occurred_at BETWEEN $2 AND $3
-             AND ($4::text IS NULL OR environment=$4)`, params),
+          WHERE project_id=$1 AND occurred_at BETWEEN $2 AND $3
+            AND ($4::text IS NULL OR environment=$4)`, params),
                 this.queryData(client, `SELECT jsonb_build_object(
              'total',COALESCE(SUM(total_count),0),
              'unresolved',COUNT(*) FILTER (WHERE status<>'resolved'),
@@ -224,16 +232,9 @@ export class AnalyticsRepository {
             WHERE project_id=$1 AND last_seen_at BETWEEN $2 AND $3
               AND ($4::text IS NULL OR $4=ANY(environments))
             ORDER BY total_count DESC LIMIT 10`, params),
-                this.queryData(client, `SELECT jsonb_build_object(
-             '2xx',COUNT(*) FILTER (WHERE status_code BETWEEN 200 AND 299),
-             '3xx',COUNT(*) FILTER (WHERE status_code BETWEEN 300 AND 399),
-             '4xx',COUNT(*) FILTER (WHERE status_code BETWEEN 400 AND 499),
-             '5xx',COUNT(*) FILTER (WHERE status_code >= 500)
-           ) AS data
-           FROM events_requests
-           WHERE project_id=$1 AND occurred_at BETWEEN $2 AND $3
-             AND ($4::text IS NULL OR environment=$4)`, params),
             ]);
+            const requests = reqStats.rows[0]?.requests ?? null;
+            const status = reqStats.rows[0]?.status ?? null;
             return {
                 requests,
                 errors,

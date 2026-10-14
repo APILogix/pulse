@@ -1,8 +1,8 @@
 {
-  "timestamp": "2026-10-06T07:25:00.999Z",
+  "timestamp": "2026-10-13T10:37:31.367Z",
   "totalPlans": 5,
-  "totalFeatures": 102,
-  "totalEntitlementsChecked": 510,
+  "totalFeatures": 84,
+  "totalEntitlementsChecked": 420,
   "supportedConnectorsCount": 7,
   "supportedConnectors": [
     "slack",
@@ -13,18 +13,10 @@
     "email",
     "sms"
   ],
-  "issues": [
-    {
-      "severity": "error",
-      "code": "INVALID_INTEGER_VALUE",
-      "message": "Quota 'quota.monthly_events' is integer, but plan 'enterprise' has non-integer value.",
-      "planKey": "enterprise",
-      "featureKey": "quota.monthly_events"
-    }
-  ],
-  "isValid": false,
+  "issues": [],
+  "isValid": true,
   "summary": {
-    "errorsCount": 1,
+    "errorsCount": 0,
     "warningsCount": 0,
     "monotonicityPassed": true,
     "matrixCompletenessPercent": 100

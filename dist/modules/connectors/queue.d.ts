@@ -15,6 +15,7 @@
  */
 import type { FastifyBaseLogger } from 'fastify';
 import type { NotificationPayload } from './types.js';
+import type { Pool } from 'pg';
 import { AlertRuntimeRepository } from '../alerting/runtime/alert-runtime.repository.js';
 export interface ConnectorSendJobData {
     organizationId: string;
@@ -53,7 +54,7 @@ export interface ConnectorWorkerConfig {
     group?: ConnectorWorkerGroup;
     strictQueueCreation?: boolean;
 }
-export declare function registerConnectorWorkers(logger: FastifyBaseLogger, runtimeRepository?: AlertRuntimeRepository, config?: ConnectorWorkerConfig): Promise<{
+export declare function registerConnectorWorkers(logger: FastifyBaseLogger, runtimeRepository?: AlertRuntimeRepository, config?: ConnectorWorkerConfig, primaryPool?: Pool): Promise<{
     stop: () => Promise<void>;
 }>;
 //# sourceMappingURL=queue.d.ts.map

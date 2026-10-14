@@ -126,6 +126,8 @@ export interface IngestJobMetadata {
   environment: string;
   /** Fairness defer counter (worker-side). */
   deferCount: number;
+  /** Total serialized byte size of the batch events. */
+  batchBytes?: number | undefined;
   /** True when produced by a DLQ/ops replay instead of live traffic. */
   replay?: boolean | undefined;
   projectSlug?: string | undefined;

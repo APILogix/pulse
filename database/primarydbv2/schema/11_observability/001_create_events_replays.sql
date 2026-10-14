@@ -7,7 +7,7 @@ CREATE TABLE IF NOT EXISTS events_replays (
   id UUID NOT NULL DEFAULT gen_random_uuid(),
   organization_id UUID NOT NULL,
   project_id UUID,
-  event_id VARCHAR(64) NOT NULL,
+  event_id UUID NOT NULL,
   session_id VARCHAR(64) NOT NULL,
   segment_id INTEGER NOT NULL,
   events JSONB NOT NULL,

@@ -192,12 +192,27 @@ export function registerSdkDeliveryRoutes(fastify: FastifyInstance, service: Rem
     reply.header("Cache-Control", "private, no-cache");
 
     const ifNoneMatch = request.headers["if-none-match"];
-    if (ifNoneMatch) {
-      const normalizedClient = ifNoneMatch.trim().replace(/^W\//, "");
-      const normalizedServer = result.etag.trim().replace(/^W\//, "");
-      if (normalizedClient === normalizedServer || ifNoneMatch === "*") {
+    const clientHash = (request.headers["x-config-hash"] as string | undefined)?.trim();
+    const clientRevisionHeader = request.headers["x-config-revision"] as string | undefined;
+    const clientRevision = clientRevisionHeader ? Number(clientRevisionHeader) : undefined;
+
+    const normalizedServer = result.etag.trim().replace(/^W\//, "");
+    const normalizedClient = ifNoneMatch ? ifNoneMatch.trim().replace(/^W\//, "") : undefined;
+
+    const matchesHash = (normalizedClient && (normalizedClient === normalizedServer || ifNoneMatch === "*"))
+      || (clientHash && (clientHash === configHash || clientHash === normalizedServer));
+    const matchesRevision = typeof clientRevision === "number" && Number.isFinite(clientRevision) && clientRevision === revisionNo;
+
+    if (matchesHash || matchesRevision) {
+      if (normalizedClient && !clientHash && clientRevision === undefined) {
         return reply.code(304).send();
       }
+      return reply.code(200).send({
+        success: true,
+        same: true,
+        configRevision: revisionNo,
+        configHash: configHash,
+      });
     }
 
     const config = result.config;

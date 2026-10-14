@@ -63,10 +63,10 @@ export function stableStringify(value) {
 }
 /** Deterministic storage identity for events that arrive without one. */
 function deterministicEventId(projectId, environment, type, event) {
-    return createHash('sha256')
+    const hash = createHash('sha256')
         .update(`${projectId}:${environment}:${type}:${stableStringify(event)}`)
-        .digest('hex')
-        .slice(0, 32);
+        .digest('hex');
+    return `${hash.slice(0, 8)}-${hash.slice(8, 12)}-4${hash.slice(13, 16)}-a${hash.slice(17, 20)}-${hash.slice(20, 32)}`;
 }
 function str(v, max = 255) {
     return typeof v === 'string' && v.length > 0 ? v.slice(0, max) : null;
@@ -350,7 +350,9 @@ export class EventProcessor {
         const queueWaitMs = Math.max(0, startedAt - receivedAtMs);
         const timings = {};
         const serializationStartedAt = Date.now();
-        const batchBytes = serializedBytes(rawEvents);
+        const batchBytes = typeof payload?.metadata?.batchBytes === 'number'
+            ? payload.metadata.batchBytes
+            : serializedBytes(rawEvents);
         timings.serializationMs = elapsedSince(serializationStartedAt);
         this.log.debug({
             queue,

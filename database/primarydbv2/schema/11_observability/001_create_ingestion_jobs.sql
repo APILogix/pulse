@@ -23,7 +23,7 @@ CREATE TABLE IF NOT EXISTS ingestion_jobs (
   org_id UUID,
   project_id UUID,
   payload JSONB NOT NULL,
-  event_id VARCHAR(64),
+  event_id UUID,
   trace_id VARCHAR(64),
   span_id VARCHAR(64),
   session_id VARCHAR(64),

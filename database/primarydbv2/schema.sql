@@ -991,8 +991,9 @@ CREATE INDEX IF NOT EXISTS idx_users_current_org
 ON users(current_org_id)
 WHERE current_org_id IS NOT NULL;
 
-CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email_hash
-  ON users(email_hash) WHERE deleted_at IS NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_users_lower_email
+  ON users(lower(email))
+  WHERE deleted_at IS NULL;
 
 CREATE INDEX IF NOT EXISTS idx_users_status
   ON users(status) WHERE deleted_at IS NULL;
@@ -1014,9 +1015,17 @@ CREATE INDEX IF NOT EXISTS idx_users_deletion_requested
   ON users(deletion_requested_at)
   WHERE deletion_requested_at IS NOT NULL;
 
-CREATE INDEX IF NOT EXISTS idx_users_lower_email
-  ON users(lower(email))
-  WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_users_suspended_by
+  ON users(suspended_by)
+  WHERE suspended_by IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_users_deleted_by
+  ON users(deleted_by)
+  WHERE deleted_by IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_users_created_by
+  ON users(created_by)
+  WHERE created_by IS NOT NULL;
 
 -- ============================================================
 -- Source: 04_user/001_create_user_mfa_devices.sql
@@ -1144,6 +1153,10 @@ CREATE INDEX IF NOT EXISTS idx_email_verifications_cleanup
 CREATE UNIQUE INDEX IF NOT EXISTS uq_email_verifications_user_email_purpose
   ON email_verifications(user_id, email, purpose);
 
+CREATE INDEX IF NOT EXISTS idx_email_verifications_verified_at
+  ON email_verifications(verified_at)
+  WHERE verified_at IS NOT NULL;
+
 -- ============================================================
 -- Source: 04_user/001_create_security_events.sql
 -- ============================================================
@@ -1184,6 +1197,10 @@ CREATE INDEX IF NOT EXISTS idx_security_open
 
 CREATE INDEX IF NOT EXISTS idx_security_ip_time
   ON security_events(ip_address, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_security_events_resolved_by
+  ON security_events(resolved_by)
+  WHERE resolved_by IS NOT NULL;
 
 -- ============================================================
 -- Source: 04_user/001_create_user_backup_codes.sql
@@ -1238,10 +1255,6 @@ CREATE TABLE IF NOT EXISTS user_linked_identities (
 
 CREATE INDEX IF NOT EXISTS idx_linked_identities_user_active
   ON user_linked_identities(user_id)
-  WHERE revoked_at IS NULL;
-
-CREATE INDEX IF NOT EXISTS idx_linked_identities_provider_subject_active
-  ON user_linked_identities(provider, provider_subject)
   WHERE revoked_at IS NULL;
 
 CREATE INDEX IF NOT EXISTS idx_user_linked_identities_user_all
@@ -1328,7 +1341,7 @@ CREATE TABLE IF NOT EXISTS user_sessions (
   sso_provider_id UUID,
   sso_provider_type VARCHAR(50),
   login_method VARCHAR(32)
-);
+) WITH (fillfactor = 85);
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_sessions_refresh_token
   ON user_sessions(refresh_token_hash);
@@ -1338,6 +1351,9 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_sessions_previous_refresh_token_unique
   WHERE previous_refresh_token_hash IS NOT NULL;
 
 CREATE INDEX IF NOT EXISTS idx_sessions_user_active
+  ON user_sessions(user_id, status, last_active_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_user_sessions_user_active_last_active
   ON user_sessions(user_id, status, last_active_at DESC);
 
 CREATE INDEX IF NOT EXISTS idx_sessions_cleanup
@@ -1354,9 +1370,9 @@ CREATE INDEX IF NOT EXISTS idx_user_sessions_sso_provider
   ON user_sessions(sso_provider_id, sso_provider_type)
   WHERE sso_provider_id IS NOT NULL;
 
-CREATE INDEX IF NOT EXISTS idx_user_sessions_user_active_last_active
-  ON user_sessions (user_id, last_active_at DESC)
-  WHERE status = 'active';
+CREATE INDEX IF NOT EXISTS idx_user_sessions_terminated_by
+  ON user_sessions(terminated_by)
+  WHERE terminated_by IS NOT NULL;
 
 -- ============================================================
 -- Source: 04_user/001_create_user_trusted_devices.sql
@@ -1425,13 +1441,17 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_organizations_active_owner
   ON organizations(owner_user_id)
   WHERE deleted_at IS NULL;
 
+CREATE INDEX IF NOT EXISTS idx_organizations_owner_active
+  ON organizations(owner_user_id)
+  WHERE deleted_at IS NULL;
+
 CREATE UNIQUE INDEX IF NOT EXISTS uq_organizations_active_slug
   ON organizations(slug)
   WHERE deleted_at IS NULL;
 
-CREATE INDEX IF NOT EXISTS idx_organizations_owner_active
-  ON organizations (owner_user_id)
-  WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_organizations_created_by
+  ON organizations(created_by)
+  WHERE created_by IS NOT NULL;
 
 -- ============================================================
 -- Source: 05_organization/001_create_organization_alert_thresholds.sql
@@ -1619,10 +1639,6 @@ CREATE TABLE IF NOT EXISTS organization_invitations (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE UNIQUE INDEX IF NOT EXISTS uq_org_invitations_pending_lower_email
-  ON organization_invitations(org_id, lower(email))
-  WHERE status = 'pending';
-
 CREATE INDEX IF NOT EXISTS idx_org_invitations_token
   ON organization_invitations(token_hash);
 
@@ -1636,6 +1652,14 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_org_invitations_pending_email_hash
 CREATE UNIQUE INDEX IF NOT EXISTS uq_org_invitations_pending_token_hash
   ON organization_invitations(token_hash)
   WHERE status = 'pending';
+
+CREATE INDEX IF NOT EXISTS idx_org_invitations_accepted_by
+  ON organization_invitations(accepted_by)
+  WHERE accepted_by IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_org_invitations_revoked_by
+  ON organization_invitations(revoked_by)
+  WHERE revoked_by IS NOT NULL;
 
 -- ============================================================
 -- Source: 05_organization/001_create_organization_members.sql
@@ -1675,6 +1699,14 @@ CREATE INDEX IF NOT EXISTS idx_org_members_user
 CREATE INDEX IF NOT EXISTS idx_org_members_role
   ON organization_members(org_id, role)
   WHERE status = 'active';
+
+CREATE INDEX IF NOT EXISTS idx_org_members_invited_by
+  ON organization_members(invited_by)
+  WHERE invited_by IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_org_members_deactivated_by
+  ON organization_members(deactivated_by)
+  WHERE deactivated_by IS NOT NULL;
 
 -- ============================================================
 -- Source: 05_organization/001_create_organization_scim_tokens.sql
@@ -1936,6 +1968,10 @@ CREATE INDEX IF NOT EXISTS idx_verified_domains_metadata
 ON organization_verified_domains
 USING GIN(metadata);
 
+CREATE INDEX IF NOT EXISTS idx_org_verified_domains_verified_by
+ON organization_verified_domains(verified_by)
+WHERE verified_by IS NOT NULL;
+
 -- ============================================================
 -- Source: 05_organization/001_create_quota_requests.sql
 -- ============================================================
@@ -2118,10 +2154,6 @@ CREATE TABLE IF NOT EXISTS projects (
   UNIQUE (org_id, slug)
 );
 
-CREATE INDEX IF NOT EXISTS idx_projects_org
-  ON projects(org_id)
-  WHERE deleted_at IS NULL;
-
 CREATE INDEX IF NOT EXISTS idx_projects_status
   ON projects(status)
   WHERE deleted_at IS NULL;
@@ -2146,9 +2178,17 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_projects_active_slug
 
 CREATE INDEX IF NOT EXISTS idx_projects_public_id ON projects (public_id);
 
-CREATE UNIQUE INDEX IF NOT EXISTS idx_projects_org_slug_active
-  ON projects(org_id, slug)
-  WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_projects_created_by
+  ON projects(created_by)
+  WHERE created_by IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_projects_updated_by
+  ON projects(updated_by)
+  WHERE updated_by IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_projects_deleted_by
+  ON projects(deleted_by)
+  WHERE deleted_by IS NOT NULL;
 
 -- ============================================================
 -- Source: 06_project/001_create_project_environments.sql
@@ -2193,14 +2233,6 @@ CREATE INDEX IF NOT EXISTS idx_project_environments_org_type
 
 CREATE INDEX IF NOT EXISTS idx_project_environments_project_list
   ON project_environments(project_id, is_active, type, name) WHERE deleted_at IS NULL;
-
-CREATE INDEX IF NOT EXISTS idx_project_environments_project
-  ON project_environments(project_id)
-  WHERE deleted_at IS NULL;
-
-CREATE INDEX IF NOT EXISTS idx_project_environments_default
-  ON project_environments(project_id)
-  WHERE is_default = TRUE AND deleted_at IS NULL;
 
 CREATE INDEX IF NOT EXISTS idx_project_environments_active
   ON project_environments(project_id, is_active)
@@ -2270,22 +2302,7 @@ CREATE TABLE IF NOT EXISTS project_api_keys (
   sampling_rules JSONB NOT NULL DEFAULT '{}',
   feature_flags JSONB NOT NULL DEFAULT '{}',
   sdk_config JSONB NOT NULL DEFAULT '{}'
-);
-
-CREATE INDEX IF NOT EXISTS idx_api_keys_project
-  ON project_api_keys(project_id);
-
-CREATE INDEX IF NOT EXISTS idx_api_keys_org
-  ON project_api_keys(organization_id);
-
-CREATE INDEX IF NOT EXISTS idx_api_keys_status
-  ON project_api_keys(status);
-
-CREATE INDEX IF NOT EXISTS idx_api_keys_expiry
-  ON project_api_keys(expires_at);
-
-CREATE INDEX IF NOT EXISTS idx_api_keys_last_used
-  ON project_api_keys(last_used_at);
+) WITH (fillfactor = 85);
 
 CREATE INDEX IF NOT EXISTS idx_api_keys_revoked_cleanup
   ON project_api_keys(revoked_at, deleted_at)
@@ -2312,6 +2329,18 @@ CREATE INDEX IF NOT EXISTS idx_project_api_keys_auth_covering
   ON project_api_keys (public_key)
   INCLUDE (id, project_id, organization_id, environment_id, status, expires_at, secret_hash)
   WHERE deleted_at IS NULL;
+
+CREATE INDEX IF NOT EXISTS idx_api_keys_created_by
+  ON project_api_keys(created_by)
+  WHERE created_by IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_api_keys_revoked_by
+  ON project_api_keys(revoked_by)
+  WHERE revoked_by IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_api_keys_rotated_by
+  ON project_api_keys(rotated_by)
+  WHERE rotated_by IS NOT NULL;
 
 -- ============================================================
 -- Source: 06_project/001_create_api_key_usage_daily.sql
@@ -2621,7 +2650,7 @@ CREATE TABLE IF NOT EXISTS project_members (
   status project_member_status NOT NULL DEFAULT 'active',
   created_by UUID REFERENCES users(id),
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  updated_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   added_by_user_id UUID REFERENCES users(id) ON DELETE SET NULL,
   added_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   removed_by_user_id UUID REFERENCES users(id) ON DELETE SET NULL,
@@ -2649,6 +2678,26 @@ CREATE INDEX IF NOT EXISTS idx_project_members_active
 
 CREATE INDEX IF NOT EXISTS idx_project_members_project_status
   ON project_members(project_id, status);
+
+CREATE INDEX IF NOT EXISTS idx_project_members_role_id
+  ON project_members(role_id)
+  WHERE role_id IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_project_members_added_by
+  ON project_members(added_by_user_id)
+  WHERE added_by_user_id IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_project_members_removed_by
+  ON project_members(removed_by_user_id)
+  WHERE removed_by_user_id IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_project_members_invited_by
+  ON project_members(invited_by)
+  WHERE invited_by IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_project_members_created_by
+  ON project_members(created_by)
+  WHERE created_by IS NOT NULL;
 
 -- ============================================================
 -- Source: 06_project/001_create_project_notification_preferences.sql
@@ -5787,7 +5836,7 @@ CREATE TABLE IF NOT EXISTS alert_delivery_attempts (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX IF NOT EXISTS idx_alert_delivery_attempts_event
+CREATE INDEX IF NOT EXISTS idx_alert_delivery_attempts_event_created
   ON alert_delivery_attempts(event_id, created_at DESC);
 
 CREATE INDEX IF NOT EXISTS idx_alert_delivery_attempts_connector
@@ -7389,7 +7438,7 @@ CREATE TABLE IF NOT EXISTS events_cron_checkins (
   id UUID NOT NULL DEFAULT gen_random_uuid(),
   organization_id UUID NOT NULL,
   project_id UUID,
-  event_id VARCHAR(64) NOT NULL,
+  event_id UUID NOT NULL,
   monitor_slug VARCHAR(255) NOT NULL,
   status cron_status NOT NULL,
   duration_ms INTEGER,
@@ -7426,7 +7475,7 @@ CREATE TABLE IF NOT EXISTS events_errors (
   id UUID NOT NULL DEFAULT gen_random_uuid(),
   organization_id UUID NOT NULL,
   project_id UUID,
-  event_id VARCHAR(64) NOT NULL,
+  event_id UUID NOT NULL,
   fingerprint VARCHAR(64) NOT NULL,
   message TEXT NOT NULL,
   error_name VARCHAR(256) NOT NULL,
@@ -7490,7 +7539,7 @@ CREATE TABLE IF NOT EXISTS events_logs (
   id UUID NOT NULL DEFAULT gen_random_uuid(),
   organization_id UUID NOT NULL,
   project_id UUID,
-  event_id VARCHAR(64) NOT NULL,
+  event_id UUID NOT NULL,
   level log_level NOT NULL,
   message TEXT NOT NULL,
   logger VARCHAR(255),
@@ -7534,7 +7583,7 @@ CREATE TABLE IF NOT EXISTS events_messages (
   id UUID NOT NULL DEFAULT gen_random_uuid(),
   organization_id UUID NOT NULL,
   project_id UUID,
-  event_id VARCHAR(64) NOT NULL,
+  event_id UUID NOT NULL,
   message TEXT NOT NULL,
   severity event_severity NOT NULL DEFAULT 'info',
   trace_id VARCHAR(64),
@@ -7578,7 +7627,7 @@ CREATE TABLE IF NOT EXISTS events_metrics (
   id UUID NOT NULL DEFAULT gen_random_uuid(),
   organization_id UUID NOT NULL,
   project_id UUID,
-  event_id VARCHAR(64) NOT NULL,
+  event_id UUID NOT NULL,
   metric_name VARCHAR(255) NOT NULL,
   metric_type VARCHAR(50) NOT NULL,
   metric_unit VARCHAR(50),
@@ -7678,7 +7727,7 @@ CREATE TABLE IF NOT EXISTS events_profiles (
   id UUID NOT NULL DEFAULT gen_random_uuid(),
   organization_id UUID NOT NULL,
   project_id UUID,
-  event_id VARCHAR(64) NOT NULL,
+  event_id UUID NOT NULL,
   profile_type VARCHAR(50) NOT NULL,
   format VARCHAR(50),
   duration_ms INTEGER,
@@ -7720,7 +7769,7 @@ CREATE TABLE IF NOT EXISTS events_replays (
   id UUID NOT NULL DEFAULT gen_random_uuid(),
   organization_id UUID NOT NULL,
   project_id UUID,
-  event_id VARCHAR(64) NOT NULL,
+  event_id UUID NOT NULL,
   session_id VARCHAR(64) NOT NULL,
   segment_id INTEGER NOT NULL,
   events JSONB NOT NULL,
@@ -7758,7 +7807,7 @@ CREATE TABLE IF NOT EXISTS events_requests (
   id UUID NOT NULL DEFAULT gen_random_uuid(),
   organization_id UUID NOT NULL,
   project_id UUID,
-  event_id VARCHAR(64) NOT NULL,
+  event_id UUID NOT NULL,
   request_id VARCHAR(64) NOT NULL,
   url TEXT NOT NULL,
   method VARCHAR(10) NOT NULL,
@@ -7821,7 +7870,7 @@ CREATE TABLE IF NOT EXISTS events_spans (
   id UUID NOT NULL DEFAULT gen_random_uuid(),
   organization_id UUID NOT NULL,
   project_id UUID,
-  event_id VARCHAR(64) NOT NULL,
+  event_id UUID NOT NULL,
   span_id VARCHAR(64) NOT NULL,
   trace_id VARCHAR(64) NOT NULL,
   parent_span_id VARCHAR(64),
@@ -7917,7 +7966,7 @@ CREATE TABLE IF NOT EXISTS events_traces (
   id UUID NOT NULL DEFAULT gen_random_uuid(),
   organization_id UUID NOT NULL,
   project_id UUID,
-  event_id VARCHAR(64) NOT NULL,
+  event_id UUID NOT NULL,
   trace_id VARCHAR(64) NOT NULL,
   root_span_name VARCHAR(500),
   root_span_id VARCHAR(64),
@@ -8000,7 +8049,7 @@ CREATE TABLE IF NOT EXISTS ingestion_admin_logs (
   org_id UUID,
   project_id UUID,
   job_id UUID,
-  event_id VARCHAR(64),
+  event_id UUID,
   worker_id VARCHAR(128),
   metadata JSONB,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -8131,7 +8180,7 @@ CREATE TABLE IF NOT EXISTS ingestion_jobs (
   org_id UUID,
   project_id UUID,
   payload JSONB NOT NULL,
-  event_id VARCHAR(64),
+  event_id UUID,
   trace_id VARCHAR(64),
   span_id VARCHAR(64),
   session_id VARCHAR(64),
@@ -11387,9 +11436,11 @@ RETURNS TRIGGER AS $$
 BEGIN
   -- Only trigger when a device becomes newly verified
   IF NEW.is_verified = TRUE AND (OLD.is_verified = FALSE OR OLD.is_verified IS NULL) THEN
-    -- Revoke all existing unused backup codes
+    -- Only revoke if this is the user's first verified active device
+    IF NOT EXISTS (SELECT 1 FROM user_mfa_devices WHERE user_id = NEW.user_id AND is_verified = TRUE AND is_active = TRUE AND id <> NEW.id) THEN
     DELETE FROM user_backup_codes
     WHERE user_id = NEW.user_id AND used_at IS NULL;
+      END IF;
   END IF;
   
   RETURN NEW;
@@ -11681,18 +11732,24 @@ ON CONFLICT (rule_id, revision) DO NOTHING;
 
 -- =============================================================================
 -- Seeder File: 004_11_billing_catalog_plans_and_prices.sql
--- Description: Seeds JSON-derived subscription plans and plan prices
+-- Description: Seeds canonical subscription plans and plan prices
 -- Catalog Version: 2.0
--- Source: billing_catalog_response.preview.json
 -- =============================================================================
+
+-- Clean up obsolete 'pro' plan row if unused by any subscription
+DELETE FROM plans
+WHERE key = 'pro'
+  AND NOT EXISTS (
+    SELECT 1 FROM organization_subscriptions os WHERE os.plan_id = plans.id
+  );
 
 WITH plan_seed(key, version, name, tier, description, trial_days, is_public, is_active, is_customizable, next_plan_key, badge, sort_order) AS (
 VALUES
-  ('free', 1, 'Free', 'free'::billing_plan_tier, 'Perfect for personal projects, prototypes and evaluation. One organization per user.', 0, TRUE, TRUE, FALSE, 'starter', NULL, 1),
-  ('starter', 1, 'Starter', 'starter'::billing_plan_tier, 'Production-ready observability for small teams. One organization per user.', 14, TRUE, TRUE, FALSE, 'growth', 'Popular', 2),
-  ('growth', 1, 'Growth', 'growth'::billing_plan_tier, 'Scaling teams requiring advanced observability and AI capabilities. One organization per user.', 14, TRUE, TRUE, FALSE, 'business', 'Recommended', 3),
-  ('business', 1, 'Business', 'business'::billing_plan_tier, 'Enterprise-ready monitoring with governance, security and automation. One organization per user.', 14, TRUE, TRUE, FALSE, 'enterprise', 'Best Value', 4),
-  ('enterprise', 1, 'Enterprise', 'enterprise'::billing_plan_tier, 'Custom enterprise deployment with unlimited scale and dedicated support. One organization per user.', 30, FALSE, TRUE, TRUE, NULL, NULL, 5)
+  ('free', 1, 'Free', 'free'::billing_plan_tier, 'Perfect for personal projects, prototypes, and evaluation with 50,000 monthly shared event credits.', 0, TRUE, TRUE, FALSE, 'starter', NULL, 1),
+  ('starter', 1, 'Starter', 'starter'::billing_plan_tier, 'Production-ready observability for small teams with 250,000 monthly shared event credits.', 14, TRUE, TRUE, FALSE, 'growth', 'Popular', 2),
+  ('growth', 1, 'Growth', 'growth'::billing_plan_tier, 'Scaling teams requiring advanced observability, routing, and AI capabilities with 1,500,000 monthly shared event credits.', 14, TRUE, TRUE, FALSE, 'business', 'Recommended', 3),
+  ('business', 1, 'Business', 'business'::billing_plan_tier, 'Enterprise-ready monitoring with governance, security, and automation with 10,000,000 monthly shared event credits.', 14, TRUE, TRUE, FALSE, 'enterprise', 'Best Value', 4),
+  ('enterprise', 1, 'Enterprise', 'enterprise'::billing_plan_tier, 'Custom enterprise deployment with 50,000,000 baseline monthly shared event credits, SSO/SCIM, and dedicated support.', 30, FALSE, TRUE, TRUE, NULL, NULL, 5)
 )
 INSERT INTO plans
   (key, version, name, tier, description, trial_days, is_public, is_active, is_customizable, next_plan_key, badge, sort_order)
@@ -11745,23 +11802,36 @@ SET amount_minor = EXCLUDED.amount_minor,
 
 -- =============================================================================
 -- Seeder File: 005_11_billing_catalog_features.sql
--- Description: Seeds JSON-derived billing feature registry
+-- Description: Seeds canonical billing feature registry (84 features, 0 duplicates)
 -- Catalog Version: 2.0
--- Source: billing_catalog_response.preview.json
 -- =============================================================================
+
+-- Clean up duplicate and unimplemented feature keys from entitlements, overrides, and feature catalog
+DELETE FROM plan_feature_entitlements
+WHERE feature_id IN (
+  SELECT id FROM billing_features WHERE feature_key IN ('integrations.github', 'integrations.gitlab', 'integrations.bitbucket', 'integrations.jira', 'integrations.terraform', 'quota.integrations', 'quota.notification_channels', 'quota.log_retention_days', 'quota.metric_retention_days', 'quota.profile_retention_days', 'quota.replay_retention_days', 'quota.trace_retention_days', 'quota.audit_log_retention_days', 'dashboards.custom_widgets', 'dashboards.embeds', 'dashboards.public_links', 'dashboards.scheduled_reports', 'quota.monthly_reports')
+);
+
+DELETE FROM organization_feature_overrides
+WHERE feature_id IN (
+  SELECT id FROM billing_features WHERE feature_key IN ('integrations.github', 'integrations.gitlab', 'integrations.bitbucket', 'integrations.jira', 'integrations.terraform', 'quota.integrations', 'quota.notification_channels', 'quota.log_retention_days', 'quota.metric_retention_days', 'quota.profile_retention_days', 'quota.replay_retention_days', 'quota.trace_retention_days', 'quota.audit_log_retention_days', 'dashboards.custom_widgets', 'dashboards.embeds', 'dashboards.public_links', 'dashboards.scheduled_reports', 'quota.monthly_reports')
+);
+
+DELETE FROM billing_features
+WHERE feature_key IN ('integrations.github', 'integrations.gitlab', 'integrations.bitbucket', 'integrations.jira', 'integrations.terraform', 'quota.integrations', 'quota.notification_channels', 'quota.log_retention_days', 'quota.metric_retention_days', 'quota.profile_retention_days', 'quota.replay_retention_days', 'quota.trace_retention_days', 'quota.audit_log_retention_days', 'dashboards.custom_widgets', 'dashboards.embeds', 'dashboards.public_links', 'dashboards.scheduled_reports', 'quota.monthly_reports');
 
 WITH feature_seed(feature_key, feature_name, description, category, value_type, module, usage_behavior, configuration, is_public, is_module_root, sort_order, metadata) AS (
 VALUES
-  ('organization.enabled', 'Organization Management', 'Create and manage your organization workspace', 'feature'::billing_feature_category, 'boolean'::billing_feature_value_type, 'organization', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, FALSE, 1, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
+  ('organization.enabled', 'Organization Management', 'Create and manage your organization workspace', 'feature'::billing_feature_category, 'boolean'::billing_feature_value_type, 'organization', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, TRUE, 1, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
   ('organization.max_orgs_per_user', 'Max Organizations Per User', 'Maximum number of organizations a single user can create or join', 'quota'::billing_feature_category, 'integer'::billing_feature_value_type, 'organization', 'hard_limit'::billing_usage_behavior, '{"enforcementType":"hard_limit","unit":"organizations","scope":"user"}'::jsonb, TRUE, FALSE, 2, '{"catalog":"billing-preview-v2","scope":"user","unit":"organizations","supportsUnlimited":false}'::jsonb),
-  ('projects.enabled', 'Projects Platform', 'Create projects to isolate different services or environments', 'feature'::billing_feature_category, 'boolean'::billing_feature_value_type, 'projects', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, FALSE, 3, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
+  ('projects.enabled', 'Projects Platform', 'Create projects to isolate different services or environments', 'feature'::billing_feature_category, 'boolean'::billing_feature_value_type, 'projects', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, TRUE, 3, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
   ('quota.projects', 'Projects Quota', 'Maximum number of projects per organization', 'quota'::billing_feature_category, 'integer'::billing_feature_value_type, 'quota', 'hard_limit'::billing_usage_behavior, '{"enforcementType":"hard_limit","unit":"projects","scope":"organization"}'::jsonb, TRUE, FALSE, 4, '{"catalog":"billing-preview-v2","scope":"organization","unit":"projects","supportsUnlimited":true}'::jsonb),
   ('quota.members', 'Team Members Quota', 'Maximum number of team members per organization', 'quota'::billing_feature_category, 'integer'::billing_feature_value_type, 'quota', 'hard_limit'::billing_usage_behavior, '{"enforcementType":"hard_limit","unit":"members","scope":"organization"}'::jsonb, TRUE, FALSE, 5, '{"catalog":"billing-preview-v2","scope":"organization","unit":"members","supportsUnlimited":true}'::jsonb),
   ('quota.environments', 'Environments Quota', 'Maximum number of environments per project (e.g., dev, staging, prod)', 'quota'::billing_feature_category, 'integer'::billing_feature_value_type, 'quota', 'hard_limit'::billing_usage_behavior, '{"enforcementType":"hard_limit","unit":"environments","scope":"project"}'::jsonb, TRUE, FALSE, 6, '{"catalog":"billing-preview-v2","scope":"project","unit":"environments","supportsUnlimited":true}'::jsonb),
   ('quota.api_keys', 'API Keys Quota', 'Maximum number of API keys per project for ingestion authentication', 'quota'::billing_feature_category, 'integer'::billing_feature_value_type, 'quota', 'hard_limit'::billing_usage_behavior, '{"enforcementType":"hard_limit","unit":"api_keys","scope":"project"}'::jsonb, TRUE, FALSE, 7, '{"catalog":"billing-preview-v2","scope":"project","unit":"api_keys","supportsUnlimited":true}'::jsonb),
-  ('quota.monthly_events', 'Monthly Billable Credits', 'Maximum billable credits consumed per calendar month', 'quota'::billing_feature_category, 'integer'::billing_feature_value_type, 'quota', 'overage'::billing_usage_behavior, '{"enforcementType":"overage","unit":"credits","scope":"organization"}'::jsonb, TRUE, FALSE, 8, '{"catalog":"billing-preview-v2","scope":"organization","unit":"credits","supportsUnlimited":true}'::jsonb),
+  ('quota.monthly_events', 'Monthly Billable Credits', 'Maximum billable credits consumed per calendar month', 'quota'::billing_feature_category, 'integer'::billing_feature_value_type, 'quota', 'overage'::billing_usage_behavior, '{"enforcementType":"overage","unit":"credits","scope":"organization"}'::jsonb, TRUE, FALSE, 8, '{"catalog":"billing-preview-v2","scope":"organization","unit":"credits","supportsUnlimited":false}'::jsonb),
   ('quota.requests_per_second', 'Rate Limit (RPS)', 'Maximum sustained ingestion rate per second', 'quota'::billing_feature_category, 'integer'::billing_feature_value_type, 'quota', 'throttle'::billing_usage_behavior, '{"enforcementType":"throttle","unit":"requests/sec","scope":"organization"}'::jsonb, TRUE, FALSE, 9, '{"catalog":"billing-preview-v2","scope":"organization","unit":"requests/sec","supportsUnlimited":true}'::jsonb),
-  ('sdk.enabled', 'SDK Ingestion', 'Use official SDKs to send data to the platform', 'feature'::billing_feature_category, 'boolean'::billing_feature_value_type, 'sdk', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, FALSE, 10, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
+  ('sdk.enabled', 'SDK Ingestion', 'Use official SDKs to send data to the platform', 'feature'::billing_feature_category, 'boolean'::billing_feature_value_type, 'sdk', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, TRUE, 10, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
   ('sdk.remote_config', 'SDK Remote Config', 'Update SDK behavior remotely without redeploying', 'feature'::billing_feature_category, 'boolean'::billing_feature_value_type, 'sdk', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"project"}'::jsonb, TRUE, FALSE, 11, '{"catalog":"billing-preview-v2","scope":"project","unit":"boolean","supportsUnlimited":false}'::jsonb),
   ('sdk.retry', 'SDK Exponential Retry', 'Automatic retry with exponential backoff on failed ingestion', 'feature'::billing_feature_category, 'boolean'::billing_feature_value_type, 'sdk', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"project"}'::jsonb, TRUE, FALSE, 12, '{"catalog":"billing-preview-v2","scope":"project","unit":"boolean","supportsUnlimited":false}'::jsonb),
   ('sdk.batching', 'SDK Batching', 'Batch multiple events into a single network request for efficiency', 'feature'::billing_feature_category, 'boolean'::billing_feature_value_type, 'sdk', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"project"}'::jsonb, TRUE, FALSE, 13, '{"catalog":"billing-preview-v2","scope":"project","unit":"boolean","supportsUnlimited":false}'::jsonb),
@@ -11773,87 +11843,69 @@ VALUES
   ('privacy.capture_headers', 'Capture HTTP Headers', 'Capture and store HTTP headers with each event', 'feature'::billing_feature_category, 'boolean'::billing_feature_value_type, 'privacy', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"project"}'::jsonb, TRUE, FALSE, 19, '{"catalog":"billing-preview-v2","scope":"project","unit":"boolean","supportsUnlimited":false}'::jsonb),
   ('privacy.capture_body', 'Capture HTTP Body', 'Capture and store HTTP request/response bodies', 'feature'::billing_feature_category, 'boolean'::billing_feature_value_type, 'privacy', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"project"}'::jsonb, TRUE, FALSE, 20, '{"catalog":"billing-preview-v2","scope":"project","unit":"boolean","supportsUnlimited":false}'::jsonb),
   ('privacy.capture_ip', 'Capture Client IP', 'Capture and store client IP addresses', 'feature'::billing_feature_category, 'boolean'::billing_feature_value_type, 'privacy', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"project"}'::jsonb, TRUE, FALSE, 21, '{"catalog":"billing-preview-v2","scope":"project","unit":"boolean","supportsUnlimited":false}'::jsonb),
-  ('error_tracking.enabled', 'Error Tracking', 'Track and aggregate application errors and exceptions', 'feature'::billing_feature_category, 'boolean'::billing_feature_value_type, 'error_tracking', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, FALSE, 22, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
-  ('tracing.enabled', 'Distributed Tracing', 'Trace requests across services to identify latency bottlenecks', 'feature'::billing_feature_category, 'boolean'::billing_feature_value_type, 'tracing', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, FALSE, 23, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
-  ('logging.enabled', 'Structured Logging', 'Ingest and search structured log data', 'feature'::billing_feature_category, 'boolean'::billing_feature_value_type, 'logging', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, FALSE, 24, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
-  ('metrics.enabled', 'Custom Metrics', 'Ingest custom time-series metrics and build dashboards', 'feature'::billing_feature_category, 'boolean'::billing_feature_value_type, 'metrics', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, FALSE, 25, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
-  ('profiling.enabled', 'Continuous Profiling', 'Profile CPU and memory usage in production with minimal overhead', 'feature'::billing_feature_category, 'boolean'::billing_feature_value_type, 'profiling', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, FALSE, 26, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
-  ('replay.enabled', 'Session Replay', 'Record and replay user sessions to reproduce issues', 'feature'::billing_feature_category, 'boolean'::billing_feature_value_type, 'replay', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, FALSE, 27, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
-  ('uptime.enabled', 'Uptime & Cron Monitoring', 'Monitor endpoint uptime and cron job execution', 'feature'::billing_feature_category, 'boolean'::billing_feature_value_type, 'uptime', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, FALSE, 28, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
+  ('error_tracking.enabled', 'Error Tracking', 'Track and aggregate application errors and exceptions', 'feature'::billing_feature_category, 'boolean'::billing_feature_value_type, 'error_tracking', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, TRUE, 22, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
+  ('tracing.enabled', 'Distributed Tracing', 'Trace requests across services to identify latency bottlenecks', 'feature'::billing_feature_category, 'boolean'::billing_feature_value_type, 'tracing', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, TRUE, 23, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
+  ('logging.enabled', 'Structured Logging', 'Ingest and search structured log data', 'feature'::billing_feature_category, 'boolean'::billing_feature_value_type, 'logging', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, TRUE, 24, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
+  ('metrics.enabled', 'Custom Metrics', 'Ingest custom time-series metrics and build dashboards', 'feature'::billing_feature_category, 'boolean'::billing_feature_value_type, 'metrics', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, TRUE, 25, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
+  ('profiling.enabled', 'Continuous Profiling', 'Profile CPU and memory usage in production with minimal overhead', 'feature'::billing_feature_category, 'boolean'::billing_feature_value_type, 'profiling', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, TRUE, 26, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
+  ('replay.enabled', 'Session Replay', 'Record and replay user sessions to reproduce issues', 'feature'::billing_feature_category, 'boolean'::billing_feature_value_type, 'replay', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, TRUE, 27, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
+  ('uptime.enabled', 'Uptime & Cron Monitoring', 'Monitor endpoint uptime and cron job execution', 'feature'::billing_feature_category, 'boolean'::billing_feature_value_type, 'uptime', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, TRUE, 28, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
   ('cron_monitoring.enabled', 'Cron Job Monitoring', 'Dedicated cron job heartbeat monitoring with alerting on missed runs', 'feature'::billing_feature_category, 'boolean'::billing_feature_value_type, 'cron_monitoring', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, FALSE, 29, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
   ('quota.retention_days', 'Default Retention Days', 'Default data retention period for all event types', 'quota'::billing_feature_category, 'integer'::billing_feature_value_type, 'quota', 'hard_limit'::billing_usage_behavior, '{"enforcementType":"hard_limit","unit":"days","scope":"organization"}'::jsonb, TRUE, FALSE, 30, '{"catalog":"billing-preview-v2","scope":"organization","unit":"days","supportsUnlimited":true}'::jsonb),
-  ('quota.log_retention_days', 'Log Retention Days', 'Retention period for structured log data', 'quota'::billing_feature_category, 'integer'::billing_feature_value_type, 'quota', 'hard_limit'::billing_usage_behavior, '{"enforcementType":"hard_limit","unit":"days","scope":"organization"}'::jsonb, TRUE, FALSE, 31, '{"catalog":"billing-preview-v2","scope":"organization","unit":"days","supportsUnlimited":true}'::jsonb),
-  ('quota.metric_retention_days', 'Metric Retention Days', 'Retention period for custom metrics', 'quota'::billing_feature_category, 'integer'::billing_feature_value_type, 'quota', 'hard_limit'::billing_usage_behavior, '{"enforcementType":"hard_limit","unit":"days","scope":"organization"}'::jsonb, TRUE, FALSE, 32, '{"catalog":"billing-preview-v2","scope":"organization","unit":"days","supportsUnlimited":true}'::jsonb),
-  ('quota.profile_retention_days', 'Profile Retention Days', 'Retention period for continuous profiling data', 'quota'::billing_feature_category, 'integer'::billing_feature_value_type, 'quota', 'hard_limit'::billing_usage_behavior, '{"enforcementType":"hard_limit","unit":"days","scope":"organization"}'::jsonb, TRUE, FALSE, 33, '{"catalog":"billing-preview-v2","scope":"organization","unit":"days","supportsUnlimited":true}'::jsonb),
-  ('quota.replay_retention_days', 'Session Replay Retention Days', 'Retention period for session replay recordings', 'quota'::billing_feature_category, 'integer'::billing_feature_value_type, 'quota', 'hard_limit'::billing_usage_behavior, '{"enforcementType":"hard_limit","unit":"days","scope":"organization"}'::jsonb, TRUE, FALSE, 34, '{"catalog":"billing-preview-v2","scope":"organization","unit":"days","supportsUnlimited":true}'::jsonb),
-  ('quota.trace_retention_days', 'Trace Retention Days', 'Retention period for distributed trace data', 'quota'::billing_feature_category, 'integer'::billing_feature_value_type, 'quota', 'hard_limit'::billing_usage_behavior, '{"enforcementType":"hard_limit","unit":"days","scope":"organization"}'::jsonb, TRUE, FALSE, 35, '{"catalog":"billing-preview-v2","scope":"organization","unit":"days","supportsUnlimited":true}'::jsonb),
-  ('quota.audit_log_retention_days', 'Audit Log Retention Days', 'Retention period for security audit logs', 'quota'::billing_feature_category, 'integer'::billing_feature_value_type, 'quota', 'hard_limit'::billing_usage_behavior, '{"enforcementType":"hard_limit","unit":"days","scope":"organization"}'::jsonb, TRUE, FALSE, 36, '{"catalog":"billing-preview-v2","scope":"organization","unit":"days","supportsUnlimited":true}'::jsonb),
-  ('alerting.enabled', 'Alerting Platform', 'Create and manage alerts based on metric thresholds and event patterns', 'feature'::billing_feature_category, 'boolean'::billing_feature_value_type, 'alerting', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, FALSE, 37, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
-  ('alerting.rules', 'Alert Rules Feature', 'Define alert rules with custom conditions and thresholds', 'feature'::billing_feature_category, 'boolean'::billing_feature_value_type, 'alerting', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, FALSE, 38, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
-  ('alerting.routing.enabled', 'Advanced Alert Routing', 'Route alerts to different teams or channels based on severity or source', 'feature'::billing_feature_category, 'boolean'::billing_feature_value_type, 'alerting', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, FALSE, 39, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
-  ('alerting.composite', 'Composite Alerts', 'Combine multiple conditions into a single composite alert', 'feature'::billing_feature_category, 'boolean'::billing_feature_value_type, 'alerting', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, FALSE, 40, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
-  ('alerting.escalation_policies', 'Escalation Policies', 'Automatically escalate unacknowledged alerts through predefined chains', 'feature'::billing_feature_category, 'boolean'::billing_feature_value_type, 'alerting', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, FALSE, 41, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
-  ('alerting.on_call', 'On-Call Schedules', 'Manage on-call rotations and schedules for incident response', 'feature'::billing_feature_category, 'boolean'::billing_feature_value_type, 'alerting', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, FALSE, 42, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
-  ('alerting.incident_timeline', 'Incident Timeline', 'Track incident lifecycle from detection to resolution with timeline view', 'feature'::billing_feature_category, 'boolean'::billing_feature_value_type, 'alerting', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, FALSE, 43, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
-  ('alerting.managed_email_fallback', 'Managed Email Fallback', 'Send alert notifications via managed email delivery when primary channels fail', 'feature'::billing_feature_category, 'boolean'::billing_feature_value_type, 'alerting', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, FALSE, 44, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
-  ('alerting.ai_alert', 'AI Alert Insights', 'AI-powered alert correlation, noise reduction, and intelligent grouping', 'feature'::billing_feature_category, 'boolean'::billing_feature_value_type, 'alerting', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, FALSE, 45, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
-  ('quota.alert_rules', 'Organization Alert Rules Quota', 'Maximum number of alert rules at organization level', 'quota'::billing_feature_category, 'integer'::billing_feature_value_type, 'quota', 'hard_limit'::billing_usage_behavior, '{"enforcementType":"hard_limit","unit":"rules","scope":"organization"}'::jsonb, TRUE, FALSE, 46, '{"catalog":"billing-preview-v2","scope":"organization","unit":"rules","supportsUnlimited":true}'::jsonb),
-  ('quota.project_alert_rules', 'Project Alert Rules Quota', 'Maximum number of alert rules per project', 'quota'::billing_feature_category, 'integer'::billing_feature_value_type, 'quota', 'hard_limit'::billing_usage_behavior, '{"enforcementType":"hard_limit","unit":"rules","scope":"project"}'::jsonb, TRUE, FALSE, 47, '{"catalog":"billing-preview-v2","scope":"project","unit":"rules","supportsUnlimited":true}'::jsonb),
-  ('quota.alert_channels', 'Alert Channels Quota', 'Maximum number of alert notification channels', 'quota'::billing_feature_category, 'integer'::billing_feature_value_type, 'quota', 'hard_limit'::billing_usage_behavior, '{"enforcementType":"hard_limit","unit":"channels","scope":"organization"}'::jsonb, TRUE, FALSE, 48, '{"catalog":"billing-preview-v2","scope":"organization","unit":"channels","supportsUnlimited":true}'::jsonb),
-  ('quota.notification_channels', 'Notification Channels Quota', 'Maximum number of general notification channels', 'quota'::billing_feature_category, 'integer'::billing_feature_value_type, 'quota', 'hard_limit'::billing_usage_behavior, '{"enforcementType":"hard_limit","unit":"channels","scope":"organization"}'::jsonb, TRUE, FALSE, 49, '{"catalog":"billing-preview-v2","scope":"organization","unit":"channels","supportsUnlimited":true}'::jsonb),
-  ('quota.project_notification_channels', 'Project Notification Channels Quota', 'Maximum number of notification channels per project', 'quota'::billing_feature_category, 'integer'::billing_feature_value_type, 'quota', 'hard_limit'::billing_usage_behavior, '{"enforcementType":"hard_limit","unit":"channels","scope":"project"}'::jsonb, TRUE, FALSE, 50, '{"catalog":"billing-preview-v2","scope":"project","unit":"channels","supportsUnlimited":true}'::jsonb),
-  ('quota.routing_rules', 'Routing Rules Quota', 'Maximum number of alert routing rules at organization level', 'quota'::billing_feature_category, 'integer'::billing_feature_value_type, 'quota', 'hard_limit'::billing_usage_behavior, '{"enforcementType":"hard_limit","unit":"rules","scope":"organization"}'::jsonb, TRUE, FALSE, 51, '{"catalog":"billing-preview-v2","scope":"organization","unit":"rules","supportsUnlimited":true}'::jsonb),
-  ('quota.project_routing_rules', 'Project Routing Rules Quota', 'Maximum number of routing rules per project', 'quota'::billing_feature_category, 'integer'::billing_feature_value_type, 'quota', 'hard_limit'::billing_usage_behavior, '{"enforcementType":"hard_limit","unit":"rules","scope":"project"}'::jsonb, TRUE, FALSE, 52, '{"catalog":"billing-preview-v2","scope":"project","unit":"rules","supportsUnlimited":true}'::jsonb),
-  ('quota.daily_alerts', 'Daily Alert Notifications', 'Maximum number of alert notifications sent per day', 'quota'::billing_feature_category, 'integer'::billing_feature_value_type, 'quota', 'hard_limit'::billing_usage_behavior, '{"enforcementType":"hard_limit","unit":"notifications","scope":"organization"}'::jsonb, TRUE, FALSE, 53, '{"catalog":"billing-preview-v2","scope":"organization","unit":"notifications","supportsUnlimited":true}'::jsonb),
-  ('quota.monthly_alerts', 'Monthly Alert Notifications', 'Maximum number of alert notifications sent per month', 'quota'::billing_feature_category, 'integer'::billing_feature_value_type, 'quota', 'overage'::billing_usage_behavior, '{"enforcementType":"overage","unit":"notifications","scope":"organization"}'::jsonb, TRUE, FALSE, 54, '{"catalog":"billing-preview-v2","scope":"organization","unit":"notifications","supportsUnlimited":true}'::jsonb),
-  ('quota.connector_sends', 'Monthly Connector Sends', 'Maximum number of messages sent through integration connectors per month', 'quota'::billing_feature_category, 'integer'::billing_feature_value_type, 'quota', 'overage'::billing_usage_behavior, '{"enforcementType":"overage","unit":"sends","scope":"organization"}'::jsonb, TRUE, FALSE, 55, '{"catalog":"billing-preview-v2","scope":"organization","unit":"sends","supportsUnlimited":true}'::jsonb),
-  ('automation.enabled', 'Automation Platform', 'Automate workflows triggered by events, alerts, or schedules', 'feature'::billing_feature_category, 'boolean'::billing_feature_value_type, 'automation', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, FALSE, 56, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
-  ('quota.automation_rules', 'Automation Rules Quota', 'Maximum number of automation rules', 'quota'::billing_feature_category, 'integer'::billing_feature_value_type, 'quota', 'hard_limit'::billing_usage_behavior, '{"enforcementType":"hard_limit","unit":"rules","scope":"organization"}'::jsonb, TRUE, FALSE, 57, '{"catalog":"billing-preview-v2","scope":"organization","unit":"rules","supportsUnlimited":true}'::jsonb),
-  ('dashboards.enabled', 'Dashboards Platform', 'Create and share dashboards to visualize metrics and logs', 'feature'::billing_feature_category, 'boolean'::billing_feature_value_type, 'dashboards', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, FALSE, 58, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
-  ('dashboards.custom_dashboards', 'Custom Dashboards', 'Build fully custom dashboards with drag-and-drop widgets', 'feature'::billing_feature_category, 'boolean'::billing_feature_value_type, 'dashboards', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, FALSE, 59, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
-  ('dashboards.custom_widgets', 'Custom Widgets', 'Create custom visualization widgets for dashboards', 'feature'::billing_feature_category, 'boolean'::billing_feature_value_type, 'dashboards', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, FALSE, 60, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
-  ('dashboards.embeds', 'Dashboard Embeds', 'Embed dashboards in external applications via iframe', 'feature'::billing_feature_category, 'boolean'::billing_feature_value_type, 'dashboards', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, FALSE, 61, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
-  ('dashboards.public_links', 'Public Dashboard Links', 'Share dashboards via public read-only URLs without authentication', 'feature'::billing_feature_category, 'boolean'::billing_feature_value_type, 'dashboards', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, FALSE, 62, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
-  ('dashboards.scheduled_reports', 'Scheduled Reports', 'Schedule automated dashboard report generation and delivery', 'feature'::billing_feature_category, 'boolean'::billing_feature_value_type, 'dashboards', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, FALSE, 63, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
-  ('quota.dashboards', 'Dashboards Quota', 'Maximum number of custom dashboards', 'quota'::billing_feature_category, 'integer'::billing_feature_value_type, 'quota', 'hard_limit'::billing_usage_behavior, '{"enforcementType":"hard_limit","unit":"dashboards","scope":"organization"}'::jsonb, TRUE, FALSE, 64, '{"catalog":"billing-preview-v2","scope":"organization","unit":"dashboards","supportsUnlimited":true}'::jsonb),
-  ('quota.monthly_reports', 'Monthly Report Generation Limit', 'Maximum number of scheduled reports generated per month', 'quota'::billing_feature_category, 'integer'::billing_feature_value_type, 'quota', 'hard_limit'::billing_usage_behavior, '{"enforcementType":"hard_limit","unit":"reports","scope":"organization"}'::jsonb, TRUE, FALSE, 65, '{"catalog":"billing-preview-v2","scope":"organization","unit":"reports","supportsUnlimited":true}'::jsonb),
-  ('analytics.explorer', 'Analytics Explorer', 'Ad-hoc query interface for exploring events and logs', 'feature'::billing_feature_category, 'boolean'::billing_feature_value_type, 'analytics', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, FALSE, 66, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
-  ('analytics.query_builder', 'Analytics Query Builder', 'Visual query builder for complex analytics without writing code', 'feature'::billing_feature_category, 'boolean'::billing_feature_value_type, 'analytics', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, FALSE, 67, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
-  ('ai.enabled', 'AI Insights Platform', 'AI-powered analysis and insights across your observability data', 'feature'::billing_feature_category, 'boolean'::billing_feature_value_type, 'ai', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, FALSE, 68, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
-  ('ai.summaries', 'AI Incident & Log Summaries', 'Auto-generate human-readable summaries of incidents and log patterns', 'feature'::billing_feature_category, 'boolean'::billing_feature_value_type, 'ai', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, FALSE, 69, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
-  ('ai.root_cause_analysis', 'AI Root Cause Analysis', 'AI-assisted identification of incident root causes across traces and logs', 'feature'::billing_feature_category, 'boolean'::billing_feature_value_type, 'ai', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, FALSE, 70, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
-  ('ai.anomaly_detection', 'AI Anomaly Detection', 'Automatically detect anomalous patterns in metrics and logs', 'feature'::billing_feature_category, 'boolean'::billing_feature_value_type, 'ai', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, FALSE, 71, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
-  ('ai.forecasting', 'AI Metric Forecasting', 'Predict future metric trends and capacity needs using historical data', 'feature'::billing_feature_category, 'boolean'::billing_feature_value_type, 'ai', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, FALSE, 72, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
-  ('ai.incident_copilot', 'AI Incident Copilot', 'Real-time AI assistant during incident response with suggested actions', 'feature'::billing_feature_category, 'boolean'::billing_feature_value_type, 'ai', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, FALSE, 73, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
-  ('quota.ai_credits', 'Monthly AI Credits', 'Monthly quota of AI processing credits for insights, summaries, and analysis', 'quota'::billing_feature_category, 'integer'::billing_feature_value_type, 'quota', 'hard_limit'::billing_usage_behavior, '{"enforcementType":"hard_limit","unit":"credits","scope":"organization"}'::jsonb, TRUE, FALSE, 74, '{"catalog":"billing-preview-v2","scope":"organization","unit":"credits","supportsUnlimited":true}'::jsonb),
-  ('integrations.enabled', 'Integrations Platform', 'Connect external tools and services to your observability data', 'feature'::billing_feature_category, 'boolean'::billing_feature_value_type, 'integrations', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, FALSE, 75, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
-  ('integrations.rest_api', 'REST API Access', 'Full REST API access for programmatic data ingestion and querying', 'feature'::billing_feature_category, 'boolean'::billing_feature_value_type, 'integrations', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, FALSE, 76, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
-  ('quota.connectors', 'Connector Instances Quota', 'Maximum number of active connector instances', 'quota'::billing_feature_category, 'integer'::billing_feature_value_type, 'quota', 'hard_limit'::billing_usage_behavior, '{"enforcementType":"hard_limit","unit":"connectors","scope":"organization"}'::jsonb, TRUE, FALSE, 77, '{"catalog":"billing-preview-v2","scope":"organization","unit":"connectors","supportsUnlimited":true}'::jsonb),
-  ('quota.integrations', 'Integrations Quota', 'Maximum number of third-party integrations configured', 'quota'::billing_feature_category, 'integer'::billing_feature_value_type, 'quota', 'hard_limit'::billing_usage_behavior, '{"enforcementType":"hard_limit","unit":"integrations","scope":"organization"}'::jsonb, TRUE, FALSE, 78, '{"catalog":"billing-preview-v2","scope":"organization","unit":"integrations","supportsUnlimited":true}'::jsonb),
-  ('integrations.email', 'Email Connector', 'Send notifications and reports via email', 'integration'::billing_feature_category, 'boolean'::billing_feature_value_type, 'integrations', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, FALSE, 79, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
-  ('integrations.webhook', 'Webhook Connector', 'Send event data to custom HTTP endpoints', 'integration'::billing_feature_category, 'boolean'::billing_feature_value_type, 'integrations', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, FALSE, 80, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
-  ('integrations.slack', 'Slack Connector', 'Send alerts and summaries to Slack channels', 'integration'::billing_feature_category, 'boolean'::billing_feature_value_type, 'integrations', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, FALSE, 81, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
-  ('integrations.discord', 'Discord Connector', 'Send alerts and summaries to Discord channels', 'integration'::billing_feature_category, 'boolean'::billing_feature_value_type, 'integrations', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, FALSE, 82, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
-  ('integrations.microsoft_teams', 'Microsoft Teams Connector', 'Send alerts and summaries to Microsoft Teams', 'integration'::billing_feature_category, 'boolean'::billing_feature_value_type, 'integrations', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, FALSE, 83, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
-  ('integrations.pagerduty', 'PagerDuty Connector', 'Trigger and manage PagerDuty incidents from alerts', 'integration'::billing_feature_category, 'boolean'::billing_feature_value_type, 'integrations', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, FALSE, 84, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
-  ('integrations.sms', 'SMS Connector', 'Send critical alert notifications via SMS', 'integration'::billing_feature_category, 'boolean'::billing_feature_value_type, 'integrations', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, FALSE, 85, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
-  ('integrations.github', 'GitHub Integration', 'Link errors to GitHub issues and track code changes', 'integration'::billing_feature_category, 'boolean'::billing_feature_value_type, 'integrations', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, FALSE, 86, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
-  ('integrations.gitlab', 'GitLab Integration', 'Link errors to GitLab issues and track merge requests', 'integration'::billing_feature_category, 'boolean'::billing_feature_value_type, 'integrations', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, FALSE, 87, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
-  ('integrations.bitbucket', 'Bitbucket Integration', 'Link errors to Bitbucket issues and track commits', 'integration'::billing_feature_category, 'boolean'::billing_feature_value_type, 'integrations', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, FALSE, 88, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
-  ('integrations.jira', 'Jira Integration', 'Create and update Jira tickets from alerts and incidents', 'integration'::billing_feature_category, 'boolean'::billing_feature_value_type, 'integrations', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, FALSE, 89, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
-  ('integrations.terraform', 'Terraform Provider', 'Manage resources via official Terraform provider', 'integration'::billing_feature_category, 'boolean'::billing_feature_value_type, 'integrations', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, FALSE, 90, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
-  ('security.enabled', 'Enterprise Security', 'Enterprise-grade security controls and compliance features', 'feature'::billing_feature_category, 'boolean'::billing_feature_value_type, 'security', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, FALSE, 91, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
-  ('security.audit_logs', 'Audit Logs', 'Immutable audit logs of all administrative actions', 'feature'::billing_feature_category, 'boolean'::billing_feature_value_type, 'security', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, FALSE, 92, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
-  ('security.sso', 'SAML 2.0 & OIDC SSO', 'Single sign-on via SAML 2.0 and OpenID Connect', 'feature'::billing_feature_category, 'boolean'::billing_feature_value_type, 'security', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, FALSE, 93, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
-  ('security.scim', 'SCIM 2.0 User Provisioning', 'Automated user provisioning and deprovisioning via SCIM', 'feature'::billing_feature_category, 'boolean'::billing_feature_value_type, 'security', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, FALSE, 94, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
-  ('security.custom_roles', 'Custom RBAC Roles', 'Define custom role-based access control policies', 'feature'::billing_feature_category, 'boolean'::billing_feature_value_type, 'security', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, FALSE, 95, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
-  ('quota.service_accounts', 'Service Accounts Quota', 'Maximum number of API service accounts for automated access', 'quota'::billing_feature_category, 'integer'::billing_feature_value_type, 'quota', 'hard_limit'::billing_usage_behavior, '{"enforcementType":"hard_limit","unit":"accounts","scope":"organization"}'::jsonb, TRUE, FALSE, 96, '{"catalog":"billing-preview-v2","scope":"organization","unit":"accounts","supportsUnlimited":true}'::jsonb),
-  ('quota.custom_roles', 'Custom Roles Quota', 'Maximum number of custom RBAC roles', 'quota'::billing_feature_category, 'integer'::billing_feature_value_type, 'quota', 'hard_limit'::billing_usage_behavior, '{"enforcementType":"hard_limit","unit":"roles","scope":"organization"}'::jsonb, TRUE, FALSE, 97, '{"catalog":"billing-preview-v2","scope":"organization","unit":"roles","supportsUnlimited":true}'::jsonb),
-  ('support.dedicated', 'Dedicated Support', 'Access to dedicated customer success manager and priority support queue', 'feature'::billing_feature_category, 'boolean'::billing_feature_value_type, 'support', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, FALSE, 98, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
-  ('support.sla', 'Support SLA', 'Guaranteed response time for support tickets (e.g., 99.9% uptime SLA)', 'feature'::billing_feature_category, 'string'::billing_feature_value_type, 'support', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"string","scope":"organization"}'::jsonb, TRUE, FALSE, 99, '{"catalog":"billing-preview-v2","scope":"organization","unit":"string","supportsUnlimited":false}'::jsonb),
-  ('deployment.custom', 'Custom Deployment', 'On-premise, VPC, or private cloud deployment options', 'feature'::billing_feature_category, 'boolean'::billing_feature_value_type, 'deployment', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, FALSE, 100, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
-  ('compliance.hipaa', 'HIPAA Compliance', 'HIPAA-compliant data handling and Business Associate Agreement', 'feature'::billing_feature_category, 'boolean'::billing_feature_value_type, 'compliance', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, FALSE, 101, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
-  ('compliance.gdpr_dpa', 'GDPR Data Processing Agreement', 'Signed Data Processing Agreement for GDPR compliance', 'feature'::billing_feature_category, 'boolean'::billing_feature_value_type, 'compliance', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, FALSE, 102, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb)
+  ('alerting.enabled', 'Alerting Platform', 'Create and manage alerts based on metric thresholds and event patterns', 'feature'::billing_feature_category, 'boolean'::billing_feature_value_type, 'alerting', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, TRUE, 31, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
+  ('alerting.rules', 'Alert Rules Feature', 'Define alert rules with custom conditions and thresholds', 'feature'::billing_feature_category, 'boolean'::billing_feature_value_type, 'alerting', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, FALSE, 32, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
+  ('alerting.routing.enabled', 'Advanced Alert Routing', 'Route alerts to different teams or channels based on severity or source', 'feature'::billing_feature_category, 'boolean'::billing_feature_value_type, 'alerting', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, FALSE, 33, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
+  ('alerting.composite', 'Composite Alerts', 'Combine multiple conditions into a single composite alert', 'feature'::billing_feature_category, 'boolean'::billing_feature_value_type, 'alerting', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, FALSE, 34, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
+  ('alerting.escalation_policies', 'Escalation Policies', 'Automatically escalate unacknowledged alerts through predefined chains', 'feature'::billing_feature_category, 'boolean'::billing_feature_value_type, 'alerting', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, FALSE, 35, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
+  ('alerting.on_call', 'On-Call Schedules', 'Manage on-call rotations and schedules for incident response', 'feature'::billing_feature_category, 'boolean'::billing_feature_value_type, 'alerting', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, FALSE, 36, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
+  ('alerting.incident_timeline', 'Incident Timeline', 'Track incident lifecycle from detection to resolution with timeline view', 'feature'::billing_feature_category, 'boolean'::billing_feature_value_type, 'alerting', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, FALSE, 37, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
+  ('alerting.managed_email_fallback', 'Managed Email Fallback', 'Send alert notifications via managed email delivery when primary channels fail', 'feature'::billing_feature_category, 'boolean'::billing_feature_value_type, 'alerting', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, FALSE, 38, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
+  ('alerting.ai_alert', 'AI Alert Insights', 'AI-powered alert correlation, noise reduction, and intelligent grouping', 'feature'::billing_feature_category, 'boolean'::billing_feature_value_type, 'alerting', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, FALSE, 39, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
+  ('quota.alert_rules', 'Organization Alert Rules Quota', 'Maximum number of alert rules at organization level', 'quota'::billing_feature_category, 'integer'::billing_feature_value_type, 'quota', 'hard_limit'::billing_usage_behavior, '{"enforcementType":"hard_limit","unit":"rules","scope":"organization"}'::jsonb, TRUE, FALSE, 40, '{"catalog":"billing-preview-v2","scope":"organization","unit":"rules","supportsUnlimited":true}'::jsonb),
+  ('quota.project_alert_rules', 'Project Alert Rules Quota', 'Maximum number of alert rules per project', 'quota'::billing_feature_category, 'integer'::billing_feature_value_type, 'quota', 'hard_limit'::billing_usage_behavior, '{"enforcementType":"hard_limit","unit":"rules","scope":"project"}'::jsonb, TRUE, FALSE, 41, '{"catalog":"billing-preview-v2","scope":"project","unit":"rules","supportsUnlimited":true}'::jsonb),
+  ('quota.alert_channels', 'Alert Channels Quota', 'Maximum number of alert notification channels', 'quota'::billing_feature_category, 'integer'::billing_feature_value_type, 'quota', 'hard_limit'::billing_usage_behavior, '{"enforcementType":"hard_limit","unit":"channels","scope":"organization"}'::jsonb, TRUE, FALSE, 42, '{"catalog":"billing-preview-v2","scope":"organization","unit":"channels","supportsUnlimited":true}'::jsonb),
+  ('quota.project_notification_channels', 'Project Notification Channels Quota', 'Maximum number of notification channels per project', 'quota'::billing_feature_category, 'integer'::billing_feature_value_type, 'quota', 'hard_limit'::billing_usage_behavior, '{"enforcementType":"hard_limit","unit":"channels","scope":"project"}'::jsonb, TRUE, FALSE, 43, '{"catalog":"billing-preview-v2","scope":"project","unit":"channels","supportsUnlimited":true}'::jsonb),
+  ('quota.routing_rules', 'Routing Rules Quota', 'Maximum number of alert routing rules at organization level', 'quota'::billing_feature_category, 'integer'::billing_feature_value_type, 'quota', 'hard_limit'::billing_usage_behavior, '{"enforcementType":"hard_limit","unit":"rules","scope":"organization"}'::jsonb, TRUE, FALSE, 44, '{"catalog":"billing-preview-v2","scope":"organization","unit":"rules","supportsUnlimited":true}'::jsonb),
+  ('quota.project_routing_rules', 'Project Routing Rules Quota', 'Maximum number of routing rules per project', 'quota'::billing_feature_category, 'integer'::billing_feature_value_type, 'quota', 'hard_limit'::billing_usage_behavior, '{"enforcementType":"hard_limit","unit":"rules","scope":"project"}'::jsonb, TRUE, FALSE, 45, '{"catalog":"billing-preview-v2","scope":"project","unit":"rules","supportsUnlimited":true}'::jsonb),
+  ('quota.daily_alerts', 'Daily Alert Notifications', 'Maximum number of alert notifications sent per day', 'quota'::billing_feature_category, 'integer'::billing_feature_value_type, 'quota', 'hard_limit'::billing_usage_behavior, '{"enforcementType":"hard_limit","unit":"notifications","scope":"organization"}'::jsonb, TRUE, FALSE, 46, '{"catalog":"billing-preview-v2","scope":"organization","unit":"notifications","supportsUnlimited":true}'::jsonb),
+  ('quota.monthly_alerts', 'Monthly Alert Notifications', 'Maximum number of alert notifications sent per month', 'quota'::billing_feature_category, 'integer'::billing_feature_value_type, 'quota', 'overage'::billing_usage_behavior, '{"enforcementType":"overage","unit":"notifications","scope":"organization"}'::jsonb, TRUE, FALSE, 47, '{"catalog":"billing-preview-v2","scope":"organization","unit":"notifications","supportsUnlimited":true}'::jsonb),
+  ('quota.connector_sends', 'Monthly Connector Sends', 'Maximum number of messages sent through integration connectors per month', 'quota'::billing_feature_category, 'integer'::billing_feature_value_type, 'quota', 'overage'::billing_usage_behavior, '{"enforcementType":"overage","unit":"sends","scope":"organization"}'::jsonb, TRUE, FALSE, 48, '{"catalog":"billing-preview-v2","scope":"organization","unit":"sends","supportsUnlimited":true}'::jsonb),
+  ('automation.enabled', 'Automation Platform', 'Automate workflows triggered by events, alerts, or schedules', 'feature'::billing_feature_category, 'boolean'::billing_feature_value_type, 'automation', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, TRUE, 49, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
+  ('quota.automation_rules', 'Automation Rules Quota', 'Maximum number of automation rules', 'quota'::billing_feature_category, 'integer'::billing_feature_value_type, 'quota', 'hard_limit'::billing_usage_behavior, '{"enforcementType":"hard_limit","unit":"rules","scope":"organization"}'::jsonb, TRUE, FALSE, 50, '{"catalog":"billing-preview-v2","scope":"organization","unit":"rules","supportsUnlimited":true}'::jsonb),
+  ('dashboards.enabled', 'Dashboards Platform', 'Create and share dashboards to visualize metrics and logs', 'feature'::billing_feature_category, 'boolean'::billing_feature_value_type, 'dashboards', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, TRUE, 51, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
+  ('dashboards.custom_dashboards', 'Custom Dashboards', 'Build fully custom dashboards with drag-and-drop widgets', 'feature'::billing_feature_category, 'boolean'::billing_feature_value_type, 'dashboards', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, FALSE, 52, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
+  ('quota.dashboards', 'Dashboards Quota', 'Maximum number of custom dashboards', 'quota'::billing_feature_category, 'integer'::billing_feature_value_type, 'quota', 'hard_limit'::billing_usage_behavior, '{"enforcementType":"hard_limit","unit":"dashboards","scope":"organization"}'::jsonb, TRUE, FALSE, 53, '{"catalog":"billing-preview-v2","scope":"organization","unit":"dashboards","supportsUnlimited":true}'::jsonb),
+  ('analytics.explorer', 'Analytics Explorer', 'Ad-hoc query interface for exploring events and logs', 'feature'::billing_feature_category, 'boolean'::billing_feature_value_type, 'analytics', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, FALSE, 54, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
+  ('analytics.query_builder', 'Analytics Query Builder', 'Visual query builder for complex analytics without writing code', 'feature'::billing_feature_category, 'boolean'::billing_feature_value_type, 'analytics', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, FALSE, 55, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
+  ('ai.enabled', 'AI Insights Platform', 'AI-powered analysis and insights across your observability data', 'feature'::billing_feature_category, 'boolean'::billing_feature_value_type, 'ai', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, TRUE, 56, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
+  ('ai.summaries', 'AI Incident & Log Summaries', 'Auto-generate human-readable summaries of incidents and log patterns', 'feature'::billing_feature_category, 'boolean'::billing_feature_value_type, 'ai', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, FALSE, 57, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
+  ('ai.root_cause_analysis', 'AI Root Cause Analysis', 'AI-assisted identification of incident root causes across traces and logs', 'feature'::billing_feature_category, 'boolean'::billing_feature_value_type, 'ai', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, FALSE, 58, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
+  ('ai.anomaly_detection', 'AI Anomaly Detection', 'Automatically detect anomalous patterns in metrics and logs', 'feature'::billing_feature_category, 'boolean'::billing_feature_value_type, 'ai', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, FALSE, 59, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
+  ('ai.forecasting', 'AI Metric Forecasting', 'Predict future metric trends and capacity needs using historical data', 'feature'::billing_feature_category, 'boolean'::billing_feature_value_type, 'ai', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, FALSE, 60, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
+  ('ai.incident_copilot', 'AI Incident Copilot', 'Real-time AI assistant during incident response with suggested actions', 'feature'::billing_feature_category, 'boolean'::billing_feature_value_type, 'ai', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, FALSE, 61, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
+  ('quota.ai_credits', 'Monthly AI Credits', 'Monthly quota of AI processing credits for insights, summaries, and analysis', 'quota'::billing_feature_category, 'integer'::billing_feature_value_type, 'quota', 'hard_limit'::billing_usage_behavior, '{"enforcementType":"hard_limit","unit":"credits","scope":"organization"}'::jsonb, TRUE, FALSE, 62, '{"catalog":"billing-preview-v2","scope":"organization","unit":"credits","supportsUnlimited":true}'::jsonb),
+  ('integrations.enabled', 'Integrations Platform', 'Connect external tools and services to your observability data', 'feature'::billing_feature_category, 'boolean'::billing_feature_value_type, 'integrations', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, TRUE, 63, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
+  ('integrations.rest_api', 'REST API Access', 'Full REST API access for programmatic data ingestion and querying', 'feature'::billing_feature_category, 'boolean'::billing_feature_value_type, 'integrations', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, FALSE, 64, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
+  ('quota.connectors', 'Connector Instances Quota', 'Maximum number of active connector instances', 'quota'::billing_feature_category, 'integer'::billing_feature_value_type, 'quota', 'hard_limit'::billing_usage_behavior, '{"enforcementType":"hard_limit","unit":"connectors","scope":"organization"}'::jsonb, TRUE, FALSE, 65, '{"catalog":"billing-preview-v2","scope":"organization","unit":"connectors","supportsUnlimited":true}'::jsonb),
+  ('integrations.email', 'Email Connector', 'Send notifications and reports via email', 'integration'::billing_feature_category, 'boolean'::billing_feature_value_type, 'integrations', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, FALSE, 66, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
+  ('integrations.webhook', 'Webhook Connector', 'Send event data to custom HTTP endpoints', 'integration'::billing_feature_category, 'boolean'::billing_feature_value_type, 'integrations', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, FALSE, 67, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
+  ('integrations.slack', 'Slack Connector', 'Send alerts and summaries to Slack channels', 'integration'::billing_feature_category, 'boolean'::billing_feature_value_type, 'integrations', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, FALSE, 68, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
+  ('integrations.discord', 'Discord Connector', 'Send alerts and summaries to Discord channels', 'integration'::billing_feature_category, 'boolean'::billing_feature_value_type, 'integrations', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, FALSE, 69, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
+  ('integrations.microsoft_teams', 'Microsoft Teams Connector', 'Send alerts and summaries to Microsoft Teams', 'integration'::billing_feature_category, 'boolean'::billing_feature_value_type, 'integrations', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, FALSE, 70, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
+  ('integrations.pagerduty', 'PagerDuty Connector', 'Trigger and manage PagerDuty incidents from alerts', 'integration'::billing_feature_category, 'boolean'::billing_feature_value_type, 'integrations', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, FALSE, 71, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
+  ('integrations.sms', 'SMS Connector', 'Send critical alert notifications via SMS', 'integration'::billing_feature_category, 'boolean'::billing_feature_value_type, 'integrations', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, FALSE, 72, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
+  ('security.enabled', 'Enterprise Security', 'Enterprise-grade security controls and compliance features', 'feature'::billing_feature_category, 'boolean'::billing_feature_value_type, 'security', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, TRUE, 73, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
+  ('security.audit_logs', 'Audit Logs', 'Immutable audit logs of all administrative actions', 'feature'::billing_feature_category, 'boolean'::billing_feature_value_type, 'security', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, FALSE, 74, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
+  ('security.sso', 'SAML 2.0 & OIDC SSO', 'Single sign-on via SAML 2.0 and OpenID Connect', 'feature'::billing_feature_category, 'boolean'::billing_feature_value_type, 'security', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, FALSE, 75, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
+  ('security.scim', 'SCIM 2.0 User Provisioning', 'Automated user provisioning and deprovisioning via SCIM', 'feature'::billing_feature_category, 'boolean'::billing_feature_value_type, 'security', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, FALSE, 76, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
+  ('security.custom_roles', 'Custom RBAC Roles', 'Define custom role-based access control policies', 'feature'::billing_feature_category, 'boolean'::billing_feature_value_type, 'security', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, FALSE, 77, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
+  ('quota.service_accounts', 'Service Accounts Quota', 'Maximum number of API service accounts for automated access', 'quota'::billing_feature_category, 'integer'::billing_feature_value_type, 'quota', 'hard_limit'::billing_usage_behavior, '{"enforcementType":"hard_limit","unit":"accounts","scope":"organization"}'::jsonb, TRUE, FALSE, 78, '{"catalog":"billing-preview-v2","scope":"organization","unit":"accounts","supportsUnlimited":true}'::jsonb),
+  ('quota.custom_roles', 'Custom Roles Quota', 'Maximum number of custom RBAC roles', 'quota'::billing_feature_category, 'integer'::billing_feature_value_type, 'quota', 'hard_limit'::billing_usage_behavior, '{"enforcementType":"hard_limit","unit":"roles","scope":"organization"}'::jsonb, TRUE, FALSE, 79, '{"catalog":"billing-preview-v2","scope":"organization","unit":"roles","supportsUnlimited":true}'::jsonb),
+  ('support.dedicated', 'Dedicated Support', 'Access to dedicated customer success manager and priority support queue', 'feature'::billing_feature_category, 'boolean'::billing_feature_value_type, 'support', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, FALSE, 80, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
+  ('support.sla', 'Support SLA', 'Guaranteed response time for support tickets (e.g., 99.9% uptime SLA)', 'feature'::billing_feature_category, 'string'::billing_feature_value_type, 'support', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"string","scope":"organization"}'::jsonb, TRUE, FALSE, 81, '{"catalog":"billing-preview-v2","scope":"organization","unit":"string","supportsUnlimited":false}'::jsonb),
+  ('deployment.custom', 'Custom Deployment', 'On-premise, VPC, or private cloud deployment options', 'feature'::billing_feature_category, 'boolean'::billing_feature_value_type, 'deployment', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, FALSE, 82, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
+  ('compliance.hipaa', 'HIPAA Compliance', 'HIPAA-compliant data handling and Business Associate Agreement', 'feature'::billing_feature_category, 'boolean'::billing_feature_value_type, 'compliance', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, FALSE, 83, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
+  ('compliance.gdpr_dpa', 'GDPR Data Processing Agreement', 'Signed Data Processing Agreement for GDPR compliance', 'feature'::billing_feature_category, 'boolean'::billing_feature_value_type, 'compliance', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, FALSE, 84, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb)
 )
 INSERT INTO billing_features
   (feature_key, feature_name, description, category, value_type, module, usage_behavior, configuration, is_public, is_module_root, sort_order, is_billable, metadata)
@@ -11881,9 +11933,8 @@ SET feature_name = EXCLUDED.feature_name,
 
 -- =============================================================================
 -- Seeder File: 006_11_billing_catalog_plan_entitlements.sql
--- Description: Seeds JSON-derived plan feature entitlements
+-- Description: Seeds canonical plan feature entitlements (420 rows = 5 plans x 84 features)
 -- Catalog Version: 2.0
--- Source: billing_catalog_response.preview.json
 -- =============================================================================
 
 WITH entitlement_seed(plan_key, feature_key, boolean_value, integer_value, decimal_value, string_value, metadata, configuration) AS (
@@ -11895,15 +11946,15 @@ VALUES
   ('free', 'quota.members', NULL::boolean, 3, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"members","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
   ('free', 'quota.environments', NULL::boolean, 2, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"environments","scope":"project","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
   ('free', 'quota.api_keys', NULL::boolean, 2, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"api_keys","scope":"project","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
-  ('free', 'quota.monthly_events', NULL::boolean, 10000, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"credits","scope":"organization","enforcementType":"overage"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('free', 'quota.monthly_events', NULL::boolean, 50000, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"credits","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
   ('free', 'quota.requests_per_second', NULL::boolean, 50, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"requests/sec","scope":"organization","enforcementType":"throttle"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
   ('free', 'sdk.enabled', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
-  ('free', 'sdk.remote_config', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"project","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
-  ('free', 'sdk.retry', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"project","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
-  ('free', 'sdk.batching', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"project","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('free', 'sdk.remote_config', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"project","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('free', 'sdk.retry', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"project","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('free', 'sdk.batching', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"project","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
   ('free', 'sdk.offline_queue', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"project","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
   ('free', 'sdk.dynamic_sampling', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"project","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
-  ('free', 'quota.sdk_batch_queue_size', NULL::boolean, 0, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"events","scope":"project","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('free', 'quota.sdk_batch_queue_size', NULL::boolean, 100, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"events","scope":"project","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
   ('free', 'quota.sdk_offline_queue_limit', NULL::boolean, 0, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"events","scope":"project","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
   ('free', 'privacy.data_scrubbing', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
   ('free', 'privacy.capture_headers', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"project","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
@@ -11918,12 +11969,6 @@ VALUES
   ('free', 'uptime.enabled', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
   ('free', 'cron_monitoring.enabled', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
   ('free', 'quota.retention_days', NULL::boolean, 7, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"days","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
-  ('free', 'quota.log_retention_days', NULL::boolean, 7, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"days","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
-  ('free', 'quota.metric_retention_days', NULL::boolean, 7, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"days","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
-  ('free', 'quota.profile_retention_days', NULL::boolean, 0, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"days","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
-  ('free', 'quota.replay_retention_days', NULL::boolean, 0, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"days","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
-  ('free', 'quota.trace_retention_days', NULL::boolean, 7, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"days","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
-  ('free', 'quota.audit_log_retention_days', NULL::boolean, 0, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"days","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
   ('free', 'alerting.enabled', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
   ('free', 'alerting.rules', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
   ('free', 'alerting.routing.enabled', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
@@ -11936,23 +11981,17 @@ VALUES
   ('free', 'quota.alert_rules', NULL::boolean, 0, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"rules","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
   ('free', 'quota.project_alert_rules', NULL::boolean, 0, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"rules","scope":"project","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
   ('free', 'quota.alert_channels', NULL::boolean, 0, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"channels","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
-  ('free', 'quota.notification_channels', NULL::boolean, 0, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"channels","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
   ('free', 'quota.project_notification_channels', NULL::boolean, 0, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"channels","scope":"project","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
   ('free', 'quota.routing_rules', NULL::boolean, 0, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"rules","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
   ('free', 'quota.project_routing_rules', NULL::boolean, 0, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"rules","scope":"project","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
-  ('free', 'quota.daily_alerts', NULL::boolean, 10, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"notifications","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
-  ('free', 'quota.monthly_alerts', NULL::boolean, 100, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"notifications","scope":"organization","enforcementType":"overage"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
-  ('free', 'quota.connector_sends', NULL::boolean, 0, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"sends","scope":"organization","enforcementType":"overage"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('free', 'quota.daily_alerts', NULL::boolean, 0, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"notifications","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('free', 'quota.monthly_alerts', NULL::boolean, 100, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"notifications","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('free', 'quota.connector_sends', NULL::boolean, 100, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"sends","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
   ('free', 'automation.enabled', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
   ('free', 'quota.automation_rules', NULL::boolean, 0, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"rules","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
   ('free', 'dashboards.enabled', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
   ('free', 'dashboards.custom_dashboards', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
-  ('free', 'dashboards.custom_widgets', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
-  ('free', 'dashboards.embeds', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
-  ('free', 'dashboards.public_links', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
-  ('free', 'dashboards.scheduled_reports', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
   ('free', 'quota.dashboards', NULL::boolean, 1, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"dashboards","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
-  ('free', 'quota.monthly_reports', NULL::boolean, 0, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"reports","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
   ('free', 'analytics.explorer', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
   ('free', 'analytics.query_builder', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
   ('free', 'ai.enabled', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
@@ -11965,7 +12004,6 @@ VALUES
   ('free', 'integrations.enabled', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
   ('free', 'integrations.rest_api', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
   ('free', 'quota.connectors', NULL::boolean, 2, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"connectors","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
-  ('free', 'quota.integrations', NULL::boolean, 2, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"integrations","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
   ('free', 'integrations.email', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
   ('free', 'integrations.webhook', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
   ('free', 'integrations.slack', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
@@ -11973,11 +12011,6 @@ VALUES
   ('free', 'integrations.microsoft_teams', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
   ('free', 'integrations.pagerduty', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
   ('free', 'integrations.sms', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
-  ('free', 'integrations.github', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
-  ('free', 'integrations.gitlab', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
-  ('free', 'integrations.bitbucket', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
-  ('free', 'integrations.jira', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
-  ('free', 'integrations.terraform', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
   ('free', 'security.enabled', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
   ('free', 'security.audit_logs', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
   ('free', 'security.sso', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
@@ -11986,7 +12019,7 @@ VALUES
   ('free', 'quota.service_accounts', NULL::boolean, 0, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"accounts","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
   ('free', 'quota.custom_roles', NULL::boolean, 0, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"roles","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
   ('free', 'support.dedicated', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
-  ('free', 'support.sla', NULL::boolean, NULL::bigint, NULL::numeric, NULL, '{"catalog":"billing-preview-v2","unit":"string","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('free', 'support.sla', NULL::boolean, NULL::bigint, NULL::numeric, 'none', '{"catalog":"billing-preview-v2","unit":"string","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
   ('free', 'deployment.custom', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
   ('free', 'compliance.hipaa', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
   ('free', 'compliance.gdpr_dpa', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
@@ -11997,7 +12030,7 @@ VALUES
   ('starter', 'quota.members', NULL::boolean, 10, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"members","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
   ('starter', 'quota.environments', NULL::boolean, 5, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"environments","scope":"project","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
   ('starter', 'quota.api_keys', NULL::boolean, 10, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"api_keys","scope":"project","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
-  ('starter', 'quota.monthly_events', NULL::boolean, 150000, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"credits","scope":"organization","enforcementType":"overage"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('starter', 'quota.monthly_events', NULL::boolean, 250000, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"credits","scope":"organization","enforcementType":"overage"}'::jsonb, '{"supportsUnlimited":false,"overageRate":50,"overageUnit":1000,"gracePercent":10}'::jsonb),
   ('starter', 'quota.requests_per_second', NULL::boolean, 250, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"requests/sec","scope":"organization","enforcementType":"throttle"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
   ('starter', 'sdk.enabled', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
   ('starter', 'sdk.remote_config', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"project","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
@@ -12020,12 +12053,6 @@ VALUES
   ('starter', 'uptime.enabled', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
   ('starter', 'cron_monitoring.enabled', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
   ('starter', 'quota.retention_days', NULL::boolean, 30, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"days","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
-  ('starter', 'quota.log_retention_days', NULL::boolean, 30, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"days","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
-  ('starter', 'quota.metric_retention_days', NULL::boolean, 30, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"days","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
-  ('starter', 'quota.profile_retention_days', NULL::boolean, 0, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"days","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
-  ('starter', 'quota.replay_retention_days', NULL::boolean, 7, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"days","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
-  ('starter', 'quota.trace_retention_days', NULL::boolean, 30, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"days","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
-  ('starter', 'quota.audit_log_retention_days', NULL::boolean, 30, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"days","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
   ('starter', 'alerting.enabled', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
   ('starter', 'alerting.rules', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
   ('starter', 'alerting.routing.enabled', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
@@ -12038,23 +12065,17 @@ VALUES
   ('starter', 'quota.alert_rules', NULL::boolean, 10, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"rules","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
   ('starter', 'quota.project_alert_rules', NULL::boolean, 5, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"rules","scope":"project","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
   ('starter', 'quota.alert_channels', NULL::boolean, 10, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"channels","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
-  ('starter', 'quota.notification_channels', NULL::boolean, 10, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"channels","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
   ('starter', 'quota.project_notification_channels', NULL::boolean, 3, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"channels","scope":"project","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
   ('starter', 'quota.routing_rules', NULL::boolean, 2, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"rules","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
   ('starter', 'quota.project_routing_rules', NULL::boolean, 1, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"rules","scope":"project","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
-  ('starter', 'quota.daily_alerts', NULL::boolean, 100, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"notifications","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('starter', 'quota.daily_alerts', NULL::boolean, 0, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"notifications","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
   ('starter', 'quota.monthly_alerts', NULL::boolean, 1000, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"notifications","scope":"organization","enforcementType":"overage"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
   ('starter', 'quota.connector_sends', NULL::boolean, 1000, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"sends","scope":"organization","enforcementType":"overage"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
   ('starter', 'automation.enabled', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
   ('starter', 'quota.automation_rules', NULL::boolean, 5, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"rules","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
   ('starter', 'dashboards.enabled', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
   ('starter', 'dashboards.custom_dashboards', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
-  ('starter', 'dashboards.custom_widgets', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
-  ('starter', 'dashboards.embeds', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
-  ('starter', 'dashboards.public_links', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
-  ('starter', 'dashboards.scheduled_reports', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
   ('starter', 'quota.dashboards', NULL::boolean, 3, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"dashboards","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
-  ('starter', 'quota.monthly_reports', NULL::boolean, 5, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"reports","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
   ('starter', 'analytics.explorer', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
   ('starter', 'analytics.query_builder', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
   ('starter', 'ai.enabled', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
@@ -12067,7 +12088,6 @@ VALUES
   ('starter', 'integrations.enabled', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
   ('starter', 'integrations.rest_api', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
   ('starter', 'quota.connectors', NULL::boolean, 10, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"connectors","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
-  ('starter', 'quota.integrations', NULL::boolean, 10, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"integrations","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
   ('starter', 'integrations.email', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
   ('starter', 'integrations.webhook', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
   ('starter', 'integrations.slack', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
@@ -12075,11 +12095,6 @@ VALUES
   ('starter', 'integrations.microsoft_teams', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
   ('starter', 'integrations.pagerduty', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
   ('starter', 'integrations.sms', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
-  ('starter', 'integrations.github', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
-  ('starter', 'integrations.gitlab', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
-  ('starter', 'integrations.bitbucket', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
-  ('starter', 'integrations.jira', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
-  ('starter', 'integrations.terraform', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
   ('starter', 'security.enabled', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
   ('starter', 'security.audit_logs', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
   ('starter', 'security.sso', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
@@ -12088,7 +12103,7 @@ VALUES
   ('starter', 'quota.service_accounts', NULL::boolean, 2, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"accounts","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
   ('starter', 'quota.custom_roles', NULL::boolean, 0, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"roles","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
   ('starter', 'support.dedicated', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
-  ('starter', 'support.sla', NULL::boolean, NULL::bigint, NULL::numeric, NULL, '{"catalog":"billing-preview-v2","unit":"string","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('starter', 'support.sla', NULL::boolean, NULL::bigint, NULL::numeric, 'none', '{"catalog":"billing-preview-v2","unit":"string","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
   ('starter', 'deployment.custom', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
   ('starter', 'compliance.hipaa', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
   ('starter', 'compliance.gdpr_dpa', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
@@ -12099,7 +12114,7 @@ VALUES
   ('growth', 'quota.members', NULL::boolean, 50, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"members","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
   ('growth', 'quota.environments', NULL::boolean, 10, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"environments","scope":"project","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
   ('growth', 'quota.api_keys', NULL::boolean, 50, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"api_keys","scope":"project","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
-  ('growth', 'quota.monthly_events', NULL::boolean, 1000000, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"credits","scope":"organization","enforcementType":"overage"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('growth', 'quota.monthly_events', NULL::boolean, 1500000, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"credits","scope":"organization","enforcementType":"overage"}'::jsonb, '{"supportsUnlimited":false,"overageRate":40,"overageUnit":1000,"gracePercent":10}'::jsonb),
   ('growth', 'quota.requests_per_second', NULL::boolean, 1000, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"requests/sec","scope":"organization","enforcementType":"throttle"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
   ('growth', 'sdk.enabled', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
   ('growth', 'sdk.remote_config', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"project","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
@@ -12122,12 +12137,6 @@ VALUES
   ('growth', 'uptime.enabled', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
   ('growth', 'cron_monitoring.enabled', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
   ('growth', 'quota.retention_days', NULL::boolean, 90, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"days","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
-  ('growth', 'quota.log_retention_days', NULL::boolean, 90, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"days","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
-  ('growth', 'quota.metric_retention_days', NULL::boolean, 90, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"days","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
-  ('growth', 'quota.profile_retention_days', NULL::boolean, 90, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"days","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
-  ('growth', 'quota.replay_retention_days', NULL::boolean, 30, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"days","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
-  ('growth', 'quota.trace_retention_days', NULL::boolean, 90, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"days","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
-  ('growth', 'quota.audit_log_retention_days', NULL::boolean, 180, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"days","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
   ('growth', 'alerting.enabled', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
   ('growth', 'alerting.rules', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
   ('growth', 'alerting.routing.enabled', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
@@ -12140,23 +12149,17 @@ VALUES
   ('growth', 'quota.alert_rules', NULL::boolean, 50, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"rules","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
   ('growth', 'quota.project_alert_rules', NULL::boolean, 25, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"rules","scope":"project","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
   ('growth', 'quota.alert_channels', NULL::boolean, 50, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"channels","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
-  ('growth', 'quota.notification_channels', NULL::boolean, 50, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"channels","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
   ('growth', 'quota.project_notification_channels', NULL::boolean, 10, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"channels","scope":"project","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
   ('growth', 'quota.routing_rules', NULL::boolean, 10, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"rules","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
   ('growth', 'quota.project_routing_rules', NULL::boolean, 5, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"rules","scope":"project","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
-  ('growth', 'quota.daily_alerts', NULL::boolean, 1000, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"notifications","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('growth', 'quota.daily_alerts', NULL::boolean, 0, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"notifications","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
   ('growth', 'quota.monthly_alerts', NULL::boolean, 10000, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"notifications","scope":"organization","enforcementType":"overage"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
   ('growth', 'quota.connector_sends', NULL::boolean, 10000, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"sends","scope":"organization","enforcementType":"overage"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
   ('growth', 'automation.enabled', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
   ('growth', 'quota.automation_rules', NULL::boolean, 25, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"rules","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
   ('growth', 'dashboards.enabled', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
   ('growth', 'dashboards.custom_dashboards', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
-  ('growth', 'dashboards.custom_widgets', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
-  ('growth', 'dashboards.embeds', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
-  ('growth', 'dashboards.public_links', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
-  ('growth', 'dashboards.scheduled_reports', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
   ('growth', 'quota.dashboards', NULL::boolean, 10, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"dashboards","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
-  ('growth', 'quota.monthly_reports', NULL::boolean, 25, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"reports","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
   ('growth', 'analytics.explorer', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
   ('growth', 'analytics.query_builder', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
   ('growth', 'ai.enabled', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
@@ -12169,7 +12172,6 @@ VALUES
   ('growth', 'integrations.enabled', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
   ('growth', 'integrations.rest_api', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
   ('growth', 'quota.connectors', NULL::boolean, 50, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"connectors","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
-  ('growth', 'quota.integrations', NULL::boolean, 50, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"integrations","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
   ('growth', 'integrations.email', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
   ('growth', 'integrations.webhook', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
   ('growth', 'integrations.slack', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
@@ -12177,11 +12179,6 @@ VALUES
   ('growth', 'integrations.microsoft_teams', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
   ('growth', 'integrations.pagerduty', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
   ('growth', 'integrations.sms', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
-  ('growth', 'integrations.github', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
-  ('growth', 'integrations.gitlab', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
-  ('growth', 'integrations.bitbucket', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
-  ('growth', 'integrations.jira', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
-  ('growth', 'integrations.terraform', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
   ('growth', 'security.enabled', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
   ('growth', 'security.audit_logs', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
   ('growth', 'security.sso', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
@@ -12190,7 +12187,7 @@ VALUES
   ('growth', 'quota.service_accounts', NULL::boolean, 10, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"accounts","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
   ('growth', 'quota.custom_roles', NULL::boolean, 25, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"roles","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
   ('growth', 'support.dedicated', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
-  ('growth', 'support.sla', NULL::boolean, NULL::bigint, NULL::numeric, NULL, '{"catalog":"billing-preview-v2","unit":"string","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('growth', 'support.sla', NULL::boolean, NULL::bigint, NULL::numeric, 'none', '{"catalog":"billing-preview-v2","unit":"string","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
   ('growth', 'deployment.custom', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
   ('growth', 'compliance.hipaa', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
   ('growth', 'compliance.gdpr_dpa', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
@@ -12201,7 +12198,7 @@ VALUES
   ('business', 'quota.members', NULL::boolean, 250, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"members","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
   ('business', 'quota.environments', NULL::boolean, 25, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"environments","scope":"project","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
   ('business', 'quota.api_keys', NULL::boolean, 250, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"api_keys","scope":"project","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
-  ('business', 'quota.monthly_events', NULL::boolean, 8000000, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"credits","scope":"organization","enforcementType":"overage"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('business', 'quota.monthly_events', NULL::boolean, 10000000, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"credits","scope":"organization","enforcementType":"overage"}'::jsonb, '{"supportsUnlimited":false,"overageRate":30,"overageUnit":1000,"gracePercent":10}'::jsonb),
   ('business', 'quota.requests_per_second', NULL::boolean, 5000, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"requests/sec","scope":"organization","enforcementType":"throttle"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
   ('business', 'sdk.enabled', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
   ('business', 'sdk.remote_config', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"project","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
@@ -12224,12 +12221,6 @@ VALUES
   ('business', 'uptime.enabled', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
   ('business', 'cron_monitoring.enabled', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
   ('business', 'quota.retention_days', NULL::boolean, 180, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"days","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
-  ('business', 'quota.log_retention_days', NULL::boolean, 180, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"days","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
-  ('business', 'quota.metric_retention_days', NULL::boolean, 180, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"days","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
-  ('business', 'quota.profile_retention_days', NULL::boolean, 180, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"days","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
-  ('business', 'quota.replay_retention_days', NULL::boolean, 90, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"days","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
-  ('business', 'quota.trace_retention_days', NULL::boolean, 180, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"days","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
-  ('business', 'quota.audit_log_retention_days', NULL::boolean, 365, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"days","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
   ('business', 'alerting.enabled', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
   ('business', 'alerting.rules', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
   ('business', 'alerting.routing.enabled', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
@@ -12242,23 +12233,17 @@ VALUES
   ('business', 'quota.alert_rules', NULL::boolean, 250, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"rules","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
   ('business', 'quota.project_alert_rules', NULL::boolean, 100, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"rules","scope":"project","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
   ('business', 'quota.alert_channels', NULL::boolean, 250, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"channels","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
-  ('business', 'quota.notification_channels', NULL::boolean, 250, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"channels","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
   ('business', 'quota.project_notification_channels', NULL::boolean, 50, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"channels","scope":"project","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
   ('business', 'quota.routing_rules', NULL::boolean, 50, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"rules","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
   ('business', 'quota.project_routing_rules', NULL::boolean, 25, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"rules","scope":"project","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
-  ('business', 'quota.daily_alerts', NULL::boolean, 10000, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"notifications","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('business', 'quota.daily_alerts', NULL::boolean, 0, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"notifications","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
   ('business', 'quota.monthly_alerts', NULL::boolean, 100000, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"notifications","scope":"organization","enforcementType":"overage"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
   ('business', 'quota.connector_sends', NULL::boolean, 100000, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"sends","scope":"organization","enforcementType":"overage"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
   ('business', 'automation.enabled', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
   ('business', 'quota.automation_rules', NULL::boolean, 100, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"rules","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
   ('business', 'dashboards.enabled', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
   ('business', 'dashboards.custom_dashboards', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
-  ('business', 'dashboards.custom_widgets', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
-  ('business', 'dashboards.embeds', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
-  ('business', 'dashboards.public_links', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
-  ('business', 'dashboards.scheduled_reports', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
   ('business', 'quota.dashboards', NULL::boolean, 25, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"dashboards","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
-  ('business', 'quota.monthly_reports', NULL::boolean, 100, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"reports","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
   ('business', 'analytics.explorer', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
   ('business', 'analytics.query_builder', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
   ('business', 'ai.enabled', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
@@ -12271,7 +12256,6 @@ VALUES
   ('business', 'integrations.enabled', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
   ('business', 'integrations.rest_api', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
   ('business', 'quota.connectors', NULL::boolean, 250, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"connectors","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
-  ('business', 'quota.integrations', NULL::boolean, 250, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"integrations","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
   ('business', 'integrations.email', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
   ('business', 'integrations.webhook', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
   ('business', 'integrations.slack', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
@@ -12279,16 +12263,11 @@ VALUES
   ('business', 'integrations.microsoft_teams', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
   ('business', 'integrations.pagerduty', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
   ('business', 'integrations.sms', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
-  ('business', 'integrations.github', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
-  ('business', 'integrations.gitlab', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
-  ('business', 'integrations.bitbucket', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
-  ('business', 'integrations.jira', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
-  ('business', 'integrations.terraform', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
   ('business', 'security.enabled', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
   ('business', 'security.audit_logs', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
   ('business', 'security.sso', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
   ('business', 'security.scim', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
-  ('business', 'security.custom_roles', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('business', 'security.custom_roles', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
   ('business', 'quota.service_accounts', NULL::boolean, 100, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"accounts","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
   ('business', 'quota.custom_roles', NULL::boolean, 100, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"roles","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
   ('business', 'support.dedicated', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
@@ -12303,7 +12282,7 @@ VALUES
   ('enterprise', 'quota.members', NULL::boolean, 10000, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"members","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
   ('enterprise', 'quota.environments', NULL::boolean, 100, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"environments","scope":"project","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
   ('enterprise', 'quota.api_keys', NULL::boolean, 1000, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"api_keys","scope":"project","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
-  ('enterprise', 'quota.monthly_events', NULL::boolean, NULL::bigint, NULL::numeric, 'Custom', '{"catalog":"billing-preview-v2","unit":"credits","scope":"organization","enforcementType":"overage"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('enterprise', 'quota.monthly_events', NULL::boolean, 50000000, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"credits","scope":"organization","enforcementType":"overage"}'::jsonb, '{"supportsUnlimited":false,"overageRate":20,"overageUnit":1000,"gracePercent":15}'::jsonb),
   ('enterprise', 'quota.requests_per_second', NULL::boolean, 50000, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"requests/sec","scope":"organization","enforcementType":"throttle"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
   ('enterprise', 'sdk.enabled', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
   ('enterprise', 'sdk.remote_config', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"project","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
@@ -12326,12 +12305,6 @@ VALUES
   ('enterprise', 'uptime.enabled', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
   ('enterprise', 'cron_monitoring.enabled', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
   ('enterprise', 'quota.retention_days', NULL::boolean, 365, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"days","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
-  ('enterprise', 'quota.log_retention_days', NULL::boolean, 365, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"days","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
-  ('enterprise', 'quota.metric_retention_days', NULL::boolean, 365, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"days","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
-  ('enterprise', 'quota.profile_retention_days', NULL::boolean, 365, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"days","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
-  ('enterprise', 'quota.replay_retention_days', NULL::boolean, 365, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"days","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
-  ('enterprise', 'quota.trace_retention_days', NULL::boolean, 365, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"days","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
-  ('enterprise', 'quota.audit_log_retention_days', NULL::boolean, 2555, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"days","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
   ('enterprise', 'alerting.enabled', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
   ('enterprise', 'alerting.rules', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
   ('enterprise', 'alerting.routing.enabled', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
@@ -12344,23 +12317,17 @@ VALUES
   ('enterprise', 'quota.alert_rules', NULL::boolean, 1000, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"rules","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
   ('enterprise', 'quota.project_alert_rules', NULL::boolean, 500, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"rules","scope":"project","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
   ('enterprise', 'quota.alert_channels', NULL::boolean, 1000, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"channels","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
-  ('enterprise', 'quota.notification_channels', NULL::boolean, 1000, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"channels","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
   ('enterprise', 'quota.project_notification_channels', NULL::boolean, 250, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"channels","scope":"project","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
   ('enterprise', 'quota.routing_rules', NULL::boolean, 200, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"rules","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
   ('enterprise', 'quota.project_routing_rules', NULL::boolean, 100, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"rules","scope":"project","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
-  ('enterprise', 'quota.daily_alerts', NULL::boolean, 100000, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"notifications","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('enterprise', 'quota.daily_alerts', NULL::boolean, 0, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"notifications","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
   ('enterprise', 'quota.monthly_alerts', NULL::boolean, 1000000, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"notifications","scope":"organization","enforcementType":"overage"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
   ('enterprise', 'quota.connector_sends', NULL::boolean, 1000000, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"sends","scope":"organization","enforcementType":"overage"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
   ('enterprise', 'automation.enabled', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
   ('enterprise', 'quota.automation_rules', NULL::boolean, 1000, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"rules","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
   ('enterprise', 'dashboards.enabled', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
   ('enterprise', 'dashboards.custom_dashboards', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
-  ('enterprise', 'dashboards.custom_widgets', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
-  ('enterprise', 'dashboards.embeds', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
-  ('enterprise', 'dashboards.public_links', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
-  ('enterprise', 'dashboards.scheduled_reports', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
   ('enterprise', 'quota.dashboards', NULL::boolean, 1000, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"dashboards","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
-  ('enterprise', 'quota.monthly_reports', NULL::boolean, 1000, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"reports","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
   ('enterprise', 'analytics.explorer', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
   ('enterprise', 'analytics.query_builder', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
   ('enterprise', 'ai.enabled', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
@@ -12373,7 +12340,6 @@ VALUES
   ('enterprise', 'integrations.enabled', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
   ('enterprise', 'integrations.rest_api', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
   ('enterprise', 'quota.connectors', NULL::boolean, 1000, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"connectors","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
-  ('enterprise', 'quota.integrations', NULL::boolean, 1000, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"integrations","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
   ('enterprise', 'integrations.email', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
   ('enterprise', 'integrations.webhook', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
   ('enterprise', 'integrations.slack', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
@@ -12381,11 +12347,6 @@ VALUES
   ('enterprise', 'integrations.microsoft_teams', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
   ('enterprise', 'integrations.pagerduty', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
   ('enterprise', 'integrations.sms', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
-  ('enterprise', 'integrations.github', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
-  ('enterprise', 'integrations.gitlab', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
-  ('enterprise', 'integrations.bitbucket', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
-  ('enterprise', 'integrations.jira', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
-  ('enterprise', 'integrations.terraform', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
   ('enterprise', 'security.enabled', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
   ('enterprise', 'security.audit_logs', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
   ('enterprise', 'security.sso', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
@@ -12403,11 +12364,11 @@ INSERT INTO plan_feature_entitlements
   (plan_id, feature_id, boolean_value, integer_value, decimal_value, string_value, metadata, configuration, display_value)
 SELECT p.id, bf.id, es.boolean_value, es.integer_value, es.decimal_value, es.string_value, es.metadata, es.configuration,
        CASE
-         WHEN es.feature_key = 'quota.monthly_events' AND es.plan_key = 'free' THEN '10K credits/mo'
-         WHEN es.feature_key = 'quota.monthly_events' AND es.plan_key = 'starter' THEN '150K credits/mo'
-         WHEN es.feature_key = 'quota.monthly_events' AND es.plan_key = 'growth' THEN '1M credits/mo'
-         WHEN es.feature_key = 'quota.monthly_events' AND es.plan_key = 'business' THEN '8M credits/mo'
-         WHEN es.feature_key = 'quota.monthly_events' AND es.plan_key = 'enterprise' THEN 'Custom'
+         WHEN es.feature_key = 'quota.monthly_events' AND es.plan_key = 'free' THEN '50K credits/mo'
+         WHEN es.feature_key = 'quota.monthly_events' AND es.plan_key = 'starter' THEN '250K credits/mo'
+         WHEN es.feature_key = 'quota.monthly_events' AND es.plan_key = 'growth' THEN '1.5M credits/mo'
+         WHEN es.feature_key = 'quota.monthly_events' AND es.plan_key = 'business' THEN '10M credits/mo'
+         WHEN es.feature_key = 'quota.monthly_events' AND es.plan_key = 'enterprise' THEN '50M credits/mo'
          ELSE COALESCE(es.string_value, es.integer_value::text, es.decimal_value::text, es.boolean_value::text)
        END
 FROM entitlement_seed es
@@ -12431,7 +12392,7 @@ SET boolean_value = EXCLUDED.boolean_value,
 -- =============================================================================
 -- Seeder File: 007_11_billing_event_credit_weights.sql
 -- Description: Telemetry Event Type Credit Weights for Weighted Billing System
--- Version: 1.0
+-- Version: 2.0
 -- =============================================================================
 
 -- Ensure table exists (idempotent)
@@ -12458,19 +12419,34 @@ COMMENT ON COLUMN billing_event_credit_weights.event_type IS
 COMMENT ON COLUMN billing_event_credit_weights.credit_weight IS
 'Multiplier converting one raw event of this type into billable credits';
 
--- Seed default credit weights across all SDK telemetry event types
+-- Remove any obsolete / duplicate event types outside the 10 canonical SDK event types
+DELETE FROM billing_event_credit_weights
+WHERE event_type NOT IN (
+    'request',
+    'error',
+    'trace',
+    'span',
+    'log',
+    'metric',
+    'profile',
+    'replay',
+    'message',
+    'cron_checkin'
+);
+
+-- Seed canonical credit weights across all 10 SDK telemetry event types
 INSERT INTO billing_event_credit_weights (event_type, credit_weight, description, is_active)
 VALUES
-    ('request',       1.0000, 'Full HTTP / RPC request',                true),
-    ('error',         1.5000, 'Error / Exception',                       true),
-    ('trace',         0.5000, 'Distributed trace root',                 true),
-    ('span',          0.2500, 'Individual span',                        true),
-    ('log',           0.1200, 'Log line',                               true),
-    ('metric',        0.1000, 'Metric data point',                      true),
-    ('profile',       0.5000, 'Profiling sample',                       true),
-    ('replay',        2.0000, 'Session replay',                         true),
-    ('message',       0.3000, 'Custom message / breadcrumb',            true),
-    ('cron_checkin',  0.2000, 'Cron monitor check-in heartbeat',        true)
+    ('request',       1.0000, 'Full HTTP / RPC request',                        true),
+    ('error',         1.5000, 'Error / Exception with stack trace',             true),
+    ('trace',         0.5000, 'Distributed trace root',                         true),
+    ('span',          0.2500, 'Individual trace span',                          true),
+    ('log',           0.1200, 'Structured log line',                            true),
+    ('metric',        0.1000, 'Custom metric data point',                       true),
+    ('profile',       2.0000, 'Continuous CPU / memory profile sample',         true),
+    ('replay',        2.0000, 'Session replay recording segment',               true),
+    ('message',       0.3000, 'Custom message / breadcrumb',                    true),
+    ('cron_checkin',  0.2000, 'Cron monitor check-in heartbeat',                true)
 ON CONFLICT (event_type) DO UPDATE SET
     credit_weight = EXCLUDED.credit_weight,
     description   = EXCLUDED.description,
@@ -12491,20 +12467,6 @@ VALUES
   ('beta_processors', 'platform', NULL, FALSE,
    'Enables beta event processors before GA.')
 ON CONFLICT DO NOTHING;
-
--- ============================================================
--- Source: 20_seeders/032_17_enterprise_ingestion_004_plans_seed.sql
--- ============================================================
-
--- Source: canonical_migrations_draft/17_enterprise_ingestion/004_plans_seed.up.sql
-INSERT INTO plans (key, version, name, tier, description, trial_days, is_active, is_public, sort_order)
-VALUES
-  ('free',       1, 'Free',       'free',       'Community tier with shared ingestion capacity.', 0,  TRUE, TRUE, 10),
-  ('starter',    1, 'Starter',    'starter',    'Entry paid tier for small teams.',               14, TRUE, TRUE, 20),
-  ('growth',     1, 'Growth',     'growth',     'Scaling teams with higher event volumes.',       14, TRUE, TRUE, 30),
-  ('business',   1, 'Business',   'business',   'Production workloads with priority ingestion.',  14, TRUE, TRUE, 40),
-  ('enterprise', 1, 'Enterprise', 'enterprise', 'Dedicated capacity and highest ingestion priority.', 0, TRUE, TRUE, 50)
-ON CONFLICT ON CONSTRAINT uq_plans_key_version DO NOTHING;
 
 -- ============================================================
 -- Source: 20_seeders/033_18_ai_004_credit_rules.sql

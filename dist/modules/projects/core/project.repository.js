@@ -63,15 +63,28 @@ export class ProjectRepository {
         const sortOrder = query.sortOrder.toUpperCase() === "ASC" ? "ASC" : "DESC";
         const offset = query.offset ?? ((query.page ?? 1) - 1) * query.limit;
         params.push(query.limit, offset);
-        const result = await db.query(`SELECT
-         ${PROJECT_COLUMNS.split(",").map((c) => `p.${c.trim()}`).join(", ")},
-         (SELECT COUNT(*)::int FROM project_api_keys k WHERE k.project_id = p.id AND k.deleted_at IS NULL) AS api_keys_count,
-         (SELECT COUNT(*)::int FROM project_api_keys k WHERE k.project_id = p.id AND k.status = 'active' AND k.deleted_at IS NULL) AS active_api_keys_count
-       FROM projects p
-       ${whereClause}
-       ORDER BY ${sortColumn} ${sortOrder}
-       LIMIT $${params.length - 1}
-       OFFSET $${params.length}`, params);
+        const result = await db.query(`WITH page AS (
+         SELECT
+           ${PROJECT_COLUMNS.split(",").map((c) => `p.${c.trim()}`).join(", ")}
+         FROM projects p
+         ${whereClause}
+         ORDER BY ${sortColumn} ${sortOrder}
+         LIMIT $${params.length - 1}
+         OFFSET $${params.length}
+       )
+       SELECT
+         page.*,
+         COALESCE(k.api_keys_count, 0)::int AS api_keys_count,
+         COALESCE(k.active_api_keys_count, 0)::int AS active_api_keys_count
+       FROM page
+       LEFT JOIN LATERAL (
+         SELECT
+           COUNT(*)::int AS api_keys_count,
+           COUNT(*) FILTER (WHERE status = 'active')::int AS active_api_keys_count
+         FROM project_api_keys
+         WHERE project_id = page.id AND deleted_at IS NULL
+       ) k ON true
+       ORDER BY ${sortColumn.replace(/^p\./, "page.")} ${sortOrder}`, params);
         return {
             projects: result.rows.map((row) => this.mapProjectWithCounts(row)),
             total: Number.parseInt(countResult.rows[0]?.count ?? "0", 10),

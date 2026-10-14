@@ -61,8 +61,13 @@ export declare class ObservabilityRepository implements QueryExecutor {
     /**
      * Resolve a trace public_id from a trace_id. Used by request detail to build the
      * clickable trace link without loading the full trace payload.
+     * Employs strict partition pruning (30-day temporal window with automatic fallback) to
+     * prevent sequential partition scans across historical chunks.
      */
-    fetchTracePublicId(ctx: QueryContext, traceId: string | null): Promise<string | null>;
+    fetchTracePublicId(ctx: QueryContext, traceId: string | null, timeRange?: {
+        minOccurredAt?: Date;
+        maxOccurredAt?: Date;
+    }): Promise<string | null>;
     /**
      * Resolve a request public_id from a request_id or event_id. Used by error
      * detail to build the clickable request link without loading the full request

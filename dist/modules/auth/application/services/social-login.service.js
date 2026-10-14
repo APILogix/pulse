@@ -142,7 +142,7 @@ export async function completeSocialLogin(callbackUrl, ipAddress, userAgent, req
         userAgent: flow.userAgent || userAgent,
         deviceName: flow.deviceName,
         deviceType: flow.clientDeviceType || 'web',
-        mfaVerified: true,
+        mfaVerified: !user.mfa_enabled,
         rememberMe: flow.rememberMe,
         ssoContext: { loginMethod: `social_${flow.provider}` },
     });

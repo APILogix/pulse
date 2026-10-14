@@ -5,12 +5,11 @@ export class AlertPolicyCache {
   private readonly cache = new LRUCache<string, PolicyResolutionResult>({ max: 5000, ttl: 30_000 });
 
   get(key: string): PolicyResolutionResult | undefined {
-    const value = this.cache.get(key);
-    return value ? cloneResult(value) : undefined;
+    return this.cache.get(key);
   }
 
   set(key: string, value: PolicyResolutionResult): void {
-    this.cache.set(key, cloneResult(value));
+    this.cache.set(key, deepFreeze(value));
   }
 
   deleteByRule(ruleId: string): void {
@@ -24,8 +23,18 @@ export class AlertPolicyCache {
   }
 }
 
-function cloneResult(value: PolicyResolutionResult): PolicyResolutionResult {
-  return structuredClone(value) as PolicyResolutionResult;
+function deepFreeze<T>(obj: T): T {
+  if (obj === null || typeof obj !== 'object' || Object.isFrozen(obj)) {
+    return obj;
+  }
+  Object.freeze(obj);
+  for (const key of Object.keys(obj)) {
+    const val = (obj as Record<string, unknown>)[key];
+    if (val !== null && typeof val === 'object') {
+      deepFreeze(val);
+    }
+  }
+  return obj;
 }
 
 export function policyCacheKey(

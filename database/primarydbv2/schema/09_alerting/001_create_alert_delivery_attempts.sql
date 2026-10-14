@@ -28,7 +28,7 @@ CREATE TABLE IF NOT EXISTS alert_delivery_attempts (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX IF NOT EXISTS idx_alert_delivery_attempts_event
+CREATE INDEX IF NOT EXISTS idx_alert_delivery_attempts_event_created
   ON alert_delivery_attempts(event_id, created_at DESC);
 
 CREATE INDEX IF NOT EXISTS idx_alert_delivery_attempts_connector

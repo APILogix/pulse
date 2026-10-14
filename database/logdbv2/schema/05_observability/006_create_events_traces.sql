@@ -8,7 +8,7 @@ CREATE TABLE IF NOT EXISTS events_traces (
   api_key_name TEXT NOT NULL,
 
   -- Identity & correlation
-  event_id TEXT NOT NULL,
+  event_id UUID NOT NULL,
   public_id TEXT,
   trace_id TEXT,
   span_id TEXT,

@@ -162,17 +162,40 @@ export class ObservabilityRepository {
     /**
      * Resolve a trace public_id from a trace_id. Used by request detail to build the
      * clickable trace link without loading the full trace payload.
+     * Employs strict partition pruning (30-day temporal window with automatic fallback) to
+     * prevent sequential partition scans across historical chunks.
      */
-    async fetchTracePublicId(ctx, traceId) {
+    async fetchTracePublicId(ctx, traceId, timeRange) {
         if (!traceId)
             return null;
         const params = [ctx.organizationId, traceId];
         let sql = `SELECT public_id FROM events_traces
                WHERE organization_id = $1 AND trace_id = $2`;
+        if (timeRange?.minOccurredAt && timeRange?.maxOccurredAt) {
+            params.push(new Date(timeRange.minOccurredAt.getTime() - 24 * 60 * 60 * 1000));
+            sql += ` AND occurred_at >= $${params.length}`;
+            params.push(new Date(timeRange.maxOccurredAt.getTime() + 60 * 60 * 1000));
+            sql += ` AND occurred_at <= $${params.length}`;
+        }
+        else {
+            sql += ` AND occurred_at >= NOW() - INTERVAL '30 days'`;
+        }
         sql += this.projectPredicate(ctx, params);
         sql += ` LIMIT 1`;
         const rows = await this.run(sql, params);
-        return rows[0]?.public_id ?? null;
+        if (rows[0]?.public_id)
+            return rows[0].public_id;
+        // Fallback: If not found in the 30-day partition window, query without window
+        if (!timeRange) {
+            const fallbackParams = [ctx.organizationId, traceId];
+            let fallbackSql = `SELECT public_id FROM events_traces
+                         WHERE organization_id = $1 AND trace_id = $2`;
+            fallbackSql += this.projectPredicate(ctx, fallbackParams);
+            fallbackSql += ` LIMIT 1`;
+            const fallbackRows = await this.run(fallbackSql, fallbackParams);
+            return fallbackRows[0]?.public_id ?? null;
+        }
+        return null;
     }
     /**
      * Resolve a request public_id from a request_id or event_id. Used by error
@@ -564,6 +587,10 @@ export class ObservabilityRepository {
             params.push(new Date(timeRange.maxOccurredAt.getTime() + 60 * 60 * 1000));
             sql += ` AND occurred_at <= $${params.length}`;
         }
+        else {
+            // Default to 30-day window to activate strict PostgreSQL partition pruning
+            sql += ` AND occurred_at >= NOW() - INTERVAL '30 days'`;
+        }
         sql += this.projectPredicate(ctx, params);
         const rows = await this.run(sql, params);
         for (const r of rows) {
@@ -572,7 +599,7 @@ export class ObservabilityRepository {
         }
         // Fallback: If any traces were not found within the temporal window, query without the window for just those missing traceIds
         const missing = cleanTraceIds.filter((t) => !map.has(t));
-        if (missing.length > 0 && timeRange) {
+        if (missing.length > 0) {
             const fallbackParams = [ctx.organizationId, missing.slice(0, 200)];
             let fallbackSql = `SELECT trace_id, public_id FROM events_traces
                          WHERE organization_id = $1 AND trace_id = ANY($2::text[])`;

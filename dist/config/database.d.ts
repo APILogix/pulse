@@ -1,6 +1,7 @@
 import './dns.js';
 import { Pool, type PoolClient } from 'pg';
 export declare const pool: Pool;
+export declare const notificationPool: Pool;
 /**
  * Test connection on startup (fail-fast pattern).
  * Should be called during bootstrap BEFORE the HTTP server starts listening.

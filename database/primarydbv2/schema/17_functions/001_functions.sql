@@ -1122,9 +1122,11 @@ RETURNS TRIGGER AS $$
 BEGIN
   -- Only trigger when a device becomes newly verified
   IF NEW.is_verified = TRUE AND (OLD.is_verified = FALSE OR OLD.is_verified IS NULL) THEN
-    -- Revoke all existing unused backup codes
+    -- Only revoke if this is the user's first verified active device
+    IF NOT EXISTS (SELECT 1 FROM user_mfa_devices WHERE user_id = NEW.user_id AND is_verified = TRUE AND is_active = TRUE AND id <> NEW.id) THEN
     DELETE FROM user_backup_codes
     WHERE user_id = NEW.user_id AND used_at IS NULL;
+      END IF;
   END IF;
   
   RETURN NEW;

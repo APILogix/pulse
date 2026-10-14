@@ -47,6 +47,23 @@ export declare function findSessionByAnyRefreshTokenHash(tokenHash: string, sess
     matchedPrevious: boolean;
 } | null>;
 export declare function findSessionById(id: string, userId?: string, client?: PoolClient): Promise<UserSession | null>;
+export interface AuthenticatedSessionAndUser {
+    session_id: string;
+    session_user_id: string;
+    session_status: string;
+    session_expires_at: Date;
+    user_id: string | null;
+    user_email: string | null;
+    user_is_admin: boolean;
+    user_current_org_id: string | null;
+    user_status: string | null;
+    user_deleted_at: Date | null;
+}
+/**
+ * Single-query lookup joining user_sessions and users for high-throughput authentication.
+ * Eliminates serial N+1 database round-trips while retrieving only the necessary columns.
+ */
+export declare function findSessionAndUserById(sessionId: string, client?: PoolClient): Promise<AuthenticatedSessionAndUser | null>;
 export declare const USER_SESSION_SUMMARY_COLUMNS = "\n  id,\n  user_id,\n  device_name,\n  device_type,\n  ip_address,\n  ip_geo_country,\n  ip_geo_city,\n  user_agent,\n  created_at,\n  last_active_at,\n  expires_at,\n  status\n";
 export declare function listActiveSessionsByUser(userId: string, client?: PoolClient, limit?: number): Promise<UserSession[]>;
 export declare function listOtherActiveSessionIds(userId: string, currentSessionId: string, client?: PoolClient): Promise<string[]>;

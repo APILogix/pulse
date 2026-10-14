@@ -10,6 +10,7 @@
  */
 import { URL } from 'url';
 import * as net from 'net';
+import * as dns from 'dns';
 
 const BLOCKED_IPV4_RANGES = [
   { prefix: '10.', label: 'private (10.0.0.0/8)' },
@@ -133,3 +134,54 @@ export function validateWebhookUrl(
 
   return { safe: true };
 }
+
+/**
+ * Asynchronously validates a webhook destination URL, resolving DNS records to
+ * protect against DNS rebinding and internal subnet routing attacks.
+ */
+export async function validateWebhookUrlAsync(
+  url: string,
+  options: ValidateUrlOptions = {},
+): Promise<{ safe: boolean; reason?: string }> {
+  // 1. Static syntactical and lexical check
+  const syncCheck = validateWebhookUrl(url, options);
+  if (!syncCheck.safe) {
+    return syncCheck;
+  }
+
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return { safe: false, reason: 'Invalid URL format' };
+  }
+
+  // If hostname is already a raw IP literal, sync check already validated it
+  if (net.isIP(parsed.hostname)) {
+    return { safe: true };
+  }
+
+  // 2. DNS resolution check (anti-rebinding / private network resolution)
+  try {
+    const addresses = await dns.promises.lookup(parsed.hostname, { all: true });
+    if (!addresses || addresses.length === 0) {
+      return { safe: false, reason: `DNS resolution failed: no addresses found for ${parsed.hostname}` };
+    }
+
+    for (const record of addresses) {
+      const ipCheck = checkSsrf(record.address);
+      if (ipCheck) {
+        return {
+          safe: false,
+          reason: `Resolved IP ${record.address} blocked by SSRF policy: ${ipCheck}`,
+        };
+      }
+    }
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return { safe: false, reason: `DNS resolution failed: ${msg}` };
+  }
+
+  return { safe: true };
+}
+

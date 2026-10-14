@@ -38,14 +38,6 @@ CREATE INDEX IF NOT EXISTS idx_project_environments_org_type
 CREATE INDEX IF NOT EXISTS idx_project_environments_project_list
   ON project_environments(project_id, is_active, type, name) WHERE deleted_at IS NULL;
 
-CREATE INDEX IF NOT EXISTS idx_project_environments_project
-  ON project_environments(project_id)
-  WHERE deleted_at IS NULL;
-
-CREATE INDEX IF NOT EXISTS idx_project_environments_default
-  ON project_environments(project_id)
-  WHERE is_default = TRUE AND deleted_at IS NULL;
-
 CREATE INDEX IF NOT EXISTS idx_project_environments_active
   ON project_environments(project_id, is_active)
   WHERE deleted_at IS NULL;

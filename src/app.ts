@@ -318,17 +318,19 @@ export async function buildApp(): Promise<FastifyInstance> {
   });
 
   app.addHook('onResponse', async (request, reply) => {
-    const duration = Date.now() - ((request as any).startTime || Date.now());
-    appLogger.debug(
-      {
-        requestId: request.id,
-        method: request.method,
-        url: request.url,
-        statusCode: reply.statusCode,
-        durationMs: duration,
-      },
-      'Request completed'
-    );
+    if (appLogger.isLevelEnabled('debug')) {
+      const duration = Date.now() - ((request as any).startTime || Date.now());
+      appLogger.debug(
+        {
+          requestId: request.id,
+          method: request.method,
+          url: request.url,
+          statusCode: reply.statusCode,
+          durationMs: duration,
+        },
+        'Request completed'
+      );
+    }
   });
 
   // ── Global API Response Contract Enforcement Hook ──────────────────
@@ -343,6 +345,7 @@ export async function buildApp(): Promise<FastifyInstance> {
 
     // Skip if already has canonical envelope fields
     if ('success' in body && 'requestId' in body) {
+      (reply as any).__envelopeApplied = true;
       return payload;
     }
 
@@ -389,14 +392,15 @@ export async function buildApp(): Promise<FastifyInstance> {
       return payload;
     }
 
+    const rawHeader = reply.getHeader('content-type');
+    const contentType = typeof rawHeader === 'string' ? rawHeader : rawHeader ? String(rawHeader) : '';
+    if (contentType && !contentType.includes('application/json')) return payload;
+
     // Fast O(1) short-circuit: if already formatted with canonical envelope, skip parsing immediately
     if (payload.includes('"success"') && payload.includes('"requestId"')) {
       return payload;
     }
 
-    const rawHeader = reply.getHeader('content-type');
-    const contentType = typeof rawHeader === 'string' ? rawHeader : rawHeader ? String(rawHeader) : '';
-    if (contentType && !contentType.includes('application/json')) return payload;
     // Bound payload size for automatic JSON parsing to prevent memory bloat on large analytical/export responses
     if (payload.length > 2 * 1024 * 1024) return payload;
 

@@ -179,6 +179,49 @@ export async function findSessionById(
   return result.rows[0] || null;
 }
 
+export interface AuthenticatedSessionAndUser {
+  session_id: string;
+  session_user_id: string;
+  session_status: string;
+  session_expires_at: Date;
+  user_id: string | null;
+  user_email: string | null;
+  user_is_admin: boolean;
+  user_current_org_id: string | null;
+  user_status: string | null;
+  user_deleted_at: Date | null;
+}
+
+/**
+ * Single-query lookup joining user_sessions and users for high-throughput authentication.
+ * Eliminates serial N+1 database round-trips while retrieving only the necessary columns.
+ */
+export async function findSessionAndUserById(
+  sessionId: string,
+  client?: PoolClient,
+): Promise<AuthenticatedSessionAndUser | null> {
+  const db = client || pool;
+  const result = await db.query<AuthenticatedSessionAndUser>(
+    `SELECT
+       s.id AS session_id,
+       s.user_id AS session_user_id,
+       s.status AS session_status,
+       s.expires_at AS session_expires_at,
+       u.id AS user_id,
+       u.email AS user_email,
+       COALESCE(u.is_admin, false) AS user_is_admin,
+       u.current_org_id AS user_current_org_id,
+       u.status AS user_status,
+       u.deleted_at AS user_deleted_at
+     FROM user_sessions s
+     LEFT JOIN users u ON u.id = s.user_id
+     WHERE s.id = $1
+     LIMIT 1`,
+    [sessionId],
+  );
+  return result.rows[0] || null;
+}
+
 export const USER_SESSION_SUMMARY_COLUMNS = `
   id,
   user_id,
@@ -251,7 +294,11 @@ export async function revokeOldestSessions(
        SELECT id FROM user_sessions
        WHERE user_id = $1 AND status = 'active'
        ORDER BY last_active_at ASC
-       OFFSET $2
+       LIMIT GREATEST(0, (
+         SELECT COUNT(*) - $2
+         FROM user_sessions
+         WHERE user_id = $1 AND status = 'active'
+       ))
      )`,
     [userId, keepCount],
   );

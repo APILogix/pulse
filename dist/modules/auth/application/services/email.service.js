@@ -305,6 +305,7 @@ export async function requestPasswordReset(input, ipAddress, requestId) {
 }
 export async function resetPasswordWithToken(input, ipAddress, requestId) {
     const tokenHash = hashEmailFlowToken('password_reset', input.token);
+    const precomputedPasswordHash = await hashPassword(input.new_password);
     let resetUserId = null;
     await repository.withTransaction(async (client) => {
         const consumed = await repository.consumeEmailVerificationToken(tokenHash, 'password_reset', client);
@@ -322,7 +323,7 @@ export async function resetPasswordWithToken(input, ipAddress, requestId) {
             throw new AuthError('Invalid password reset link', AuthErrorCodes.PASSWORD_RESET_INVALID, 400);
         }
         await ensurePasswordNotReused(user, input.new_password);
-        const passwordHash = await hashPassword(input.new_password);
+        const passwordHash = precomputedPasswordHash;
         const passwordHistory = buildPasswordHistory(user.password_history, user.password_hash);
         const updated = await repository.updateUserPassword(user.id, passwordHash, passwordHistory, client);
         if (!updated) {

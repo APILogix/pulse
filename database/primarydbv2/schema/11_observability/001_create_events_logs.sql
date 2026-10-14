@@ -7,7 +7,7 @@ CREATE TABLE IF NOT EXISTS events_logs (
   id UUID NOT NULL DEFAULT gen_random_uuid(),
   organization_id UUID NOT NULL,
   project_id UUID,
-  event_id VARCHAR(64) NOT NULL,
+  event_id UUID NOT NULL,
   level log_level NOT NULL,
   message TEXT NOT NULL,
   logger VARCHAR(255),

@@ -331,8 +331,8 @@ export async function adminUnlockUser(
 }
 
 /**
- * Cursor-paginated user list for the admin endpoint. Cursor is a tuple of
- * (created_at, id) so it is stable when many rows share a created_at.
+ * Paginated user list for admin endpoints supporting status filtering,
+ * substring search, and offset/limit pagination.
  */
 export interface ListUsersOptions {
   status?: UserStatus;

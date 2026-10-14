@@ -1,7 +1,7 @@
 import { pgmq } from '../../lib/pgmq.js';
 import { PgmqWorker } from '../../lib/pgmq-worker.js';
 import { env } from '../../config/env.js';
-import { pool } from '../../config/database.js';
+import { pool, notificationPool } from '../../config/database.js';
 import { AlertingRepository } from './repository.js';
 import { AlertEscalationSweep } from './escalation.js';
 import { ConnectorRepository } from '../connectors/repository.js';
@@ -30,7 +30,7 @@ const DEFAULTS = {
 /**
  * Register all Alerting V2 PGMQ workers + dispatch intervals.
  */
-export async function registerAlertingWorkers(logger, config = {}, _projectSubscriptionResolver, telemetryPool) {
+export async function registerAlertingWorkers(logger, config = {}, _projectSubscriptionResolver, telemetryPool, primaryConfigPool) {
     const cfg = { ...DEFAULTS, ...config };
     const alertDeliveryOnly = cfg.group === 'alert-delivery';
     const log = logger.child({ component: 'alerting-workers', group: cfg.group });
@@ -42,11 +42,12 @@ export async function registerAlertingWorkers(logger, config = {}, _projectSubsc
     };
     const entitlement = new NotificationEntitlementService();
     const runtimePool = telemetryPool ?? pool;
-    const projectOwners = new ProjectOwnerRepository(pool);
+    const configPool = primaryConfigPool ?? notificationPool ?? pool;
+    const projectOwners = new ProjectOwnerRepository(configPool);
     const routing = new NotificationRoutingService({
         logger,
-        channelRepository: new AlertChannelRepository(pool),
-        configRepository: new AlertConfigRepository(pool),
+        channelRepository: new AlertChannelRepository(configPool),
+        configRepository: new AlertConfigRepository(configPool),
         entitlementService: entitlement,
         restrictedRouting: new EmailOnlyRestrictedRouting(projectOwners),
     });
@@ -56,7 +57,7 @@ export async function registerAlertingWorkers(logger, config = {}, _projectSubsc
         ? ALERT_DELIVERY_WORKER_JOBS
         : Object.values(ALERT_JOBS);
     await pgmq.createQueues([...alertJobs], { concurrency: 4 });
-    const runtimeEngines = new AlertRuntimeEngines(logger, runtimePool, pool, routing);
+    const runtimeEngines = new AlertRuntimeEngines(logger, runtimePool, configPool, routing);
     const notificationRouter = new AlertNotificationRouter(runtimePool, logger, projectOwners);
     const telemetryOutboxRelay = new TelemetryOutboxRelay(runtimePool, logger);
     const alertDomainOutboxRelay = new AlertDomainOutboxRelay(runtimePool, logger);

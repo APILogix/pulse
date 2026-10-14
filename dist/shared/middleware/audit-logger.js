@@ -18,8 +18,16 @@
 import { pool } from '../../config/database.js';
 import { logger } from '../../config/logger.js';
 const auditLog = logger.child({ component: 'audit-logger' });
-async function writeAudit(entry, attempt = 1) {
-    try {
+const AUDIT_BUFFER_MAX = 50;
+const AUDIT_FLUSH_INTERVAL_MS = 50;
+let buffer = [];
+let flushTimer = null;
+let isFlushing = false;
+async function executeInsert(batch) {
+    if (batch.length === 0)
+        return;
+    if (batch.length === 1) {
+        const entry = batch[0];
         await pool.query(`INSERT INTO audit_logs (
          user_id, org_id, action, resource_type, resource_id,
          ip_address, user_agent, request_id, metadata,
@@ -38,15 +46,46 @@ async function writeAudit(entry, attempt = 1) {
             entry.actor_type ?? null,
             entry.actor_id ?? null,
         ]);
+        return;
+    }
+    const values = [];
+    const rowsSql = [];
+    let paramIdx = 1;
+    for (const entry of batch) {
+        rowsSql.push(`($${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}, NOW())`);
+        values.push(entry.user_id, entry.org_id, entry.action, entry.resource_type, entry.resource_id, entry.ip_address, entry.user_agent || null, entry.request_id, entry.metadata ? JSON.stringify(entry.metadata) : null, entry.impersonated_by || null, entry.actor_type ?? null, entry.actor_id ?? null);
+    }
+    const sql = `INSERT INTO audit_logs (
+    user_id, org_id, action, resource_type, resource_id,
+    ip_address, user_agent, request_id, metadata,
+    impersonated_by, actor_type, actor_id, created_at
+  ) VALUES ${rowsSql.join(', ')}`;
+    await pool.query(sql, values);
+}
+export async function flushAuditLogs() {
+    if (flushTimer) {
+        clearTimeout(flushTimer);
+        flushTimer = null;
+    }
+    if (buffer.length === 0 || isFlushing)
+        return;
+    const batch = buffer;
+    buffer = [];
+    isFlushing = true;
+    try {
+        await executeInsert(batch);
     }
     catch (error) {
-        auditLog.error({ err: error, action: entry.action, attempt, entry }, 'Failed to write audit log');
-        // One short retry to weather transient blips, then surrender so the
-        // structured log line above remains the durable record of attempt.
-        if (attempt < 2) {
-            setTimeout(() => {
-                void writeAudit(entry, attempt + 1);
-            }, 250);
+        auditLog.error({ err: error, count: batch.length }, 'Failed to write audit logs batch');
+    }
+    finally {
+        isFlushing = false;
+        if (buffer.length >= AUDIT_BUFFER_MAX) {
+            void flushAuditLogs();
+        }
+        else if (buffer.length > 0 && !flushTimer) {
+            flushTimer = setTimeout(() => { void flushAuditLogs(); }, AUDIT_FLUSH_INTERVAL_MS);
+            flushTimer.unref?.();
         }
     }
 }
@@ -57,9 +96,15 @@ async function writeAudit(entry, attempt = 1) {
  */
 export function logAudit(entry) {
     auditLog.info({ audit: entry }, `audit:${entry.action}`);
-    // Detach from the request lifecycle.
-    setImmediate(() => {
-        void writeAudit(entry);
-    });
+    buffer.push(entry);
+    if (buffer.length >= AUDIT_BUFFER_MAX) {
+        void flushAuditLogs();
+    }
+    else if (!flushTimer) {
+        flushTimer = setTimeout(() => {
+            void flushAuditLogs();
+        }, AUDIT_FLUSH_INTERVAL_MS);
+        flushTimer.unref?.();
+    }
 }
 //# sourceMappingURL=audit-logger.js.map

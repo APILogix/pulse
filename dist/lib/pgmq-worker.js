@@ -56,7 +56,7 @@ export class PgmqWorker {
         this.pollIntervalMs = Math.max(25, options.pollIntervalMs ?? 100);
         this.idlePollMs = Math.max(50, options.idlePollMs ?? 500);
         this.maxIdlePollMs = Math.max(this.idlePollMs, options.maxIdlePollMs ?? env.QUEUE_MAX_IDLE_POLL_MS ?? 5000);
-        this.busyPollMs = Math.max(10, options.busyPollMs ?? 25);
+        this.busyPollMs = Math.max(0, options.busyPollMs ?? 0);
         this.maxAttempts = Math.max(1, options.maxAttempts ?? env.QUEUE_MAX_ATTEMPTS ?? 5);
         this.deadLetterQueue = options.deadLetterQueue ?? null;
         this.archiveOnComplete = options.archiveOnComplete ?? false;
@@ -153,14 +153,34 @@ export class PgmqWorker {
     }
     async executeJob(job) {
         const abortController = new AbortController();
+        let lastSuccessfulHeartbeatAt = Date.now();
+        let consecutiveHeartbeatFailures = 0;
+        const maxConsecutiveHeartbeatFailures = 3;
+        const heartbeatTimeoutThresholdMs = this.visibilityTimeoutSeconds * 1000 * 0.75;
         // Setup heartbeat loop to extend VT during long task execution
         const heartbeatTimer = setInterval(async () => {
             try {
                 await this.client.setVt(this.queue, job.msgId, this.visibilityTimeoutSeconds);
+                lastSuccessfulHeartbeatAt = Date.now();
+                consecutiveHeartbeatFailures = 0;
                 this.log.debug({ msgId: job.msgId }, 'Extended visibility timeout via heartbeat');
             }
             catch (hbErr) {
-                this.log.warn({ msgId: job.msgId, err: hbErr }, 'Heartbeat visibility extension failed');
+                consecutiveHeartbeatFailures++;
+                const elapsedSinceLastSuccess = Date.now() - lastSuccessfulHeartbeatAt;
+                this.log.warn({
+                    msgId: job.msgId,
+                    err: hbErr instanceof Error ? hbErr.message : String(hbErr),
+                    consecutiveFailures: consecutiveHeartbeatFailures,
+                    elapsedMs: elapsedSinceLastSuccess,
+                }, 'Heartbeat visibility extension failed');
+                // Abort the running task if heartbeat is lost and visibility timeout is endangered
+                // to prevent stale split-brain execution across multiple workers.
+                if (consecutiveHeartbeatFailures >= maxConsecutiveHeartbeatFailures ||
+                    elapsedSinceLastSuccess >= heartbeatTimeoutThresholdMs) {
+                    this.log.error({ msgId: job.msgId, consecutiveFailures: consecutiveHeartbeatFailures, elapsedMs: elapsedSinceLastSuccess }, 'Heartbeat lost and visibility timeout endangered; aborting task execution to prevent split-brain');
+                    abortController.abort(new Error('Heartbeat visibility timeout lost'));
+                }
             }
         }, this.heartbeatIntervalSeconds * 1000);
         heartbeatTimer.unref?.();
@@ -198,7 +218,19 @@ export class PgmqWorker {
             }
             else {
                 this.retriedCount++;
-                // Apply exponential retry delay if desired or leave message to naturally expire VT
+                // Apply active exponential retry backoff with jitter so message retries promptly
+                const baseBackoffSeconds = 2;
+                const maxBackoffSeconds = 60;
+                const exponent = Math.min(6, job.readCt);
+                const jitterSeconds = Math.random() * 2;
+                const backoffSeconds = Math.min(maxBackoffSeconds, Math.max(1, Math.round(baseBackoffSeconds * 2 ** (exponent - 1) + jitterSeconds)));
+                try {
+                    await this.client.setVt(this.queue, job.msgId, backoffSeconds);
+                    this.log.debug({ msgId: job.msgId, attempt: job.readCt, backoffSeconds }, 'Applied active retry backoff');
+                }
+                catch (backoffErr) {
+                    this.log.warn({ msgId: job.msgId, err: backoffErr }, 'Failed to set retry backoff; relying on natural VT expiry');
+                }
                 if (this.onJobFailure) {
                     await Promise.resolve(this.onJobFailure(job, err, true)).catch(() => { });
                 }
@@ -218,26 +250,46 @@ export class PgmqWorker {
     }
     async handleDeadLetter(job, error) {
         this.deadLetteredCount++;
+        const dlqPayload = {
+            sourceQueue: this.queue,
+            originalMsgId: job.msgId,
+            payload: job.message,
+            error: error instanceof Error ? error.message : String(error),
+            failedAt: new Date().toISOString(),
+            attempts: job.readCt,
+        };
+        let client = null;
         try {
-            if (this.deadLetterQueue) {
-                // Enqueue to dead-letter queue
-                await this.client.send(this.deadLetterQueue, {
-                    sourceQueue: this.queue,
-                    originalMsgId: job.msgId,
-                    payload: job.message,
-                    error: error instanceof Error ? error.message : String(error),
-                    failedAt: new Date().toISOString(),
-                    attempts: job.readCt,
-                });
+            if (typeof this.client.getCommandPool === 'function' && this.client.getCommandPool()) {
+                client = await this.client.getCommandPool().connect();
+                await client.query('BEGIN');
+                if (this.deadLetterQueue) {
+                    await this.client.send(this.deadLetterQueue, dlqPayload, {}, client);
+                }
+                await this.client.delete(this.queue, job.msgId, client);
+                await client.query('COMMIT');
             }
-            // Delete from source queue so poison message stops looping
-            await this.client.delete(this.queue, job.msgId);
+            else {
+                // Fallback for mocks or external custom client implementations
+                if (this.deadLetterQueue) {
+                    await this.client.send(this.deadLetterQueue, dlqPayload);
+                }
+                await this.client.delete(this.queue, job.msgId);
+            }
             if (this.onMaxAttemptsExceeded) {
                 await Promise.resolve(this.onMaxAttemptsExceeded(job, error)).catch(() => { });
             }
         }
         catch (dlqErr) {
+            if (client) {
+                await client.query('ROLLBACK').catch(() => { });
+            }
             this.log.error({ msgId: job.msgId, err: dlqErr }, 'Failed to route message to DLQ');
+        }
+        finally {
+            if (client) {
+                client.release();
+            }
         }
     }
     /**

@@ -31,10 +31,6 @@ CREATE TABLE IF NOT EXISTS projects (
   UNIQUE (org_id, slug)
 );
 
-CREATE INDEX IF NOT EXISTS idx_projects_org
-  ON projects(org_id)
-  WHERE deleted_at IS NULL;
-
 CREATE INDEX IF NOT EXISTS idx_projects_status
   ON projects(status)
   WHERE deleted_at IS NULL;
@@ -59,6 +55,14 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_projects_active_slug
 
 CREATE INDEX IF NOT EXISTS idx_projects_public_id ON projects (public_id);
 
-CREATE UNIQUE INDEX IF NOT EXISTS idx_projects_org_slug_active
-  ON projects(org_id, slug)
-  WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_projects_created_by
+  ON projects(created_by)
+  WHERE created_by IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_projects_updated_by
+  ON projects(updated_by)
+  WHERE updated_by IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_projects_deleted_by
+  ON projects(deleted_by)
+  WHERE deleted_by IS NOT NULL;

@@ -37,14 +37,19 @@ describe('alert worker process lifecycle', () => {
 
     await processWorker.start();
 
-    expect(registerConnectors).toHaveBeenCalledWith(expect.anything(), {
-      group: 'alert-delivery',
-      strictQueueCreation: true,
-    });
+    expect(registerConnectors).toHaveBeenCalledWith(
+      expect.anything(),
+      {
+        group: 'alert-delivery',
+        strictQueueCreation: true,
+      },
+      expect.anything(),
+    );
     expect(registerAlerting).toHaveBeenCalledWith(
       expect.anything(),
       { group: 'alert-delivery', strictQueueCreation: true },
       undefined,
+      expect.anything(),
       expect.anything(),
     );
     expect(ready).toHaveBeenCalledWith('ready');

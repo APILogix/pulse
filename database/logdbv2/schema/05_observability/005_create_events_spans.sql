@@ -5,7 +5,7 @@ CREATE TABLE IF NOT EXISTS events_spans (
   project_id UUID,
   environment TEXT NOT NULL,
   api_key_name TEXT NOT NULL,
-  event_id TEXT NOT NULL,
+  event_id UUID NOT NULL,
   span_id TEXT NOT NULL,
   trace_id TEXT NOT NULL,
   parent_span_id TEXT,

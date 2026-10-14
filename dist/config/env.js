@@ -71,6 +71,9 @@ const envSchema = z.object({
     // for the fleet-wide connection accounting before raising it further.
     DB_POOL_MAX: z.coerce.number().int().min(1).max(100).default(20),
     DB_POOL_MIN: z.coerce.number().int().min(0).max(100).default(0),
+    // Dedicated notification subsystem pool maximum. Sized to bound notification
+    // worker concurrency so delivery workers cannot exhaust primary API connections.
+    NOTIFICATION_POOL_MAX: z.coerce.number().int().min(1).max(50).default(10),
     DB_IDLE_TIMEOUT_MS: z.coerce.number().int().min(0).default(30000),
     DB_CONNECTION_TIMEOUT_MS: z.coerce.number().int().min(1000).default(30000),
     // Startup datastore retry budget. Sized so a managed-Postgres checkpoint or
@@ -397,7 +400,7 @@ const envSchema = z.object({
     QUEUE_HEARTBEAT_INTERVAL_SECONDS: z.coerce.number().int().min(1).max(300).default(15),
     QUEUE_DRAIN_TIMEOUT_MS: z.coerce.number().int().min(1000).max(60000).default(30000),
     QUEUE_POOL_MAX: z.coerce.number().int().min(2).max(200).default(20),
-    QUEUE_COMMAND_POOL_MAX: z.coerce.number().int().min(1).max(50).default(5),
+    QUEUE_COMMAND_POOL_MAX: z.coerce.number().int().min(1).max(50).default(15),
     QUEUE_MAX_IDLE_POLL_MS: z.coerce.number().int().min(100).max(60000).default(5000),
     // ── Alerting v2 rollout flags ───────────────────────────────────────────────
     ALERTING_V2_WRITE: z

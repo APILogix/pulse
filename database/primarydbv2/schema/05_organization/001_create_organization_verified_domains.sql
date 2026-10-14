@@ -70,3 +70,7 @@ AND deleted_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_verified_domains_metadata
 ON organization_verified_domains
 USING GIN(metadata);
+
+CREATE INDEX IF NOT EXISTS idx_org_verified_domains_verified_by
+ON organization_verified_domains(verified_by)
+WHERE verified_by IS NOT NULL;

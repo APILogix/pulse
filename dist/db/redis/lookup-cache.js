@@ -448,13 +448,12 @@ export class RedisLookupCache {
     }
     // ── 5b. Permanent Project-Scoped Remote Config Cache (No TTL) ────────────
     /**
-     * Fast-path lookup for the materialized remote SDK configuration.
-     * Checks Tier-0 L1 in-memory LRU cache first (<0.01ms), then Redis indefinitely cached key.
+     * Ultra-fast synchronous L1 cache check (< 5 microseconds).
+     * Safe to call on high-throughput hot paths like telemetry batch admission.
      */
-    async getRemoteConfig(projectId, environment) {
+    getRemoteConfigL1(projectId, environment) {
         const cacheKey = RedisKeys.remoteConfig(projectId, environment);
         const defaultKey = RedisKeys.remoteConfig(projectId);
-        // 0. Tier-0 L1 in-memory LRU cache (<0.01ms)
         let l1 = this.l1RemoteConfigCache.get(cacheKey);
         if (!l1 && (!environment || environment === "production" || environment === "default")) {
             l1 = this.l1RemoteConfigCache.get(defaultKey);
@@ -462,6 +461,19 @@ export class RedisLookupCache {
         if (l1 && l1.config && l1.etag) {
             return l1;
         }
+        return null;
+    }
+    /**
+     * Fast-path lookup for the materialized remote SDK configuration.
+     * Checks Tier-0 L1 in-memory LRU cache first (<0.01ms), then Redis indefinitely cached key.
+     */
+    async getRemoteConfig(projectId, environment) {
+        // 0. Tier-0 L1 in-memory LRU cache (<0.01ms)
+        const l1 = this.getRemoteConfigL1(projectId, environment);
+        if (l1)
+            return l1;
+        const cacheKey = RedisKeys.remoteConfig(projectId, environment);
+        const defaultKey = RedisKeys.remoteConfig(projectId);
         if (!this.isAvailable())
             return null;
         try {

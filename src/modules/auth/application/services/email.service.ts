@@ -468,6 +468,7 @@ export async function resetPasswordWithToken(
   requestId: string,
 ): Promise<void> {
   const tokenHash = hashEmailFlowToken('password_reset', input.token);
+  const precomputedPasswordHash = await hashPassword(input.new_password);
   let resetUserId: string | null = null;
 
   await repository.withTransaction(async (client) => {
@@ -506,7 +507,7 @@ export async function resetPasswordWithToken(
 
     await ensurePasswordNotReused(user, input.new_password);
 
-    const passwordHash = await hashPassword(input.new_password);
+    const passwordHash = precomputedPasswordHash;
     const passwordHistory = buildPasswordHistory(
       user.password_history,
       user.password_hash,

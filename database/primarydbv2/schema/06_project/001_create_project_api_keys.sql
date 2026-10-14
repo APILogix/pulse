@@ -58,22 +58,7 @@ CREATE TABLE IF NOT EXISTS project_api_keys (
   sampling_rules JSONB NOT NULL DEFAULT '{}',
   feature_flags JSONB NOT NULL DEFAULT '{}',
   sdk_config JSONB NOT NULL DEFAULT '{}'
-);
-
-CREATE INDEX IF NOT EXISTS idx_api_keys_project
-  ON project_api_keys(project_id);
-
-CREATE INDEX IF NOT EXISTS idx_api_keys_org
-  ON project_api_keys(organization_id);
-
-CREATE INDEX IF NOT EXISTS idx_api_keys_status
-  ON project_api_keys(status);
-
-CREATE INDEX IF NOT EXISTS idx_api_keys_expiry
-  ON project_api_keys(expires_at);
-
-CREATE INDEX IF NOT EXISTS idx_api_keys_last_used
-  ON project_api_keys(last_used_at);
+) WITH (fillfactor = 85);
 
 CREATE INDEX IF NOT EXISTS idx_api_keys_revoked_cleanup
   ON project_api_keys(revoked_at, deleted_at)
@@ -101,3 +86,14 @@ CREATE INDEX IF NOT EXISTS idx_project_api_keys_auth_covering
   INCLUDE (id, project_id, organization_id, environment_id, status, expires_at, secret_hash)
   WHERE deleted_at IS NULL;
 
+CREATE INDEX IF NOT EXISTS idx_api_keys_created_by
+  ON project_api_keys(created_by)
+  WHERE created_by IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_api_keys_revoked_by
+  ON project_api_keys(revoked_by)
+  WHERE revoked_by IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_api_keys_rotated_by
+  ON project_api_keys(rotated_by)
+  WHERE rotated_by IS NOT NULL;

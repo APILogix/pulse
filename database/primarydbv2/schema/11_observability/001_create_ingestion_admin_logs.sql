@@ -11,7 +11,7 @@ CREATE TABLE IF NOT EXISTS ingestion_admin_logs (
   org_id UUID,
   project_id UUID,
   job_id UUID,
-  event_id VARCHAR(64),
+  event_id UUID,
   worker_id VARCHAR(128),
   metadata JSONB,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),

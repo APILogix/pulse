@@ -32,3 +32,11 @@ CREATE INDEX IF NOT EXISTS idx_org_members_user
 CREATE INDEX IF NOT EXISTS idx_org_members_role
   ON organization_members(org_id, role)
   WHERE status = 'active';
+
+CREATE INDEX IF NOT EXISTS idx_org_members_invited_by
+  ON organization_members(invited_by)
+  WHERE invited_by IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_org_members_deactivated_by
+  ON organization_members(deactivated_by)
+  WHERE deactivated_by IS NOT NULL;

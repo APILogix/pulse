@@ -289,4 +289,134 @@ describe('PgmqWorker Reliability & Lifecycle', () => {
 
     await worker.stop();
   });
+
+  it('Heartbeat Loss Guard: aborts task via AbortSignal when consecutive heartbeats fail', async () => {
+    const fakeMsg: PgmqMessage = {
+      msgId: 'msg-lost-hb',
+      readCt: 1,
+      enqueuedAt: new Date(),
+      vt: new Date(Date.now() + 60000),
+      message: { task: true },
+      headers: null,
+    };
+
+    mockClient.readWithPoll.mockResolvedValueOnce([fakeMsg]);
+    mockClient.setVt.mockRejectedValue(new Error('Connection lost to DB'));
+
+    let abortedReceived = false;
+    let resolveTask: () => void;
+    const taskPromise = new Promise<void>((resolve) => {
+      resolveTask = resolve;
+    });
+
+    const handler = vi.fn().mockImplementation(async (_msg, signal?: AbortSignal) => {
+      signal?.addEventListener('abort', () => {
+        abortedReceived = true;
+        resolveTask();
+      });
+      await taskPromise;
+    });
+
+    const worker = new PgmqWorker(mockClient, handler, {
+      queue: 'test_queue',
+      heartbeatIntervalSeconds: 2,
+      visibilityTimeoutSeconds: 10,
+      drainTimeoutMs: 100,
+    });
+
+    await worker.start();
+    await vi.advanceTimersByTimeAsync(10); // Task starts
+
+    // 1st heartbeat failure
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(abortedReceived).toBe(false);
+
+    // 2nd heartbeat failure
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(abortedReceived).toBe(false);
+
+    // 3rd heartbeat failure -> threshold reached, signal aborted
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(abortedReceived).toBe(true);
+
+    await worker.stop();
+  });
+
+  it('Active Retry Backoff: applies setVt with exponential delay when task fails', async () => {
+    const failMsg: PgmqMessage = {
+      msgId: 'msg-retry-backoff',
+      readCt: 2,
+      enqueuedAt: new Date(),
+      vt: new Date(Date.now() + 300000), // 300s initial VT
+      message: { retryMe: true },
+      headers: null,
+    };
+
+    mockClient.readWithPoll.mockResolvedValueOnce([failMsg]);
+    const handler = vi.fn().mockRejectedValue(new Error('Downstream rate limited'));
+
+    const worker = new PgmqWorker(mockClient, handler, {
+      queue: 'test_queue',
+      maxAttempts: 5,
+    });
+
+    await worker.start();
+    await vi.advanceTimersByTimeAsync(50);
+
+    // setVt must be called with backoff delay (< 60s) instead of staying invisible for 300s
+    expect(mockClient.setVt).toHaveBeenCalledWith(
+      'test_queue',
+      'msg-retry-backoff',
+      expect.any(Number),
+    );
+    const delayArg = mockClient.setVt.mock.calls[0][2];
+    expect(delayArg).toBeGreaterThanOrEqual(1);
+    expect(delayArg).toBeLessThanOrEqual(60);
+
+    await worker.stop();
+  });
+
+  it('Transactional DLQ Routing: executes send and delete in a single client transaction', async () => {
+    const exhaustedMsg: PgmqMessage = {
+      msgId: 'msg-dlq-tx',
+      readCt: 5,
+      enqueuedAt: new Date(),
+      vt: new Date(),
+      message: { poison: true },
+      headers: null,
+    };
+
+    mockClient.readWithPoll.mockResolvedValueOnce([exhaustedMsg]);
+
+    const mockPoolClient = {
+      query: vi.fn().mockResolvedValue({ rows: [] }),
+      release: vi.fn(),
+    };
+
+    const mockCommandPool = {
+      connect: vi.fn().mockResolvedValue(mockPoolClient),
+    };
+
+    mockClient.getCommandPool = vi.fn().mockReturnValue(mockCommandPool);
+    const handler = vi.fn().mockRejectedValue(new Error('Fatal payload parsing crash'));
+
+    const worker = new PgmqWorker(mockClient, handler, {
+      queue: 'source_queue',
+      deadLetterQueue: 'dlq_queue',
+      maxAttempts: 5,
+    });
+
+    await worker.start();
+    await vi.advanceTimersByTimeAsync(50);
+
+    // Verify transaction BEGIN and COMMIT were invoked
+    expect(mockCommandPool.connect).toHaveBeenCalled();
+    expect(mockPoolClient.query).toHaveBeenCalledWith('BEGIN');
+    expect(mockClient.send).toHaveBeenCalledWith('dlq_queue', expect.any(Object), {}, mockPoolClient);
+    expect(mockClient.delete).toHaveBeenCalledWith('source_queue', 'msg-dlq-tx', mockPoolClient);
+    expect(mockPoolClient.query).toHaveBeenCalledWith('COMMIT');
+    expect(mockPoolClient.release).toHaveBeenCalled();
+
+    await worker.stop();
+  });
 });

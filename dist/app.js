@@ -281,14 +281,16 @@ export async function buildApp() {
         request.startTime = Date.now();
     });
     app.addHook('onResponse', async (request, reply) => {
-        const duration = Date.now() - (request.startTime || Date.now());
-        appLogger.debug({
-            requestId: request.id,
-            method: request.method,
-            url: request.url,
-            statusCode: reply.statusCode,
-            durationMs: duration,
-        }, 'Request completed');
+        if (appLogger.isLevelEnabled('debug')) {
+            const duration = Date.now() - (request.startTime || Date.now());
+            appLogger.debug({
+                requestId: request.id,
+                method: request.method,
+                url: request.url,
+                statusCode: reply.statusCode,
+                durationMs: duration,
+            }, 'Request completed');
+        }
     });
     // ── Global API Response Contract Enforcement Hook ──────────────────
     // Fast preSerialization hook wraps raw JS objects BEFORE serialization,
@@ -300,6 +302,7 @@ export async function buildApp() {
         const body = payload;
         // Skip if already has canonical envelope fields
         if ('success' in body && 'requestId' in body) {
+            reply.__envelopeApplied = true;
             return payload;
         }
         const requestId = (request.id) || (reply.getHeader('x-request-id')) || 'req_unknown';
@@ -337,14 +340,14 @@ export async function buildApp() {
         if (reply.__envelopeApplied || !payload || typeof payload !== 'string') {
             return payload;
         }
-        // Fast O(1) short-circuit: if already formatted with canonical envelope, skip parsing immediately
-        if (payload.includes('"success"') && payload.includes('"requestId"')) {
-            return payload;
-        }
         const rawHeader = reply.getHeader('content-type');
         const contentType = typeof rawHeader === 'string' ? rawHeader : rawHeader ? String(rawHeader) : '';
         if (contentType && !contentType.includes('application/json'))
             return payload;
+        // Fast O(1) short-circuit: if already formatted with canonical envelope, skip parsing immediately
+        if (payload.includes('"success"') && payload.includes('"requestId"')) {
+            return payload;
+        }
         // Bound payload size for automatic JSON parsing to prevent memory bloat on large analytical/export responses
         if (payload.length > 2 * 1024 * 1024)
             return payload;

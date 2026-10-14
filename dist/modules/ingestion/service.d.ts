@@ -4,6 +4,10 @@ import { type SdkEventType } from './pipeline/event-normalizer.js';
 import { type PlanTier } from './queue/ingest-queues.js';
 import type { IngestRequest, IngestResponse, ErrorEventListQuery, ErrorEventListResult, ErrorEventRecord, ReplayRequest, HealthStatus } from './types.js';
 import type { DeliveryResult, RemoteSdkConfigService } from '../projects/sdk-config/sdk-config.service.js';
+export interface IngestClientHints {
+    configRevision?: number;
+    configHash?: string;
+}
 interface BackpressureConfig {
     readonly highWater: number;
     readonly criticalWater: number;
@@ -75,7 +79,7 @@ export declare class IngestionService {
      * SDK event types in a single request. Retained for backward compatibility;
      * new SDK transports use the per-signal typed routes via ingestTyped().
      */
-    ingestBatch(req: IngestRequest, apiKey: string): Promise<IngestResponse>;
+    ingestBatch(req: IngestRequest, apiKey: string, clientHints?: IngestClientHints): Promise<IngestResponse>;
     /**
      * Public typed-ingestion entrypoint used by the data-driven route table
      * (route-table.ts). It is a thin pass-through to the single policy boundary
@@ -84,11 +88,11 @@ export declare class IngestionService {
      * duplicated per endpoint. A typed route accepts ONLY its declared event
      * family; any foreign event fails the whole batch with INVALID_EVENT_TYPE.
      */
-    ingestTyped(req: IngestRequest, apiKey: string, type: SdkEventType): Promise<IngestResponse>;
-    ingestRequests(req: IngestRequest, apiKey: string): Promise<IngestResponse>;
-    ingestErrors(req: IngestRequest, apiKey: string): Promise<IngestResponse>;
-    ingestLogs(req: IngestRequest, apiKey: string): Promise<IngestResponse>;
-    ingestMetrics(req: IngestRequest, apiKey: string): Promise<IngestResponse>;
+    ingestTyped(req: IngestRequest, apiKey: string, type: SdkEventType, clientHints?: IngestClientHints): Promise<IngestResponse>;
+    ingestRequests(req: IngestRequest, apiKey: string, clientHints?: IngestClientHints): Promise<IngestResponse>;
+    ingestErrors(req: IngestRequest, apiKey: string, clientHints?: IngestClientHints): Promise<IngestResponse>;
+    ingestLogs(req: IngestRequest, apiKey: string, clientHints?: IngestClientHints): Promise<IngestResponse>;
+    ingestMetrics(req: IngestRequest, apiKey: string, clientHints?: IngestClientHints): Promise<IngestResponse>;
     /**
      * Central pipeline — a thin accept-and-enqueue path. `expectedType` (when
      * set) enforces a typed route: every event must match it or be rejected.

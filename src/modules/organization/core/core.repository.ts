@@ -1,3 +1,4 @@
+import { randomBytes } from "crypto";
 import type { PoolClient } from "pg";
 import { BaseRepository, cursorPage } from "../shared/base.repository.js";
 import { NotFoundError, ConflictError } from "../shared/errors.js";
@@ -40,7 +41,11 @@ export class CoreRepository extends BaseRepository {
           `SELECT EXISTS(SELECT 1 FROM organizations WHERE slug=$1 AND deleted_at IS NULL) AS x`, [slug]
         );
         if (!c.rows[0]?.x) break;
-        slug = `${baseSlug}-${i++}`;
+        if (i <= 3) {
+          slug = `${baseSlug}-${i++}`;
+        } else {
+          slug = `${baseSlug}-${randomBytes(3).toString("hex")}`;
+        }
       }
 
       let r;

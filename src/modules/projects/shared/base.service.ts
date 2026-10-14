@@ -12,6 +12,7 @@
  * 5. Write every sensitive lifecycle event to organization_audit_logs (projects
  *    and API keys are org-owned resources, so they share the org audit trail).
  */
+import { randomBytes } from "crypto";
 import type { FastifyBaseLogger } from "fastify";
 import { apiKeyCache, type CachedProjectConfig } from "../../../config/lrucashe.js";
 import { entitlementsService } from "../../billing/entitlements/service.js";
@@ -326,8 +327,12 @@ export class BaseProjectService {
       isReservedProjectSlug(candidate) ||
       (await this.repository.findProjectBySlug(orgId, candidate))
     ) {
-      candidate = `${baseSlug}-${suffix}`;
-      suffix += 1;
+      if (suffix <= 3) {
+        candidate = `${baseSlug}-${suffix}`;
+        suffix += 1;
+      } else {
+        candidate = `${baseSlug}-${randomBytes(3).toString("hex")}`;
+      }
     }
     return candidate;
   }

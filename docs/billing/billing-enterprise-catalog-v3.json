@@ -1,0 +1,822 @@
+{
+  "schema_version": "3.0.0",
+  "catalog_version": 3,
+  "catalog_name": "Pulsiv Enterprise-Grade Finite-Quota Billing Catalog (v3)",
+  "generated_at": "2026-10-11T00:00:00.000Z",
+  "design_principles": {
+    "zero_unlimited_events": "No plan (including Enterprise) grants unlimited (-1) or non-numeric (\"Custom\") event, log, metric, trace, replay, profile, or AI quotas. Every plan has a concrete, finite numeric baseline. Custom Enterprise volume commitments are applied via organization_entitlement_overrides or stackable capacity add-ons.",
+    "dual_layer_event_quotas": "Combines a generic pooled monthly credit budget (quota.monthly_events) with explicit per-signal monthly event quotas (errors, logs, metrics, traces/spans, requests, replays, profiles, cron check-ins) so noisy signals (logs/replays) can never starve critical signals (errors/uptime).",
+    "strict_free_tier_hard_limits": "The Free ($0) plan enforces strict hard_limit across all quotas with zero overage billing, preventing uncollectible invoice generation on accounts without a payment method.",
+    "complete_dependency_coherence": "Every feature enabled on a plan has positive (>0) supporting quotas, and every disabled feature has 0 for its dependent quotas.",
+    "sdk_handshake_always_permitted": "Baseline SDK initialization (/v1/init), retry, and basic batching are enabled on all plans (including Free) so SDKs never fail with 403 on startup; higher tiers unlock dynamic remote config overrides and larger queues."
+  },
+  "anomalies_resolved_from_v2": {
+    "by_plan": {
+      "free": [
+        {
+          "issue_id": "FREE-01",
+          "feature_key": "quota.daily_alerts",
+          "v2_value": 10,
+          "v2_problem": "Non-zero quota (10/day) configured while parent alerting.enabled is false.",
+          "v3_resolution": "Set quota.daily_alerts = 0 on Free (or enable basic email alerting if desired).",
+          "v3_value": 0
+        },
+        {
+          "issue_id": "FREE-02",
+          "feature_key": "quota.monthly_alerts",
+          "v2_value": "100 (with $0.10/100 overage, 5% grace)",
+          "v2_problem": "Non-zero quota (100/mo) and paid overage rate attached to Free plan while alerting.enabled is false and Free orgs have no payment method.",
+          "v3_resolution": "Set quota.monthly_alerts = 0 and enforcement_type = hard_limit (no overage) on Free.",
+          "v3_value": 0
+        },
+        {
+          "issue_id": "FREE-03",
+          "feature_key": "quota.connector_sends",
+          "v2_value": "0 (with $0.25/100 overage, 5% grace)",
+          "v2_problem": "Overage rate ($0.25/100) configured on a 0 quota on the $0 Free plan.",
+          "v3_resolution": "Removed overage from Free plan; set quota.connector_sends = 100 (hard_limit) for basic email connector notifications.",
+          "v3_value": 100
+        },
+        {
+          "issue_id": "FREE-04",
+          "feature_key": "quota.monthly_events",
+          "v2_value": "10000 (with $0.50/1000 overage, 10% grace)",
+          "v2_problem": "Free ($0) plan had paid overage configured ($0.50/1k credits) despite no Stripe payment method on file.",
+          "v3_resolution": "Enforce strict hard_limit at 10,000 credits on Free; overage is only enabled on paid plans (Starter, Growth, Business, Enterprise).",
+          "v3_value": 10000
+        },
+        {
+          "issue_id": "FREE-05",
+          "feature_key": "quota.dashboards",
+          "v2_value": 1,
+          "v2_problem": "quota.dashboards = 1 depends on dashboards.custom_dashboards, which is false on Free, causing DependencyGraph to disable the 1 dashboard quota at runtime.",
+          "v3_resolution": "Changed quota.dashboards dependency to dashboards.enabled (true on Free) so Free orgs can use their 1 default dashboard.",
+          "v3_value": 1
+        },
+        {
+          "issue_id": "FREE-06",
+          "feature_key": "sdk.remote_config / sdk.retry / sdk.batching",
+          "v2_value": "false / false / false (quota.sdk_batch_queue_size = 0)",
+          "v2_problem": "sdk-config.module.ts throws 403 policy_violation on POST /v1/init when sdk.remote_config is false, breaking SDK initialization for Free tier projects.",
+          "v3_resolution": "Enabled sdk.retry = true and sdk.batching = true (with quota.sdk_batch_queue_size = 100) on Free; allow baseline /v1/init delivery on all plans.",
+          "v3_value": "true (baseline batching=100)"
+        },
+        {
+          "issue_id": "FREE-07",
+          "feature_key": "support.sla",
+          "v2_value": null,
+          "v2_problem": "Used null for string feature support.sla.",
+          "v3_resolution": "Normalized to explicit string \"none\".",
+          "v3_value": "none"
+        }
+      ],
+      "starter": [
+        {
+          "issue_id": "STARTER-01",
+          "feature_key": "quota.profile_retention_days",
+          "v2_value": 0,
+          "v2_problem": "CRITICAL CONTRADICTION: profiling.enabled is TRUE on Starter, so Starter orgs ingest and pay credits for profiles, but quota.profile_retention_days is 0 days!",
+          "v3_resolution": "Set quota.profile_retention_days = 14 days on Starter (matching its entry-level paid tier).",
+          "v3_value": 14
+        },
+        {
+          "issue_id": "STARTER-02",
+          "feature_key": "quota.audit_log_retention_days",
+          "v2_value": 30,
+          "v2_problem": "Set to 30 days on Starter even though security.audit_logs = false and security.enabled = false.",
+          "v3_resolution": "Set quota.audit_log_retention_days = 0 on Starter (since security.audit_logs is a Business/Enterprise feature).",
+          "v3_value": 0
+        },
+        {
+          "issue_id": "STARTER-03",
+          "feature_key": "quota.monthly_reports",
+          "v2_value": 5,
+          "v2_problem": "Set to 5 reports/mo on Starter even though dashboards.scheduled_reports = false.",
+          "v3_resolution": "Set quota.monthly_reports = 0 on Starter.",
+          "v3_value": 0
+        },
+        {
+          "issue_id": "STARTER-04",
+          "feature_key": "quota.service_accounts",
+          "v2_value": 2,
+          "v2_problem": "Set to 2 service accounts on Starter even though security.enabled = false.",
+          "v3_resolution": "Set quota.service_accounts = 0 on Starter.",
+          "v3_value": 0
+        },
+        {
+          "issue_id": "STARTER-05",
+          "feature_key": "support.sla",
+          "v2_value": null,
+          "v2_problem": "Used null for string feature support.sla.",
+          "v3_resolution": "Normalized to explicit string \"none\".",
+          "v3_value": "none"
+        }
+      ],
+      "growth": [
+        {
+          "issue_id": "GROWTH-01",
+          "feature_key": "plan_key_in_observability",
+          "v2_value": "pro (missing growth)",
+          "v2_problem": "ObservabilityContextResolver (src/modules/observability/context.ts) uses legacy key \"pro\" instead of \"growth\".",
+          "v3_resolution": "Standardized on \"growth\" (90 days retention) and wired retention dynamically to catalog quotas.",
+          "v3_value": "growth"
+        },
+        {
+          "issue_id": "GROWTH-02",
+          "feature_key": "quota.audit_log_retention_days",
+          "v2_value": 180,
+          "v2_problem": "Set to 180 days on Growth even though security.audit_logs = false and security.enabled = false.",
+          "v3_resolution": "Enabled security.enabled = true and security.audit_logs = true on Growth (with 90 days audit log retention) OR set quota to 0. In v3, basic Audit Logs (30d) is unlocked on Growth.",
+          "v3_value": 30
+        },
+        {
+          "issue_id": "GROWTH-03",
+          "feature_key": "quota.monthly_reports",
+          "v2_value": 25,
+          "v2_problem": "Set to 25 reports/mo on Growth even though dashboards.scheduled_reports = false.",
+          "v3_resolution": "Enabled dashboards.scheduled_reports = true on Growth so its 25 monthly_reports quota is actually usable.",
+          "v3_value": 25
+        },
+        {
+          "issue_id": "GROWTH-04",
+          "feature_key": "quota.service_accounts",
+          "v2_value": 10,
+          "v2_problem": "Set to 10 service accounts on Growth while security.enabled = false.",
+          "v3_resolution": "Enabled security.enabled = true on Growth so its 10 service accounts quota is active.",
+          "v3_value": 10
+        },
+        {
+          "issue_id": "GROWTH-05",
+          "feature_key": "quota.custom_roles",
+          "v2_value": 25,
+          "v2_problem": "Set to 25 custom roles on Growth while security.custom_roles = false.",
+          "v3_resolution": "Set quota.custom_roles = 0 on Growth (custom RBAC roles start on Business/Enterprise).",
+          "v3_value": 0
+        },
+        {
+          "issue_id": "GROWTH-06",
+          "feature_key": "support.sla",
+          "v2_value": null,
+          "v2_problem": "Used null for string feature support.sla.",
+          "v3_resolution": "Normalized to explicit string \"99.5%\" (standard business-hours SLA) or \"none\".",
+          "v3_value": "none"
+        }
+      ],
+      "business": [
+        {
+          "issue_id": "BUSINESS-01",
+          "feature_key": "quota.custom_roles",
+          "v2_value": 100,
+          "v2_problem": "Set to 100 custom roles on Business even though parent security.custom_roles = false!",
+          "v3_resolution": "Enabled security.custom_roles = true on Business (with quota.custom_roles = 25) so Business customers can use custom RBAC roles.",
+          "v3_value": 25
+        },
+        {
+          "issue_id": "BUSINESS-02",
+          "feature_key": "default_signup_provisioning",
+          "v2_value": "DEFAULT_PLAN_KEY = \"business\" (14-day trial -> paused)",
+          "v2_problem": "ProvisioningRepository provisions all new signups onto Business 14-day trial, and BillingJobsRepository.expireTrials() pauses the org after 14 days instead of downgrading to Free.",
+          "v3_resolution": "Either provision new orgs on Free (with optional self-serve 14-day trial of Growth/Business) or auto-downgrade expired trials to Free instead of pausing ingestion.",
+          "v3_value": "auto_downgrade_to_free_on_trial_expiry"
+        }
+      ],
+      "enterprise": [
+        {
+          "issue_id": "ENTERPRISE-01",
+          "feature_key": "quota.monthly_events",
+          "v2_value": "\"Custom\" (string in TS, NULL integer in SQL)",
+          "v2_problem": "CRITICAL: Storing string \"Custom\" in an integer quota causes BillingCatalogValidator to fail and EntitlementsService.getEffectiveIntegerFeature() to return 0 (blocking Enterprise ingestion). Setting it to -1 (unlimited) creates unbounded infrastructure cost exposure and breaks addon addition in EFFECTIVE_ENTITLEMENTS_SQL.",
+          "v3_resolution": "Replaced \"Custom\" / -1 with a concrete, finite baseline of 50,000,000 monthly credits (50M) on Enterprise, with contract_overridable = true via organization_entitlement_overrides and stackable events_10m add-ons.",
+          "v3_value": 50000000
+        },
+        {
+          "issue_id": "ENTERPRISE-02",
+          "feature_key": "quota.retention_days_in_observability",
+          "v2_value": "365 in catalog vs 400 in src/modules/observability/context.ts",
+          "v2_problem": "ObservabilityContextResolver hardcodes 400 days for Enterprise while catalog defines 365 days.",
+          "v3_resolution": "Standardized on 365 days across catalog and runtime.",
+          "v3_value": 365
+        },
+        {
+          "issue_id": "ENTERPRISE-03",
+          "feature_key": "032_17_seeder_conflict",
+          "v2_value": "trial_days=30, is_public=false in 004_11 vs trial_days=0, is_public=true in 032_17",
+          "v2_problem": "Conflicting duplicate seeder 032_17_enterprise_ingestion_004_plans_seed.sql.",
+          "v3_resolution": "Consolidated to single canonical definition (trial_days=30, is_public=false, sales-assisted/custom contract).",
+          "v3_value": "trial_days=30, is_public=false"
+        }
+      ]
+    },
+    "catalog_wide_structural_issues": [
+      {
+        "id": "STRUCT-01",
+        "title": "33 of 34 quotas allow unlimited (-1) via supportsUnlimited: true",
+        "impact": "Allows accidental unlimited resource provisioning and triggers SQL SUM(-1 + addon) corruption in EFFECTIVE_ENTITLEMENTS_SQL.",
+        "resolution": "Set supports_unlimited = false across all 34 quotas in v3; every plan tier uses finite integer limits."
+      },
+      {
+        "id": "STRUCT-02",
+        "title": "Missing generic per-signal event quotas (all telemetry shares one quota.monthly_events pool)",
+        "impact": "A spike in debug logs or session replays exhausts 100% of quota.monthly_events and causes IngestionService to drop production errors and cron check-ins.",
+        "resolution": "Added 8 explicit per-signal monthly event quotas alongside the pooled quota.monthly_events budget."
+      },
+      {
+        "id": "STRUCT-03",
+        "title": "Mismatch between SDK_EVENT_TYPES (10 signals) and billing_event_credit_weights (10 rows)",
+        "impact": "SDK_EVENT_TYPES has request, profile, cron_checkin, and message which are missing from billing_event_credit_weights (falling back to 1.0), while billing_event_credit_weights has crash, session, and ai_action which are not SDK_EVENT_TYPES.",
+        "resolution": "Aligned event_credit_weights 1-to-1 with all 10 canonical SDK_EVENT_TYPES (error, message, request, span, trace, metric, log, profile, cron_checkin, replay)."
+      },
+      {
+        "id": "STRUCT-04",
+        "title": "Duplicate quota keys in FEATURE_REGISTRY (quota.alert_channels vs quota.notification_channels, quota.connectors vs quota.integrations)",
+        "impact": "Identical limits, scopes, and dependencies checked inconsistently across services.",
+        "resolution": "Marked quota.notification_channels (alias of quota.alert_channels) and quota.integrations (alias of quota.connectors) as deprecated aliases in v3."
+      },
+      {
+        "id": "STRUCT-05",
+        "title": "62 of 102 catalog features have zero backend runtime enforcement",
+        "impact": "Features and quotas advertised in the plan matrix (e.g. quota.daily_alerts, quota.monthly_alerts, quota.connector_sends, quota.requests_per_second, quota.*_retention_days, privacy.*, dashboards.*, alerting.composite/escalation_policies/on_call) are not checked by backend services.",
+        "resolution": "Documented exact enforcement wiring targets for every feature in the v3 catalog."
+      },
+      {
+        "id": "STRUCT-06",
+        "title": "UsageRollup crashes on fractional weighted credits ($3::bigint[] cast of decimal totals)",
+        "impact": "Ingesting logs (0.2 weight) or metrics (0.1 weight) produces non-integer totals in UsageRollup.run(), failing BULK_DAILY_UPSERT_SQL ($3::bigint[]) and rolling back billing usage updates.",
+        "resolution": "Round/ceil credit totals to integer credits before BIGINT array binding or store credits as NUMERIC(18,4)."
+      }
+    ]
+  },
+  "telemetry_event_quotas_and_weights_v3": {
+    "description": "Enterprise-grade two-layer telemetry metering: (1) Pooled Monthly Telemetry Credits (quota.monthly_events) and (2) Explicit Generic Per-Signal Monthly Event Quotas so every signal has a predictable finite cap and cannot starve mission-critical error/uptime signals.",
+    "pooled_monthly_event_credits": {
+      "quota_key": "quota.monthly_events",
+      "unit": "credits",
+      "supports_unlimited": false,
+      "limits_by_plan": {
+        "free": {
+          "included_credits": 10000,
+          "enforcement_type": "hard_limit",
+          "overage_enabled": false
+        },
+        "starter": {
+          "included_credits": 150000,
+          "enforcement_type": "overage",
+          "overage_enabled": true,
+          "overage_rate_usd_per_1000_credits": 0.5,
+          "grace_percent": 10
+        },
+        "growth": {
+          "included_credits": 1000000,
+          "enforcement_type": "overage",
+          "overage_enabled": true,
+          "overage_rate_usd_per_1000_credits": 0.4,
+          "grace_percent": 10
+        },
+        "business": {
+          "included_credits": 8000000,
+          "enforcement_type": "overage",
+          "overage_enabled": true,
+          "overage_rate_usd_per_1000_credits": 0.3,
+          "grace_percent": 10
+        },
+        "enterprise": {
+          "included_credits": 50000000,
+          "enforcement_type": "overage",
+          "overage_enabled": true,
+          "overage_rate_usd_per_1000_credits": 0.2,
+          "grace_percent": 15,
+          "contract_overridable": true
+        }
+      }
+    },
+    "generic_per_signal_monthly_event_quotas": [
+      {
+        "key": "quota.monthly_error_events",
+        "name": "Monthly Error & Exception Events",
+        "sdk_event_types": [
+          "error",
+          "message"
+        ],
+        "unit": "events",
+        "scope": "organization",
+        "supports_unlimited": false,
+        "dependencies": [
+          "error_tracking.enabled"
+        ],
+        "limits_by_plan": {
+          "free": 5000,
+          "starter": 50000,
+          "growth": 250000,
+          "business": 2000000,
+          "enterprise": 15000000
+        }
+      },
+      {
+        "key": "quota.monthly_log_events",
+        "name": "Monthly Structured Log Events",
+        "sdk_event_types": [
+          "log"
+        ],
+        "unit": "events",
+        "scope": "organization",
+        "supports_unlimited": false,
+        "dependencies": [
+          "logging.enabled"
+        ],
+        "limits_by_plan": {
+          "free": 25000,
+          "starter": 500000,
+          "growth": 3000000,
+          "business": 25000000,
+          "enterprise": 150000000
+        }
+      },
+      {
+        "key": "quota.monthly_metric_data_points",
+        "name": "Monthly Metric Data Points",
+        "sdk_event_types": [
+          "metric"
+        ],
+        "unit": "data_points",
+        "scope": "organization",
+        "supports_unlimited": false,
+        "dependencies": [
+          "metrics.enabled"
+        ],
+        "limits_by_plan": {
+          "free": 50000,
+          "starter": 1000000,
+          "growth": 5000000,
+          "business": 40000000,
+          "enterprise": 250000000
+        }
+      },
+      {
+        "key": "quota.monthly_trace_spans",
+        "name": "Monthly Distributed Trace & Span Events",
+        "sdk_event_types": [
+          "trace",
+          "span"
+        ],
+        "unit": "spans",
+        "scope": "organization",
+        "supports_unlimited": false,
+        "dependencies": [
+          "tracing.enabled"
+        ],
+        "limits_by_plan": {
+          "free": 10000,
+          "starter": 200000,
+          "growth": 1500000,
+          "business": 10000000,
+          "enterprise": 60000000
+        }
+      },
+      {
+        "key": "quota.monthly_request_events",
+        "name": "Monthly HTTP Request Telemetry Events",
+        "sdk_event_types": [
+          "request"
+        ],
+        "unit": "requests",
+        "scope": "organization",
+        "supports_unlimited": false,
+        "dependencies": [
+          "tracing.enabled"
+        ],
+        "limits_by_plan": {
+          "free": 25000,
+          "starter": 300000,
+          "growth": 2000000,
+          "business": 15000000,
+          "enterprise": 100000000
+        }
+      },
+      {
+        "key": "quota.monthly_replay_sessions",
+        "name": "Monthly Session Replay Recordings",
+        "sdk_event_types": [
+          "replay"
+        ],
+        "unit": "replays",
+        "scope": "organization",
+        "supports_unlimited": false,
+        "dependencies": [
+          "replay.enabled"
+        ],
+        "limits_by_plan": {
+          "free": 0,
+          "starter": 2500,
+          "growth": 15000,
+          "business": 100000,
+          "enterprise": 1000000
+        }
+      },
+      {
+        "key": "quota.monthly_profiles",
+        "name": "Monthly Continuous CPU/Heap Profiles",
+        "sdk_event_types": [
+          "profile"
+        ],
+        "unit": "profiles",
+        "scope": "organization",
+        "supports_unlimited": false,
+        "dependencies": [
+          "profiling.enabled"
+        ],
+        "limits_by_plan": {
+          "free": 0,
+          "starter": 5000,
+          "growth": 50000,
+          "business": 500000,
+          "enterprise": 5000000
+        }
+      },
+      {
+        "key": "quota.monthly_cron_checkins",
+        "name": "Monthly Cron & Uptime Check-In Events",
+        "sdk_event_types": [
+          "cron_checkin"
+        ],
+        "unit": "checkins",
+        "scope": "organization",
+        "supports_unlimited": false,
+        "dependencies": [
+          "cron_monitoring.enabled"
+        ],
+        "limits_by_plan": {
+          "free": 0,
+          "starter": 50000,
+          "growth": 250000,
+          "business": 1000000,
+          "enterprise": 10000000
+        }
+      }
+    ],
+    "aligned_sdk_event_credit_weights": [
+      {
+        "event_type": "metric",
+        "credit_weight": 0.1,
+        "description": "Metric data point (counter, gauge, histogram, summary)"
+      },
+      {
+        "event_type": "log",
+        "credit_weight": 0.2,
+        "description": "Structured log entry"
+      },
+      {
+        "event_type": "cron_checkin",
+        "credit_weight": 0.2,
+        "description": "Scheduled job / cron monitor heartbeat check-in"
+      },
+      {
+        "event_type": "request",
+        "credit_weight": 0.25,
+        "description": "Captured HTTP request envelope"
+      },
+      {
+        "event_type": "span",
+        "credit_weight": 0.5,
+        "description": "Individual distributed trace span"
+      },
+      {
+        "event_type": "trace",
+        "credit_weight": 0.5,
+        "description": "Distributed trace root transaction"
+      },
+      {
+        "event_type": "message",
+        "credit_weight": 0.5,
+        "description": "SDK captureMessage informational/warning event"
+      },
+      {
+        "event_type": "error",
+        "credit_weight": 1,
+        "description": "Captured application exception or error event with stacktrace"
+      },
+      {
+        "event_type": "profile",
+        "credit_weight": 2,
+        "description": "Continuous CPU or heap profiling sample payload"
+      },
+      {
+        "event_type": "replay",
+        "credit_weight": 5,
+        "description": "DOM session replay recording segment"
+      }
+    ]
+  },
+  "plans_v3": [
+    {
+      "id": "free",
+      "key": "free",
+      "name": "Free",
+      "tier_level": 1,
+      "status": "active",
+      "is_public": true,
+      "is_custom": false,
+      "trial_days": 0,
+      "prices": {
+        "monthly_usd": 0,
+        "annual_usd": 0,
+        "provider": "system"
+      },
+      "overage_policy": "hard_limit_no_overage",
+      "quotas": {
+        "organization.max_orgs_per_user": 1,
+        "quota.projects": 1,
+        "quota.members": 3,
+        "quota.environments": 2,
+        "quota.api_keys": 2,
+        "quota.monthly_events": 10000,
+        "quota.monthly_error_events": 5000,
+        "quota.monthly_log_events": 25000,
+        "quota.monthly_metric_data_points": 50000,
+        "quota.monthly_trace_spans": 10000,
+        "quota.monthly_request_events": 25000,
+        "quota.monthly_replay_sessions": 0,
+        "quota.monthly_profiles": 0,
+        "quota.monthly_cron_checkins": 0,
+        "quota.requests_per_second": 50,
+        "quota.sdk_batch_queue_size": 100,
+        "quota.sdk_offline_queue_limit": 0,
+        "quota.sdk_persistence_per_minute": 20000,
+        "quota.retention_days": 7,
+        "quota.error_retention_days": 7,
+        "quota.log_retention_days": 7,
+        "quota.metric_retention_days": 7,
+        "quota.trace_retention_days": 7,
+        "quota.profile_retention_days": 0,
+        "quota.replay_retention_days": 0,
+        "quota.audit_log_retention_days": 0,
+        "quota.alert_rules": 0,
+        "quota.project_alert_rules": 0,
+        "quota.alert_channels": 0,
+        "quota.project_notification_channels": 0,
+        "quota.routing_rules": 0,
+        "quota.project_routing_rules": 0,
+        "quota.daily_alerts": 0,
+        "quota.monthly_alerts": 0,
+        "quota.connector_sends": 100,
+        "quota.automation_rules": 0,
+        "quota.dashboards": 1,
+        "quota.monthly_reports": 0,
+        "quota.ai_credits": 0,
+        "quota.connectors": 2,
+        "quota.service_accounts": 0,
+        "quota.custom_roles": 0,
+        "quota.sso_providers": 0,
+        "quota.scim_tokens": 0
+      }
+    },
+    {
+      "id": "starter",
+      "key": "starter",
+      "name": "Starter",
+      "tier_level": 2,
+      "status": "active",
+      "is_public": true,
+      "is_custom": false,
+      "trial_days": 14,
+      "prices": {
+        "monthly_usd": 15,
+        "annual_usd": 150,
+        "provider": "stripe"
+      },
+      "overage_policy": "metered_overage_with_grace",
+      "quotas": {
+        "organization.max_orgs_per_user": 1,
+        "quota.projects": 5,
+        "quota.members": 10,
+        "quota.environments": 5,
+        "quota.api_keys": 10,
+        "quota.monthly_events": 150000,
+        "quota.monthly_error_events": 50000,
+        "quota.monthly_log_events": 500000,
+        "quota.monthly_metric_data_points": 1000000,
+        "quota.monthly_trace_spans": 200000,
+        "quota.monthly_request_events": 300000,
+        "quota.monthly_replay_sessions": 2500,
+        "quota.monthly_profiles": 5000,
+        "quota.monthly_cron_checkins": 50000,
+        "quota.requests_per_second": 250,
+        "quota.sdk_batch_queue_size": 1000,
+        "quota.sdk_offline_queue_limit": 0,
+        "quota.sdk_persistence_per_minute": 100000,
+        "quota.retention_days": 30,
+        "quota.error_retention_days": 30,
+        "quota.log_retention_days": 30,
+        "quota.metric_retention_days": 30,
+        "quota.trace_retention_days": 30,
+        "quota.profile_retention_days": 14,
+        "quota.replay_retention_days": 7,
+        "quota.audit_log_retention_days": 0,
+        "quota.alert_rules": 10,
+        "quota.project_alert_rules": 5,
+        "quota.alert_channels": 10,
+        "quota.project_notification_channels": 3,
+        "quota.routing_rules": 2,
+        "quota.project_routing_rules": 1,
+        "quota.daily_alerts": 100,
+        "quota.monthly_alerts": 1000,
+        "quota.connector_sends": 1000,
+        "quota.automation_rules": 5,
+        "quota.dashboards": 3,
+        "quota.monthly_reports": 0,
+        "quota.ai_credits": 100,
+        "quota.connectors": 10,
+        "quota.service_accounts": 0,
+        "quota.custom_roles": 0,
+        "quota.sso_providers": 0,
+        "quota.scim_tokens": 0
+      }
+    },
+    {
+      "id": "growth",
+      "key": "growth",
+      "name": "Growth",
+      "tier_level": 3,
+      "status": "active",
+      "is_public": true,
+      "is_custom": false,
+      "trial_days": 14,
+      "prices": {
+        "monthly_usd": 49,
+        "annual_usd": 490,
+        "provider": "stripe"
+      },
+      "overage_policy": "metered_overage_with_grace",
+      "quotas": {
+        "organization.max_orgs_per_user": 3,
+        "quota.projects": 25,
+        "quota.members": 50,
+        "quota.environments": 10,
+        "quota.api_keys": 50,
+        "quota.monthly_events": 1000000,
+        "quota.monthly_error_events": 250000,
+        "quota.monthly_log_events": 3000000,
+        "quota.monthly_metric_data_points": 5000000,
+        "quota.monthly_trace_spans": 1500000,
+        "quota.monthly_request_events": 2000000,
+        "quota.monthly_replay_sessions": 15000,
+        "quota.monthly_profiles": 50000,
+        "quota.monthly_cron_checkins": 250000,
+        "quota.requests_per_second": 1000,
+        "quota.sdk_batch_queue_size": 10000,
+        "quota.sdk_offline_queue_limit": 5000,
+        "quota.sdk_persistence_per_minute": 100000,
+        "quota.retention_days": 90,
+        "quota.error_retention_days": 90,
+        "quota.log_retention_days": 90,
+        "quota.metric_retention_days": 90,
+        "quota.trace_retention_days": 90,
+        "quota.profile_retention_days": 90,
+        "quota.replay_retention_days": 30,
+        "quota.audit_log_retention_days": 30,
+        "quota.alert_rules": 50,
+        "quota.project_alert_rules": 25,
+        "quota.alert_channels": 50,
+        "quota.project_notification_channels": 10,
+        "quota.routing_rules": 10,
+        "quota.project_routing_rules": 5,
+        "quota.daily_alerts": 1000,
+        "quota.monthly_alerts": 10000,
+        "quota.connector_sends": 10000,
+        "quota.automation_rules": 25,
+        "quota.dashboards": 10,
+        "quota.monthly_reports": 25,
+        "quota.ai_credits": 1000,
+        "quota.connectors": 50,
+        "quota.service_accounts": 10,
+        "quota.custom_roles": 0,
+        "quota.sso_providers": 0,
+        "quota.scim_tokens": 0
+      }
+    },
+    {
+      "id": "business",
+      "key": "business",
+      "name": "Business",
+      "tier_level": 4,
+      "status": "active",
+      "is_public": true,
+      "is_custom": false,
+      "trial_days": 14,
+      "prices": {
+        "monthly_usd": 149,
+        "annual_usd": 1490,
+        "provider": "stripe"
+      },
+      "overage_policy": "metered_overage_with_grace",
+      "quotas": {
+        "organization.max_orgs_per_user": 5,
+        "quota.projects": 100,
+        "quota.members": 250,
+        "quota.environments": 25,
+        "quota.api_keys": 250,
+        "quota.monthly_events": 8000000,
+        "quota.monthly_error_events": 2000000,
+        "quota.monthly_log_events": 25000000,
+        "quota.monthly_metric_data_points": 40000000,
+        "quota.monthly_trace_spans": 10000000,
+        "quota.monthly_request_events": 15000000,
+        "quota.monthly_replay_sessions": 100000,
+        "quota.monthly_profiles": 500000,
+        "quota.monthly_cron_checkins": 1000000,
+        "quota.requests_per_second": 5000,
+        "quota.sdk_batch_queue_size": 50000,
+        "quota.sdk_offline_queue_limit": 25000,
+        "quota.sdk_persistence_per_minute": 250000,
+        "quota.retention_days": 180,
+        "quota.error_retention_days": 180,
+        "quota.log_retention_days": 180,
+        "quota.metric_retention_days": 180,
+        "quota.trace_retention_days": 180,
+        "quota.profile_retention_days": 180,
+        "quota.replay_retention_days": 90,
+        "quota.audit_log_retention_days": 365,
+        "quota.alert_rules": 250,
+        "quota.project_alert_rules": 100,
+        "quota.alert_channels": 250,
+        "quota.project_notification_channels": 50,
+        "quota.routing_rules": 50,
+        "quota.project_routing_rules": 25,
+        "quota.daily_alerts": 10000,
+        "quota.monthly_alerts": 100000,
+        "quota.connector_sends": 100000,
+        "quota.automation_rules": 100,
+        "quota.dashboards": 25,
+        "quota.monthly_reports": 100,
+        "quota.ai_credits": 5000,
+        "quota.connectors": 250,
+        "quota.service_accounts": 100,
+        "quota.custom_roles": 25,
+        "quota.sso_providers": 3,
+        "quota.scim_tokens": 0
+      }
+    },
+    {
+      "id": "enterprise",
+      "key": "enterprise",
+      "name": "Enterprise",
+      "tier_level": 5,
+      "status": "active",
+      "is_public": false,
+      "is_custom": true,
+      "trial_days": 30,
+      "prices": {
+        "monthly_usd": 0,
+        "annual_usd": 0,
+        "provider": "system",
+        "pricing_model": "custom_contract_with_finite_included_baseline"
+      },
+      "overage_policy": "contract_metered_or_volume_pack",
+      "quotas": {
+        "organization.max_orgs_per_user": 20,
+        "quota.projects": 1000,
+        "quota.members": 10000,
+        "quota.environments": 100,
+        "quota.api_keys": 1000,
+        "quota.monthly_events": 50000000,
+        "quota.monthly_error_events": 15000000,
+        "quota.monthly_log_events": 150000000,
+        "quota.monthly_metric_data_points": 250000000,
+        "quota.monthly_trace_spans": 60000000,
+        "quota.monthly_request_events": 100000000,
+        "quota.monthly_replay_sessions": 1000000,
+        "quota.monthly_profiles": 5000000,
+        "quota.monthly_cron_checkins": 10000000,
+        "quota.requests_per_second": 50000,
+        "quota.sdk_batch_queue_size": 100000,
+        "quota.sdk_offline_queue_limit": 100000,
+        "quota.sdk_persistence_per_minute": 1000000,
+        "quota.retention_days": 365,
+        "quota.error_retention_days": 365,
+        "quota.log_retention_days": 365,
+        "quota.metric_retention_days": 365,
+        "quota.trace_retention_days": 365,
+        "quota.profile_retention_days": 365,
+        "quota.replay_retention_days": 365,
+        "quota.audit_log_retention_days": 2555,
+        "quota.alert_rules": 1000,
+        "quota.project_alert_rules": 500,
+        "quota.alert_channels": 1000,
+        "quota.project_notification_channels": 250,
+        "quota.routing_rules": 200,
+        "quota.project_routing_rules": 100,
+        "quota.daily_alerts": 100000,
+        "quota.monthly_alerts": 1000000,
+        "quota.connector_sends": 1000000,
+        "quota.automation_rules": 1000,
+        "quota.dashboards": 1000,
+        "quota.monthly_reports": 1000,
+        "quota.ai_credits": 50000,
+        "quota.connectors": 1000,
+        "quota.service_accounts": 1000,
+        "quota.custom_roles": 1000,
+        "quota.sso_providers": 20,
+        "quota.scim_tokens": 20
+      }
+    }
+  ]
+}

@@ -8,7 +8,7 @@ CREATE TABLE IF NOT EXISTS events_messages (
   api_key_name TEXT NOT NULL,
 
   -- Identity & correlation
-  event_id TEXT NOT NULL,
+  event_id UUID NOT NULL,
   public_id TEXT,
   request_id TEXT,
   trace_id TEXT,

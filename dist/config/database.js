@@ -67,6 +67,71 @@ dbLogger.info(getSafePostgresConnectionMetadata(env.DATABASE_URL, {
     poolMax: env.DB_POOL_MAX,
     poolMin: env.DB_POOL_MIN,
 }), 'Primary PostgreSQL configuration');
+/**
+ * Dedicated notification subsystem connection pool.
+ * Fully isolated from API and Ingestion pools to prevent notification bursts
+ * or slow provider handlers from starving telemetry ingestion or user-facing API queries.
+ */
+const notificationPoolConfig = withPostgresAddressFamily({
+    connectionString: sanitizePostgresConnectionString(env.DATABASE_URL),
+    ssl: primarySsl,
+    max: env.NOTIFICATION_POOL_MAX,
+    min: 0,
+    idleTimeoutMillis: env.DB_IDLE_TIMEOUT_MS,
+    connectionTimeoutMillis: env.DB_CONNECTION_TIMEOUT_MS,
+    statement_timeout: env.DB_STATEMENT_TIMEOUT_MS,
+    query_timeout: env.DB_QUERY_TIMEOUT_MS,
+    application_name: `notification_workers_${env.NODE_ENV}`,
+    keepAlive: true,
+    keepAliveInitialDelayMillis: env.DB_KEEPALIVE_INITIAL_DELAY_MS,
+}, env.DB_FAMILY);
+export const notificationPool = new Pool(notificationPoolConfig);
+const rawNotificationPoolQuery = notificationPool.query.bind(notificationPool);
+notificationPool.query = async function (textOrConfig, values, callback) {
+    if (typeof values === 'function' || typeof callback === 'function') {
+        return rawNotificationPoolQuery(textOrConfig, values, callback);
+    }
+    const maxRetries = 3;
+    let attempt = 0;
+    while (true) {
+        try {
+            return await rawNotificationPoolQuery(textOrConfig, values);
+        }
+        catch (err) {
+            attempt++;
+            if (attempt <= maxRetries && isTransientPostgresError(err)) {
+                const delayMs = 150 * attempt;
+                dbLogger.debug({ attempt, maxRetries, delayMs, err: err?.message || String(err) }, 'Transient database connection error in notificationPool.query; retrying...');
+                await new Promise((resolve) => setTimeout(resolve, delayMs));
+                continue;
+            }
+            throw err;
+        }
+    }
+};
+notificationPool.on('connect', (client) => {
+    dbLogger.debug('New connection added to notification pool');
+    client.on('error', (err) => {
+        if (isExpectedServerlessDisconnect(err)) {
+            dbLogger.debug({ err: err.message }, 'Client connection closed by server (Neon/PgBouncer) on notification pool.');
+            return;
+        }
+        dbLogger.debug({ err: err.message }, 'PostgreSQL client socket error on active notification pool connection');
+    });
+});
+notificationPool.on('error', (err) => {
+    if (isExpectedServerlessDisconnect(err)) {
+        dbLogger.debug({ err: err.message }, 'Idle database connection closed by server on notification pool; pool will reconnect.');
+        return;
+    }
+    dbLogger.error({ err }, 'Unexpected notification database pool error');
+});
+dbLogger.info(getSafePostgresConnectionMetadata(env.DATABASE_URL, {
+    family: env.DB_FAMILY,
+    ssl: primarySsl,
+    poolMax: env.NOTIFICATION_POOL_MAX,
+    poolMin: 0,
+}), 'Notification PostgreSQL configuration');
 // Pool lifecycle events — only actionable events are logged.
 // 'acquire' is intentionally omitted: it fires on every query and produces
 // excessive noise at scale (~360K lines/hour at 100 QPS).
@@ -205,8 +270,11 @@ export const withTransaction = async (fn, targetPool = pool, options) => {
  * Graceful shutdown — drains active connections before closing.
  */
 export const closeDatabase = async () => {
-    dbLogger.info('Closing primary database pool');
-    await pool.end();
-    dbLogger.info('Primary database pool closed');
+    dbLogger.info('Closing primary database pool and notification pool');
+    await Promise.allSettled([
+        pool.end(),
+        notificationPool.end(),
+    ]);
+    dbLogger.info('Primary and notification database pools closed');
 };
 //# sourceMappingURL=database.js.map

@@ -9,6 +9,7 @@ import { issueSessionForUser } from './index.js';
 import { AuthError, AuthErrorCodes } from '../../domain/types.js';
 import { normalizeEmail } from '../../domain/constants.js';
 import { emailToHash } from './shared-helpers.js';
+import { isLoginTrustedDevice } from './trusted-device.service.js';
 function readCallbackState(state) {
     const login = socialLoginStateCache.get(state);
     if (login) {
@@ -202,7 +203,7 @@ export async function completeSocialLogin(profile, flow, ipAddress, userAgent, r
         userAgent: flow.userAgent || userAgent,
         deviceName: flow.deviceName,
         deviceType: flow.clientDeviceType || 'web',
-        mfaVerified: true,
+        mfaVerified: !user.mfa_enabled,
         rememberMe: flow.rememberMe === true,
         ssoContext: { loginMethod: `social_${profile.provider}` },
     });

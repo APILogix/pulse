@@ -35,6 +35,7 @@ export class TelemetryOutboxRelay {
     const telemetry = rows.filter((row) => row.signal_kind !== 'error_group_regressed');
     let published = 0;
 
+    const publishedSemantic: TelemetryOutboxRow[] = [];
     for (const row of semantic) {
       try {
         await pgboss.send('alert.error-group-regressed', row.attributes, {
@@ -44,12 +45,15 @@ export class TelemetryOutboxRelay {
           retryDelay: 1,
           retryBackoff: true,
         } as never);
-        await this.markPublished([row]);
-        published += 1;
+        publishedSemantic.push(row);
       } catch (err) {
         await this.markFailed([row], err instanceof Error ? err.message : String(err));
         this.log.warn({ err, row: row.id }, 'Error-group regression outbox publish failed');
       }
+    }
+    if (publishedSemantic.length > 0) {
+      await this.markPublished(publishedSemantic);
+      published += publishedSemantic.length;
     }
 
     const groups = new Map<string, TelemetryOutboxRow[]>();

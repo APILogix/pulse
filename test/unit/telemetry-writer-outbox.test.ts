@@ -159,11 +159,13 @@ describe('TelemetryWriter transactional outbox', () => {
       query: vi.fn(async () => ({ rowCount: 1, rows: [{ count: 2 }] })),
     };
 
+    const slowReqId = '018d0000-0000-7000-8000-000000000002';
+    const errReqId = '018d0000-0000-7000-8000-000000000003';
     const inserted = await new TelemetryWriter({ query: vi.fn() } as never).appendTelemetryOutbox(
       [
-        requestEvent({ eventId: 'normal-request', statusCode: 200, latency: 24 }),
-        requestEvent({ eventId: 'slow-request', statusCode: 200, latency: 1500 }),
-        requestEvent({ eventId: 'error-request', statusCode: 500, latency: 24 }),
+        requestEvent({ eventId: '018d0000-0000-7000-8000-000000000001', statusCode: 200, latency: 24 }),
+        requestEvent({ eventId: slowReqId, statusCode: 200, latency: 1500 }),
+        requestEvent({ eventId: errReqId, statusCode: 500, latency: 24 }),
       ],
       db as never,
     );
@@ -172,7 +174,7 @@ describe('TelemetryWriter transactional outbox', () => {
     expect(db.query).toHaveBeenCalledOnce();
     const calls = db.query.mock.calls as unknown as Array<[string, unknown[]]>;
     const values = calls[0]?.[1];
-    expect(values?.[4]).toEqual(['slow-request', 'error-request']);
+    expect(values?.[4]).toEqual([slowReqId, errReqId]);
     expect(values?.[6]).toEqual([true, true]);
   });
 });

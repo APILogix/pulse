@@ -18,7 +18,7 @@ CREATE TABLE IF NOT EXISTS project_members (
   status project_member_status NOT NULL DEFAULT 'active',
   created_by UUID REFERENCES users(id),
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  updated_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   added_by_user_id UUID REFERENCES users(id) ON DELETE SET NULL,
   added_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   removed_by_user_id UUID REFERENCES users(id) ON DELETE SET NULL,
@@ -46,3 +46,23 @@ CREATE INDEX IF NOT EXISTS idx_project_members_active
 
 CREATE INDEX IF NOT EXISTS idx_project_members_project_status
   ON project_members(project_id, status);
+
+CREATE INDEX IF NOT EXISTS idx_project_members_role_id
+  ON project_members(role_id)
+  WHERE role_id IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_project_members_added_by
+  ON project_members(added_by_user_id)
+  WHERE added_by_user_id IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_project_members_removed_by
+  ON project_members(removed_by_user_id)
+  WHERE removed_by_user_id IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_project_members_invited_by
+  ON project_members(invited_by)
+  WHERE invited_by IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_project_members_created_by
+  ON project_members(created_by)
+  WHERE created_by IS NOT NULL;

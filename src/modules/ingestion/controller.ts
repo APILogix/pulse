@@ -84,6 +84,16 @@ const RETRY_AFTER_SECONDS: Record<string, number> = {
   QUOTA_EXCEEDED: 60,
 };
 
+function extractClientHints(request: FastifyRequest): { configRevision?: number; configHash?: string } {
+  const revHeader = request.headers['x-config-revision'] as string | undefined;
+  const configRevision = typeof revHeader === 'string' && revHeader.trim() !== '' ? Number(revHeader) : undefined;
+  const configHash = (request.headers['x-config-hash'] || request.headers['if-none-match']) as string | undefined;
+  return {
+    ...(typeof configRevision === 'number' && Number.isFinite(configRevision) ? { configRevision } : {}),
+    ...(typeof configHash === 'string' && configHash.trim() !== '' ? { configHash: configHash.trim() } : {}),
+  };
+}
+
 export class IngestionController {
   constructor(private readonly service: IngestionService) {}
 
@@ -153,7 +163,7 @@ export class IngestionController {
       const body = request.body as IngestRequest;
       const apiKey = resolveApiKey(request, body);
       if (!apiKey) throw new Error('INVALID_API_KEY');
-      const result = await this.service.ingestBatch(body, apiKey);
+      const result = await this.service.ingestBatch(body, apiKey, extractClientHints(request));
       return reply.status(202).send(result);
     } catch (err) {
       return this.handleError(err, request, reply);
@@ -176,7 +186,7 @@ export class IngestionController {
         const body = request.body as IngestRequest;
         const apiKey = resolveApiKey(request, body);
         if (!apiKey) throw new Error('INVALID_API_KEY');
-        const result = await this.service.ingestTyped(body, apiKey, type);
+        const result = await this.service.ingestTyped(body, apiKey, type, extractClientHints(request));
         return reply.status(202).send(result);
       } catch (err) {
         return this.handleError(err, request, reply);
@@ -193,7 +203,7 @@ export class IngestionController {
       const body = request.body as IngestRequest;
       const apiKey = resolveApiKey(request, body);
       if (!apiKey) throw new Error('INVALID_API_KEY');
-      const result = await this.service.ingestRequests(body, apiKey);
+      const result = await this.service.ingestRequests(body, apiKey, extractClientHints(request));
       return reply.status(202).send(result);
     } catch (err) {
       return this.handleError(err, request, reply);
@@ -206,7 +216,7 @@ export class IngestionController {
       const body = request.body as IngestRequest;
       const apiKey = resolveApiKey(request, body);
       if (!apiKey) throw new Error('INVALID_API_KEY');
-      const result = await this.service.ingestErrors(body, apiKey);
+      const result = await this.service.ingestErrors(body, apiKey, extractClientHints(request));
       return reply.status(202).send(result);
     } catch (err) {
       return this.handleError(err, request, reply);
@@ -219,7 +229,7 @@ export class IngestionController {
       const body = request.body as IngestRequest;
       const apiKey = resolveApiKey(request, body);
       if (!apiKey) throw new Error('INVALID_API_KEY');
-      const result = await this.service.ingestLogs(body, apiKey);
+      const result = await this.service.ingestLogs(body, apiKey, extractClientHints(request));
       return reply.status(202).send(result);
     } catch (err) {
       return this.handleError(err, request, reply);
@@ -232,7 +242,7 @@ export class IngestionController {
       const body = request.body as IngestRequest;
       const apiKey = resolveApiKey(request, body);
       if (!apiKey) throw new Error('INVALID_API_KEY');
-      const result = await this.service.ingestMetrics(body, apiKey);
+      const result = await this.service.ingestMetrics(body, apiKey, extractClientHints(request));
       return reply.status(202).send(result);
     } catch (err) {
       return this.handleError(err, request, reply);

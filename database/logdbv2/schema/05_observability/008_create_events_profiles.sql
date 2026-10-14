@@ -5,7 +5,7 @@ CREATE TABLE IF NOT EXISTS events_profiles (
   project_id UUID,
   environment TEXT NOT NULL,
   api_key_name TEXT NOT NULL,
-  event_id TEXT NOT NULL,
+  event_id UUID NOT NULL,
   request_id TEXT,
   trace_id TEXT,
   span_id TEXT,

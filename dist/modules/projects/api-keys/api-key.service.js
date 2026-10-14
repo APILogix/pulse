@@ -51,17 +51,25 @@ export class ApiKeyService extends BaseProjectService {
             const existingKeys = typeof this.apiKeyRepository.listActiveApiKeyRecords === "function"
                 ? await this.apiKeyRepository.listActiveApiKeyRecords(projectId, body.environmentId, client)
                 : [];
-            // 2. Soft-delete and revoke each existing active key
-            for (const oldKey of existingKeys) {
-                if (client) {
-                    await client.query(`UPDATE project_api_keys
-                SET status = 'revoked',
-                    deleted_at = COALESCE(deleted_at, NOW()),
-                    revoked_at = NOW(),
-                    revoked_by = $1,
-                    revoked_reason = 'Superseded by new API key'
-              WHERE id = $2 AND deleted_at IS NULL`, [userId, oldKey.id]);
-                }
+            // 2. Soft-delete and revoke each existing active key in a single batch query (or single query if 1 key)
+            if (client && existingKeys.length === 1) {
+                await client.query(`UPDATE project_api_keys
+              SET status = 'revoked',
+                  deleted_at = COALESCE(deleted_at, NOW()),
+                  revoked_at = NOW(),
+                  revoked_by = $1,
+                  revoked_reason = 'Superseded by new API key'
+            WHERE id = $2 AND deleted_at IS NULL`, [userId, existingKeys[0].id]);
+            }
+            else if (client && existingKeys.length > 1) {
+                const oldKeyIds = existingKeys.map((k) => k.id);
+                await client.query(`UPDATE project_api_keys
+              SET status = 'revoked',
+                  deleted_at = COALESCE(deleted_at, NOW()),
+                  revoked_at = NOW(),
+                  revoked_by = $1,
+                  revoked_reason = 'Superseded by new API key'
+            WHERE id = ANY($2::uuid[]) AND deleted_at IS NULL`, [userId, oldKeyIds]);
             }
             // 3. Create the new API key with NO expiration (expiresAt: null)
             const created = await this.apiKeyRepository.createApiKey({

@@ -18,6 +18,7 @@ import { AuthError, AuthErrorCodes, type SocialLoginInput } from '../../domain/t
 import { normalizeEmail } from '../../domain/constants.js';
 import type { PassportSocialProfile } from './passport-social.service.js';
 import { emailToHash } from './shared-helpers.js';
+import { isLoginTrustedDevice } from './trusted-device.service.js';
 
 interface CallbackStateResult {
   kind: 'login' | 'link';
@@ -314,7 +315,7 @@ export async function completeSocialLogin(
     userAgent: flow.userAgent || userAgent,
     deviceName: flow.deviceName,
     deviceType: flow.clientDeviceType || 'web',
-    mfaVerified: true,
+    mfaVerified: !user.mfa_enabled,
     rememberMe: flow.rememberMe === true,
     ssoContext: { loginMethod: `social_${profile.provider}` },
   });

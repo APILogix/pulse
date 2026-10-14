@@ -29,3 +29,7 @@ CREATE INDEX IF NOT EXISTS idx_email_verifications_cleanup
 
 CREATE UNIQUE INDEX IF NOT EXISTS uq_email_verifications_user_email_purpose
   ON email_verifications(user_id, email, purpose);
+
+CREATE INDEX IF NOT EXISTS idx_email_verifications_verified_at
+  ON email_verifications(verified_at)
+  WHERE verified_at IS NOT NULL;

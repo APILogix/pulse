@@ -25,10 +25,6 @@ CREATE TABLE IF NOT EXISTS organization_invitations (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE UNIQUE INDEX IF NOT EXISTS uq_org_invitations_pending_lower_email
-  ON organization_invitations(org_id, lower(email))
-  WHERE status = 'pending';
-
 CREATE INDEX IF NOT EXISTS idx_org_invitations_token
   ON organization_invitations(token_hash);
 
@@ -42,3 +38,11 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_org_invitations_pending_email_hash
 CREATE UNIQUE INDEX IF NOT EXISTS uq_org_invitations_pending_token_hash
   ON organization_invitations(token_hash)
   WHERE status = 'pending';
+
+CREATE INDEX IF NOT EXISTS idx_org_invitations_accepted_by
+  ON organization_invitations(accepted_by)
+  WHERE accepted_by IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_org_invitations_revoked_by
+  ON organization_invitations(revoked_by)
+  WHERE revoked_by IS NOT NULL;

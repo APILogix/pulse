@@ -56,8 +56,8 @@ export declare function adminLockUser(id: string, reason: string, lockedBy: stri
  */
 export declare function adminUnlockUser(id: string, client?: PoolClient): Promise<User | null>;
 /**
- * Cursor-paginated user list for the admin endpoint. Cursor is a tuple of
- * (created_at, id) so it is stable when many rows share a created_at.
+ * Paginated user list for admin endpoints supporting status filtering,
+ * substring search, and offset/limit pagination.
  */
 export interface ListUsersOptions {
     status?: UserStatus;

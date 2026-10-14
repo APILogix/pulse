@@ -26,8 +26,9 @@ import { CONNECTOR_JOBS, connectorTransportQueue, providerFromTransportQueue } f
 import type { ConnectorConfigRow, NotificationPayload, RequestMeta } from './types.js';
 import { env } from '../../config/env.js';
 import { listConnectorTypes } from './registry.js';
+import type { Pool } from 'pg';
 import { workerMetrics } from './metrics/worker-metrics.js';
-import { pool } from '../../config/database.js';
+import { pool, notificationPool } from '../../config/database.js';
 import { logDB } from '../../config/log-database.js';
 import { AlertRuntimeRepository } from '../alerting/runtime/alert-runtime.repository.js';
 import { NotificationEntitlementService } from '../alerting/runtime/notification-entitlement.service.js';
@@ -244,13 +245,14 @@ export async function registerConnectorWorkers(
   logger: FastifyBaseLogger,
   runtimeRepository: AlertRuntimeRepository = new AlertRuntimeRepository(logDB.getPrimaryPool()),
   config: ConnectorWorkerConfig = {},
+  primaryPool: Pool = notificationPool ?? pool,
 ): Promise<{ stop: () => Promise<void> }> {
   const alertDeliveryOnly = config.group === 'alert-delivery';
   const log = logger.child({ component: 'connector-workers', group: config.group ?? 'all' });
   const repository = new ConnectorRepository();
   const notificationEntitlement = new NotificationEntitlementService();
-  const owners = new ProjectOwnerRepository(pool);
-  const globalGuards = new ConnectorGlobalGuards(pool);
+  const owners = new ProjectOwnerRepository(primaryPool);
+  const globalGuards = new ConnectorGlobalGuards(primaryPool);
   const dispatcher = new NotificationDispatcher(repository, logger);
   const service = new ConnectorService({
     repository,

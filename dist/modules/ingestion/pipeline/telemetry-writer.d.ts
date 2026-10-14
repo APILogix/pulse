@@ -94,7 +94,7 @@ export declare class TelemetryWriter {
     private recordSessions;
     appendTelemetryOutbox(scoped: ScopedEvent[], db?: Queryable): Promise<number>;
     private writeTyped;
-    /** Best-effort event id (events_*.event_id is NOT NULL). */
+    /** Best-effort event id (events_*.event_id is UUID NOT NULL). */
     private eventId;
     private writeErrors;
     private writeMessages;

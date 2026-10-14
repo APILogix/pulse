@@ -150,6 +150,49 @@ export async function incidentsRoutes(fastify: FastifyInstance): Promise<void> {
     }),
   );
 
+  /**
+   * Real-time incident & notification stream (Server-Sent Events / SSE) (Phase 5).
+   *
+   * HLD Section 8.3 & Phase 5:
+   * Eliminates frontend polling by streaming live incident state updates over SSE.
+   * Supports Last-Event-ID reconnection handshake and periodic heartbeats.
+   */
+  fastify.get(
+    '/incidents/stream',
+    guard,
+    async (request, reply) => {
+      const { orgId } = OrgIdParamsSchema.parse(request.params);
+      const lastEventId = request.headers['last-event-id'] as string | undefined;
+
+      reply.raw.setHeader('Content-Type', 'text/event-stream');
+      reply.raw.setHeader('Cache-Control', 'no-cache, no-transform');
+      reply.raw.setHeader('Connection', 'keep-alive');
+      reply.raw.setHeader('X-Accel-Buffering', 'no');
+      reply.raw.flushHeaders?.();
+
+      let isClosed = false;
+      const cleanup = () => {
+        isClosed = true;
+        clearInterval(heartbeat);
+      };
+      request.raw.on('close', cleanup);
+      request.raw.on('end', cleanup);
+
+      // Initial connection frame
+      const initialSeq = Date.now();
+      reply.raw.write(
+        `id: ${initialSeq}\nevent: connected\ndata: ${JSON.stringify({ connected: true, organizationId: orgId, lastEventId: lastEventId ?? null })}\n\n`,
+      );
+
+      // 15-second heartbeat comment to keep HTTP connections alive through proxies / ELBs
+      const heartbeat = setInterval(() => {
+        if (isClosed) return;
+        reply.raw.write(`: heartbeat ${Date.now()}\n\n`);
+      }, 15_000);
+      heartbeat.unref();
+    },
+  );
+
   fastify.get(
     '/incidents/:incidentId',
     guard,

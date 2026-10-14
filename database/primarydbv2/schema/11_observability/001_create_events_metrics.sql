@@ -7,7 +7,7 @@ CREATE TABLE IF NOT EXISTS events_metrics (
   id UUID NOT NULL DEFAULT gen_random_uuid(),
   organization_id UUID NOT NULL,
   project_id UUID,
-  event_id VARCHAR(64) NOT NULL,
+  event_id UUID NOT NULL,
   metric_name VARCHAR(255) NOT NULL,
   metric_type VARCHAR(50) NOT NULL,
   metric_unit VARCHAR(50),

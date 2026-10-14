@@ -5,7 +5,7 @@ CREATE TABLE IF NOT EXISTS events_errors (
   project_id UUID,
   api_key_name TEXT NOT NULL,
   environment TEXT NOT NULL,
-  event_id TEXT NOT NULL,
+  event_id UUID NOT NULL,
   request_id TEXT,
   trace_id TEXT,
   span_id TEXT,

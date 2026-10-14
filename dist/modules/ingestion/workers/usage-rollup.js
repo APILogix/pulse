@@ -213,7 +213,7 @@ export class UsageRollup {
                     const batch = scopeList.slice(i, i + BATCH_SIZE);
                     const orgIds = batch.map((s) => s.orgId);
                     const projectIds = batch.map((s) => s.projectId);
-                    const totals = batch.map((s) => s.total);
+                    const totals = batch.map((s) => Math.ceil(s.total));
                     const colArrays = COUNTER_COLUMNS.map((col) => batch.map((s) => s.byColumn.get(col) ?? 0));
                     await client.query(BULK_DAILY_UPSERT_SQL, [
                         orgIds,

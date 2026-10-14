@@ -100,6 +100,11 @@ export declare class RedisLookupCache {
     setInitDelivery(rawKey: string, hintsHash: string, result: DeliveryResult, ttlSeconds?: number): Promise<void>;
     invalidateInitDelivery(rawKey: string): Promise<void>;
     /**
+     * Ultra-fast synchronous L1 cache check (< 5 microseconds).
+     * Safe to call on high-throughput hot paths like telemetry batch admission.
+     */
+    getRemoteConfigL1(projectId: string, environment?: string | null): CachedRemoteConfigDoc | null;
+    /**
      * Fast-path lookup for the materialized remote SDK configuration.
      * Checks Tier-0 L1 in-memory LRU cache first (<0.01ms), then Redis indefinitely cached key.
      */

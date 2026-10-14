@@ -12,6 +12,7 @@ export interface AuditLogEntry {
     actor_type?: 'user' | 'system' | 'scim' | 'saml' | 'api' | 'admin' | null;
     actor_id?: string | null;
 }
+export declare function flushAuditLogs(): Promise<void>;
 /**
  * Schedule an audit-log write without blocking the caller. Always emits a
  * structured log line with the audit payload so the audit trail is preserved

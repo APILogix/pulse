@@ -3,9 +3,12 @@ CREATE TABLE IF NOT EXISTS alert_notification_ledger (
   id                    UUID NOT NULL DEFAULT gen_random_uuid(),
   organization_id       UUID NOT NULL,
   alert_key             VARCHAR(512) NOT NULL,
+  rule_id               UUID,
   rule_action_id        UUID,
+  binding_id            UUID,
   channel_kind          notification_channel_kind NOT NULL,
-  recipient_fingerprint VARCHAR(255) NOT NULL,
+  recipient_user_id     UUID,
+  recipient_fingerprint VARCHAR(255) DEFAULT '',
   notified_at           TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   notification_job_id   UUID,
   PRIMARY KEY (id, notified_at)

@@ -1,17 +1,23 @@
 -- =============================================================================
 -- Seeder File: 004_11_billing_catalog_plans_and_prices.sql
--- Description: Seeds JSON-derived subscription plans and plan prices
+-- Description: Seeds canonical subscription plans and plan prices
 -- Catalog Version: 2.0
--- Source: billing_catalog_response.preview.json
 -- =============================================================================
+
+-- Clean up obsolete 'pro' plan row if unused by any subscription
+DELETE FROM plans
+WHERE key = 'pro'
+  AND NOT EXISTS (
+    SELECT 1 FROM organization_subscriptions os WHERE os.plan_id = plans.id
+  );
 
 WITH plan_seed(key, version, name, tier, description, trial_days, is_public, is_active, is_customizable, next_plan_key, badge, sort_order) AS (
 VALUES
-  ('free', 1, 'Free', 'free'::billing_plan_tier, 'Perfect for personal projects, prototypes and evaluation. One organization per user.', 0, TRUE, TRUE, FALSE, 'starter', NULL, 1),
-  ('starter', 1, 'Starter', 'starter'::billing_plan_tier, 'Production-ready observability for small teams. One organization per user.', 14, TRUE, TRUE, FALSE, 'growth', 'Popular', 2),
-  ('growth', 1, 'Growth', 'growth'::billing_plan_tier, 'Scaling teams requiring advanced observability and AI capabilities. One organization per user.', 14, TRUE, TRUE, FALSE, 'business', 'Recommended', 3),
-  ('business', 1, 'Business', 'business'::billing_plan_tier, 'Enterprise-ready monitoring with governance, security and automation. One organization per user.', 14, TRUE, TRUE, FALSE, 'enterprise', 'Best Value', 4),
-  ('enterprise', 1, 'Enterprise', 'enterprise'::billing_plan_tier, 'Custom enterprise deployment with unlimited scale and dedicated support. One organization per user.', 30, FALSE, TRUE, TRUE, NULL, NULL, 5)
+  ('free', 1, 'Free', 'free'::billing_plan_tier, 'Perfect for personal projects, prototypes, and evaluation with 50,000 monthly shared event credits.', 0, TRUE, TRUE, FALSE, 'starter', NULL, 1),
+  ('starter', 1, 'Starter', 'starter'::billing_plan_tier, 'Production-ready observability for small teams with 250,000 monthly shared event credits.', 14, TRUE, TRUE, FALSE, 'growth', 'Popular', 2),
+  ('growth', 1, 'Growth', 'growth'::billing_plan_tier, 'Scaling teams requiring advanced observability, routing, and AI capabilities with 1,500,000 monthly shared event credits.', 14, TRUE, TRUE, FALSE, 'business', 'Recommended', 3),
+  ('business', 1, 'Business', 'business'::billing_plan_tier, 'Enterprise-ready monitoring with governance, security, and automation with 10,000,000 monthly shared event credits.', 14, TRUE, TRUE, FALSE, 'enterprise', 'Best Value', 4),
+  ('enterprise', 1, 'Enterprise', 'enterprise'::billing_plan_tier, 'Custom enterprise deployment with 50,000,000 baseline monthly shared event credits, SSO/SCIM, and dedicated support.', 30, FALSE, TRUE, TRUE, NULL, NULL, 5)
 )
 INSERT INTO plans
   (key, version, name, tier, description, trial_days, is_public, is_active, is_customizable, next_plan_key, badge, sort_order)
