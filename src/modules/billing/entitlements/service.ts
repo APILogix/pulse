@@ -1,6 +1,7 @@
 import { LRUCache } from 'lru-cache';
 import { registerL1Cache, publishInvalidation } from '../../../shared/cache/invalidation-bus.js';
 import { CacheFlags } from '../../../config/cache-flags.js';
+import { recordCacheRequest } from '../../../config/perf/metrics.js';
 import { EntitlementsRepository, type EffectiveEntitlementRow } from './repository.js';
 import {
   BillingFeatureDisabledError,
@@ -86,8 +87,10 @@ export class EntitlementsService {
   private async getOrLoadOrgEntitlements(orgId: string): Promise<CachedOrgEntitlements> {
     const cached = this.cache.get(orgId);
     if (cached) {
+      recordCacheRequest('entitlements', 'hit');
       return cached;
     }
+    recordCacheRequest('entitlements', 'miss');
 
     if (!CacheFlags.entitlementsSingleFlight) {
       // Legacy behavior (kill-switch fallback)

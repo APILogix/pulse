@@ -29,6 +29,7 @@ import { LRUCache } from "lru-cache";
 
 import { pool } from "../../config/database.js";
 import { registerL1Cache, publishInvalidation } from "../cache/invalidation-bus.js";
+import { recordCacheRequest } from "../../config/perf/metrics.js";
 
 // projectId -> orgId. 60s TTL: project ownership effectively never changes.
 // A sentinel ("") marks "project does not exist" so we can negatively cache
@@ -249,7 +250,11 @@ export async function getProjectRole(
 ): Promise<string | null> {
   const cacheKey = `${projectId}:${userId}`;
   const cached = projectRoleCache.get(cacheKey);
-  if (cached !== undefined) return cached === NO_ROLE ? null : cached;
+  if (cached !== undefined) {
+    recordCacheRequest('projectRole', 'hit');
+    return cached === NO_ROLE ? null : cached;
+  }
+  recordCacheRequest('projectRole', 'miss');
 
   const result = await pool.query<{ role: string }>(
     `SELECT pm.role

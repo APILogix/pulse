@@ -1,7 +1,9 @@
 import { createHash } from 'node:crypto';
+import { performance } from 'node:perf_hooks';
 import type { ExplorerQuery } from './types.js';
 import { redisCache } from '../../../config/redis.js';
 import { CacheFlags } from '../../../config/cache-flags.js';
+import { recordCacheRequest, recordCacheOp } from '../../../config/perf/metrics.js';
 
 /**
  * Live-tail / near-live queries are not cached because events are constantly streaming in.
@@ -53,13 +55,20 @@ export function buildObservabilityQueryCacheKey(
  */
 export async function getCachedObservabilityQuery<T>(key: string): Promise<T | null> {
   if (!CacheFlags.observabilityResultCache) return null;
+  const start = performance.now();
   try {
     const raw = await redisCache.get(key);
+    const duration = performance.now() - start;
+    recordCacheOp('get', 'observabilityQuery', duration);
     if (raw) {
+      recordCacheRequest('observabilityQuery', 'hit');
       return JSON.parse(raw) as T;
     }
+    recordCacheRequest('observabilityQuery', 'miss');
   } catch {
-    // Degrade gracefully to database execution
+    const duration = performance.now() - start;
+    recordCacheOp('get', 'observabilityQuery', duration);
+    recordCacheRequest('observabilityQuery', 'miss');
   }
   return null;
 }
@@ -73,9 +82,13 @@ export async function setCachedObservabilityQuery<T>(
   ttlSeconds = 30,
 ): Promise<void> {
   if (!CacheFlags.observabilityResultCache) return;
+  const start = performance.now();
   try {
     await redisCache.set(key, JSON.stringify(data), 'EX', ttlSeconds);
+    const duration = performance.now() - start;
+    recordCacheOp('set', 'observabilityQuery', duration);
   } catch {
-    // Degrade gracefully
+    const duration = performance.now() - start;
+    recordCacheOp('set', 'observabilityQuery', duration);
   }
 }
