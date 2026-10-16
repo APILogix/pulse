@@ -24,6 +24,7 @@ import type {
   ComparisonSeries,
   MonthlyUsageVsPlan,
 } from "./analytics.types.js";
+import { CacheFlags } from "../../../config/cache-flags.js";
 
 const ANALYTICS_CACHE_TTL_MS = 1000 * 60 * 2; // 2 minutes
 const ANALYTICS_CACHE_MAX = 1000;
@@ -59,7 +60,7 @@ export class UsageAnalyticsService {
   ): Promise<UsageAnalyticsResponse> {
     await this.base.requireProjectAccess(orgId, projectId, userId, ProjectMemberRole.VIEWER);
 
-    const cacheKey = this.cacheKey("usage", projectId, query);
+    const cacheKey = this.cacheKey("usage", orgId, projectId, query);
     const cached = this.cache.get(cacheKey) as UsageAnalyticsResponse | undefined;
     if (cached) {
       this.logger.debug({ projectId }, "Usage analytics cache hit");
@@ -95,7 +96,7 @@ export class UsageAnalyticsService {
   ): Promise<HeatmapData> {
     await this.base.requireProjectAccess(orgId, projectId, userId, ProjectMemberRole.VIEWER);
 
-    const cacheKey = this.cacheKey("heatmap", projectId, query);
+    const cacheKey = this.cacheKey("heatmap", orgId, projectId, query);
     const cached = this.cache.get(cacheKey) as HeatmapData | undefined;
     if (cached) return cached;
 
@@ -143,7 +144,7 @@ export class UsageAnalyticsService {
   ): Promise<TopListItem[]> {
     await this.base.requireProjectAccess(orgId, projectId, userId, ProjectMemberRole.VIEWER);
 
-    const cacheKey = this.cacheKey("top", projectId, query);
+    const cacheKey = this.cacheKey("top", orgId, projectId, query);
     const cached = this.cache.get(cacheKey) as TopListItem[] | undefined;
     if (cached) return cached;
 
@@ -169,7 +170,7 @@ export class UsageAnalyticsService {
   ): Promise<ComparisonSeries[]> {
     await this.base.requireProjectAccess(orgId, projectId, userId, ProjectMemberRole.VIEWER);
 
-    const cacheKey = this.cacheKey("comparison", projectId, query);
+    const cacheKey = this.cacheKey("comparison", orgId, projectId, query);
     const cached = this.cache.get(cacheKey) as ComparisonSeries[] | undefined;
     if (cached) return cached;
 
@@ -192,7 +193,9 @@ export class UsageAnalyticsService {
   ): Promise<MonthlyUsageVsPlan[]> {
     await this.base.requireProjectAccess(orgId, projectId, userId, ProjectMemberRole.VIEWER);
 
-    const cacheKey = `monthly:${projectId}`;
+    const cacheKey = CacheFlags.analyticsPaginationFix
+      ? `org:${orgId}:monthly:${projectId}`
+      : `monthly:${projectId}`;
     const cached = this.cache.get(cacheKey) as MonthlyUsageVsPlan[] | undefined;
     if (cached) return cached;
 
@@ -207,17 +210,24 @@ export class UsageAnalyticsService {
    */
   evictProjectCache(projectId: string): void {
     for (const key of this.cache.keys()) {
-      if (key.includes(`:${projectId}:`) || key === `monthly:${projectId}`) {
+      if (
+        key.includes(`:${projectId}:`) ||
+        key.endsWith(`:monthly:${projectId}`) ||
+        key === `monthly:${projectId}`
+      ) {
         this.cache.delete(key);
       }
     }
   }
 
-  private cacheKey(method: string, projectId: string, query: Record<string, unknown>): string {
-    // Strip cursor from cache key to avoid cache misses on pagination; the
-    // underlying query is the same regardless of cursor.
-    const { cursor, ...rest } = query;
-    return `${method}:${projectId}:${JSON.stringify(rest)}`;
+  private cacheKey(method: string, orgId: string, projectId: string, query: Record<string, unknown>): string {
+    if (!CacheFlags.analyticsPaginationFix) {
+      // Legacy behavior (kill-switch fallback)
+      const { cursor, ...rest } = query;
+      return `${method}:${projectId}:${JSON.stringify(rest)}`;
+    }
+    // Fixed: Retain cursor to prevent cross-page cache collisions and scope by orgId
+    return `org:${orgId}:${method}:${projectId}:${JSON.stringify(query)}`;
   }
 
   private encodeCursor(offset: number): string {
