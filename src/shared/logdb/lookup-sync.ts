@@ -1,7 +1,9 @@
 import type { QueryResultRow } from 'pg';
+import { LRUCache } from 'lru-cache';
 import { pool } from '../../config/database.js';
 import { logDB } from '../../config/log-database.js';
 import { logger } from '../../config/logger.js';
+import { CacheFlags } from '../../config/cache-flags.js';
 import { redisLookupCache } from '../../db/redis/lookup-cache.js';
 
 const lookupLogger = logger.child({ component: 'logdb-lookup-sync' });
@@ -35,8 +37,15 @@ const inflightSyncs = new Map<string, Promise<boolean>>();
 /**
  * Cache timestamp of last successful best-effort sync for read/init triggers (e.g. 'sdk.init').
  * Explicit mutations (e.g. publish, rollback, create, update) bypass this cache.
+ * Bounded with LRUCache (max 10000, ttl 60000, ttlAutopurge: true) to eliminate memory leaks.
  */
-const recentInitSyncTimestamps = new Map<string, number>();
+export const recentInitSyncTimestamps = CacheFlags.lookupSyncBounded
+  ? new LRUCache<string, number>({
+      max: 10_000,
+      ttl: 60_000,
+      ttlAutopurge: true,
+    })
+  : (new Map<string, number>() as unknown as LRUCache<string, number>);
 const INIT_SYNC_CACHE_TTL_MS = 60_000; // 1 minute throttle for identical sdk.init queries
 
 export function resetLookupSyncCachesForTest(): void {
