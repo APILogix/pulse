@@ -1,5 +1,6 @@
 import { LRUCache } from 'lru-cache';
 import { registerL1Cache, publishInvalidation } from '../../../shared/cache/invalidation-bus.js';
+import { CacheFlags } from '../../../config/cache-flags.js';
 import { EntitlementsRepository, type EffectiveEntitlementRow } from './repository.js';
 import {
   BillingFeatureDisabledError,
@@ -39,6 +40,7 @@ export class EntitlementsService {
   private readonly cache: LRUCache<string, CachedOrgEntitlements>;
   private readonly defaultTtlMs: number;
   private readonly listeners: Set<OrgInvalidationListener> = new Set();
+  private readonly inFlightLoads = new Map<string, Promise<CachedOrgEntitlements>>();
 
   constructor(
     private readonly repository: EntitlementsRepository = new EntitlementsRepository(),
@@ -64,6 +66,7 @@ export class EntitlementsService {
   /** Invalidate cached entitlements for an organization (e.g. after subscription or override changes) */
   invalidateOrgCache(orgId: string): void {
     this.cache.delete(orgId);
+    this.inFlightLoads.delete(orgId);
     void publishInvalidation('entitlements', orgId);
     for (const listener of this.listeners) {
       try {
@@ -77,6 +80,7 @@ export class EntitlementsService {
   /** Clear entire in-memory entitlement cache */
   clearCache(): void {
     this.cache.clear();
+    this.inFlightLoads.clear();
   }
 
   private async getOrLoadOrgEntitlements(orgId: string): Promise<CachedOrgEntitlements> {
@@ -85,29 +89,67 @@ export class EntitlementsService {
       return cached;
     }
 
-    const [rows, sub] = await Promise.all([
-      this.repository.getEffectiveEntitlements(orgId),
-      this.repository.getSubscriptionState(orgId),
-    ]);
-
-    const map: EntitlementsMap = {};
-    for (const curr of rows) {
-      map[curr.feature_key] = {
-        booleanValue: curr.boolean_value,
-        integerValue: curr.integer_value !== null ? Number(curr.integer_value) : null,
-        decimalValue: curr.decimal_value !== null ? Number(curr.decimal_value) : null,
-        stringValue: curr.string_value,
+    if (!CacheFlags.entitlementsSingleFlight) {
+      // Legacy behavior (kill-switch fallback)
+      const [rows, sub] = await Promise.all([
+        this.repository.getEffectiveEntitlements(orgId),
+        this.repository.getSubscriptionState(orgId),
+      ]);
+      const map: EntitlementsMap = {};
+      for (const curr of rows) {
+        map[curr.feature_key] = {
+          booleanValue: curr.boolean_value,
+          integerValue: curr.integer_value !== null ? Number(curr.integer_value) : null,
+          decimalValue: curr.decimal_value !== null ? Number(curr.decimal_value) : null,
+          stringValue: curr.string_value,
+        };
+      }
+      const entry: CachedOrgEntitlements = {
+        map,
+        subscription: sub,
+        cachedAt: Date.now(),
       };
+      this.cache.set(orgId, entry);
+      return entry;
     }
 
-    const entry: CachedOrgEntitlements = {
-      map,
-      subscription: sub,
-      cachedAt: Date.now(),
-    };
+    const inFlight = this.inFlightLoads.get(orgId);
+    if (inFlight) {
+      return inFlight;
+    }
 
-    this.cache.set(orgId, entry);
-    return entry;
+    const loadPromise = (async () => {
+      try {
+        const [rows, sub] = await Promise.all([
+          this.repository.getEffectiveEntitlements(orgId),
+          this.repository.getSubscriptionState(orgId),
+        ]);
+
+        const map: EntitlementsMap = {};
+        for (const curr of rows) {
+          map[curr.feature_key] = {
+            booleanValue: curr.boolean_value,
+            integerValue: curr.integer_value !== null ? Number(curr.integer_value) : null,
+            decimalValue: curr.decimal_value !== null ? Number(curr.decimal_value) : null,
+            stringValue: curr.string_value,
+          };
+        }
+
+        const entry: CachedOrgEntitlements = {
+          map,
+          subscription: sub,
+          cachedAt: Date.now(),
+        };
+
+        this.cache.set(orgId, entry);
+        return entry;
+      } finally {
+        this.inFlightLoads.delete(orgId);
+      }
+    })();
+
+    this.inFlightLoads.set(orgId, loadPromise);
+    return loadPromise;
   }
 
   /**
