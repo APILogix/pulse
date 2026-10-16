@@ -36,12 +36,21 @@ export interface CachedProjectConfig {
   orgRateLimitPerHour?: number;
 }
 
+import { registerL1Cache, publishInvalidation } from '../shared/cache/invalidation-bus.js';
+
 export const apiKeyCache = new LRUCache<string, CachedProjectConfig>({
   max: 5000,
-  ttl: 1000 * 60 * 30, // 30 minutes
-  updateAgeOnGet: true,
+  ttl: 1000 * 60, // 60 seconds backstop TTL (Tier 0.3)
+  updateAgeOnGet: false,
   allowStale: false,
 });
+
+registerL1Cache('apiKey', apiKeyCache);
+
+export function evictApiKeyCache(keyHash: string): void {
+  apiKeyCache.delete(keyHash);
+  void publishInvalidation('apiKey', keyHash);
+}
 
 /**
  * Cached organization alert-threshold config (latency SLO gates) keyed by

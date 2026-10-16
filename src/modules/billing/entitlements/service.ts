@@ -1,4 +1,5 @@
 import { LRUCache } from 'lru-cache';
+import { registerL1Cache, publishInvalidation } from '../../../shared/cache/invalidation-bus.js';
 import { EntitlementsRepository, type EffectiveEntitlementRow } from './repository.js';
 import {
   BillingFeatureDisabledError,
@@ -47,7 +48,9 @@ export class EntitlementsService {
     this.cache = new LRUCache<string, CachedOrgEntitlements>({
       max: options.maxCachedOrgs ?? 5_000,
       ttl: this.defaultTtlMs,
+      updateAgeOnGet: false,
     });
+    registerL1Cache('entitlements', this.cache);
   }
 
   /** Register a callback invoked whenever an organization's billing state / entitlements are invalidated */
@@ -61,6 +64,7 @@ export class EntitlementsService {
   /** Invalidate cached entitlements for an organization (e.g. after subscription or override changes) */
   invalidateOrgCache(orgId: string): void {
     this.cache.delete(orgId);
+    void publishInvalidation('entitlements', orgId);
     for (const listener of this.listeners) {
       try {
         listener(orgId);

@@ -35,7 +35,7 @@ export class AnalyticsCache {
     max: 5_000,
     // Safety default only. Each analytics endpoint supplies its own TTL on set.
     ttl: 120_000,
-    updateAgeOnGet: true,
+    updateAgeOnGet: false,
     ttlAutopurge: true,
   });
 

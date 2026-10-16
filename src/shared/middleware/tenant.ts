@@ -28,12 +28,13 @@ import type { FastifyReply, FastifyRequest } from "fastify";
 import { LRUCache } from "lru-cache";
 
 import { pool } from "../../config/database.js";
+import { registerL1Cache, publishInvalidation } from "../cache/invalidation-bus.js";
 
 // projectId -> orgId. 60s TTL: project ownership effectively never changes.
 // A sentinel ("") marks "project does not exist" so we can negatively cache
 // without violating the LRU value-type constraint (which disallows null).
 const NO_ORG = "";
-const projectOrgCache = new LRUCache<string, string>({
+export const projectOrgCache = new LRUCache<string, string>({
   max: 50_000,
   ttl: 60 * 1000,
   ttlAutopurge: true,
@@ -41,11 +42,14 @@ const projectOrgCache = new LRUCache<string, string>({
 
 // `${orgId}:${userId}` -> isActiveMember. 30s TTL bounds how long a removed
 // member can keep reading after revocation.
-const membershipCache = new LRUCache<string, boolean>({
+export const membershipCache = new LRUCache<string, boolean>({
   max: 100_000,
   ttl: 30 * 1000,
   ttlAutopurge: true,
 });
+
+registerL1Cache("membership", membershipCache);
+registerL1Cache("projectOrg", projectOrgCache);
 
 function unauthorized(
   reply: FastifyReply,
@@ -215,10 +219,13 @@ export async function requireOrgMembership(
  * reflect the change immediately rather than after the TTL.
  */
 export function invalidateMembershipCache(orgId: string, userId: string): void {
-  membershipCache.delete(`${orgId}:${userId}`);
+  const key = `${orgId}:${userId}`;
+  membershipCache.delete(key);
+  void publishInvalidation("membership", key);
 }
 
 /** Invalidate the cached project->org mapping (e.g. on project delete). */
 export function invalidateProjectOrgCache(projectId: string): void {
   projectOrgCache.delete(projectId);
+  void publishInvalidation("projectOrg", projectId);
 }

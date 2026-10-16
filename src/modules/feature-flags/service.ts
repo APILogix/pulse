@@ -19,6 +19,8 @@ import {
   type SetFlagInput,
 } from './types.js';
 
+import { registerL1Cache, publishInvalidation } from '../../shared/cache/invalidation-bus.js';
+
 export { FEATURE_FLAGS };
 export type { FeatureFlagContext, FeatureFlagRow, SetFlagInput };
 
@@ -43,6 +45,17 @@ export const flagCache = new LRUCache<string, CachedFlagValue>({
   invalidate(key: string, ctx?: FeatureFlagContext): void;
 };
 
+registerL1Cache('flag', {
+  delete: (key: string) => {
+    if (key.includes(':')) {
+      flagCache.delete(key);
+    } else {
+      flagCache.invalidate(key);
+    }
+  },
+  clear: () => flagCache.clear(),
+});
+
 /**
  * Drop cached resolutions for a flag. With `ctx`, only that exact context;
  * without it, every cached context for the flag (LRUCache has no prefix
@@ -51,12 +64,14 @@ export const flagCache = new LRUCache<string, CachedFlagValue>({
 flagCache.invalidate = (key: string, ctx?: FeatureFlagContext): void => {
   if (ctx) {
     flagCache.delete(flagCacheKey(key, ctx));
+    void publishInvalidation('flag', flagCacheKey(key, ctx));
     return;
   }
   const prefix = `${key}:`;
   for (const k of flagCache.keys()) {
     if (k.startsWith(prefix)) flagCache.delete(k);
   }
+  void publishInvalidation('flag', key);
 };
 
 /**

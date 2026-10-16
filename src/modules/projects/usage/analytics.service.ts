@@ -46,7 +46,7 @@ export class UsageAnalyticsService {
     this.cache = new LRUCache<string, AnalyticsCacheValue>({
       max: ANALYTICS_CACHE_MAX,
       ttl: ANALYTICS_CACHE_TTL_MS,
-      updateAgeOnGet: true,
+      updateAgeOnGet: false,
       allowStale: false,
     });
   }

@@ -14,6 +14,7 @@ import {
   recordCatalogCacheLoad,
   recordCatalogCacheInvalidation,
 } from './alert-runtime-metrics.js';
+import { registerL1Cache, publishInvalidation } from '../../../shared/cache/invalidation-bus.js';
 
 export type AlertRuntimeTier = 'fast' | 'window' | 'operational' | 'ai';
 
@@ -219,7 +220,7 @@ export class AlertCatalogSnapshot {
 }
 
 export class AlertRuntimeRuleCatalog {
-  private static readonly globalCache = new LRUCache<string, AlertCatalogSnapshot>({
+  public static readonly globalCache = new LRUCache<string, AlertCatalogSnapshot>({
     max: 2000,
     ttl: 60_000,
     updateAgeOnGet: false,
@@ -247,19 +248,25 @@ export class AlertRuntimeRuleCatalog {
 
   public static invalidateGlobal(organizationId?: string, tier?: AlertRuntimeTier, reason = 'mutation'): void {
     if (organizationId && tier) {
-      AlertRuntimeRuleCatalog.globalCache.delete(`${organizationId}:${tier}`);
+      const key = `${organizationId}:${tier}`;
+      AlertRuntimeRuleCatalog.globalCache.delete(key);
+      void publishInvalidation('ruleCatalog', key);
     } else if (organizationId) {
       for (const t of ['fast', 'window', 'operational', 'ai'] as AlertRuntimeTier[]) {
-        AlertRuntimeRuleCatalog.globalCache.delete(`${organizationId}:${t}`);
+        const key = `${organizationId}:${t}`;
+        AlertRuntimeRuleCatalog.globalCache.delete(key);
+        void publishInvalidation('ruleCatalog', key);
       }
     } else {
       AlertRuntimeRuleCatalog.globalCache.clear();
+      void publishInvalidation('ruleCatalog', '*');
     }
     recordCatalogCacheInvalidation(reason);
   }
 
   public static clearGlobalCache(): void {
     AlertRuntimeRuleCatalog.globalCache.clear();
+    void publishInvalidation('ruleCatalog', '*');
   }
 
   /**
@@ -451,3 +458,14 @@ export class AlertRuntimeRuleCatalog {
     return snapshot.resolveRulesForScope(scope);
   }
 }
+
+registerL1Cache('ruleCatalog', {
+  delete: (key: string) => {
+    if (key === '*') {
+      AlertRuntimeRuleCatalog.globalCache.clear();
+    } else {
+      AlertRuntimeRuleCatalog.globalCache.delete(key);
+    }
+  },
+  clear: () => AlertRuntimeRuleCatalog.globalCache.clear(),
+});
