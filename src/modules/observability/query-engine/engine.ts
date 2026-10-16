@@ -30,6 +30,12 @@ import {
   type TimelineInterval,
 } from './sql-builder.js';
 import { QueryValidationError } from './errors.js';
+import {
+  isObservabilityQueryCacheable,
+  buildObservabilityQueryCacheKey,
+  getCachedObservabilityQuery,
+  setCachedObservabilityQuery,
+} from './cache.js';
 
 /** Minimal execution surface. Backed by the log DB read pool in production. */
 export interface QueryExecutor {
@@ -154,6 +160,15 @@ export class ExplorerQueryEngine {
     ctx: QueryContext,
     rawQuery: ExplorerQuery,
   ): Promise<ExplorerListResponse<T>> {
+    let cacheKey: string | null = null;
+    if (isObservabilityQueryCacheable(rawQuery)) {
+      cacheKey = buildObservabilityQueryCacheKey(ctx.organizationId, resource.name, rawQuery, ctx);
+      const cached = await getCachedObservabilityQuery<ExplorerListResponse<T>>(cacheKey);
+      if (cached) {
+        return cached;
+      }
+    }
+
     const queryResource = resource as ExplorerResource<Record<string, unknown>>;
     const { query, freeText } = this.normalize(queryResource, rawQuery);
 
@@ -193,7 +208,7 @@ export class ExplorerQueryEngine {
     const pageRows = pagination.rows;
     const items = pageRows.map((row) => resource.mapRow(row));
 
-    return {
+    const response: ExplorerListResponse<T> = {
       success: true,
       items,
       pagination: pagination.meta,
@@ -210,6 +225,12 @@ export class ExplorerQueryEngine {
       },
       states: { empty: items.length === 0 },
     };
+
+    if (cacheKey) {
+      void setCachedObservabilityQuery(cacheKey, response, 30);
+    }
+
+    return response;
   }
 
   /** Slice the fetched rows and build bidirectional keyset cursors. */
