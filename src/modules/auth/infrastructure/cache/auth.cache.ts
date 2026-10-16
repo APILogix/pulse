@@ -25,6 +25,8 @@
  * the user's perspective.
  */
 import { LRUCache } from 'lru-cache';
+import { redis } from '../../../../config/redis.js';
+import { CacheFlags } from '../../../../config/cache-flags.js';
 
 /**
  * Per-session access-token blacklist.
@@ -247,27 +249,97 @@ export const webauthnChallengeCache = new LRUCache<string, WebAuthnChallengeStat
 // Tiny semantic helpers so service code does not poke caches directly.
 // ---------------------------------------------------------------------------
 
-export function blacklistAccessToken(sessionId: string): void {
+export async function blacklistAccessToken(sessionId: string): Promise<void> {
   accessTokenBlacklistCache.set(sessionId, 1);
+  if (CacheFlags.authRedisState) {
+    try {
+      await redis.set(`auth:blacklist:${sessionId}`, '1', 'EX', 15 * 60);
+    } catch {
+      // Degrade gracefully to local cache
+    }
+  }
 }
 
-export function isAccessTokenBlacklisted(sessionId: string): boolean {
-  return accessTokenBlacklistCache.has(sessionId);
+export async function isAccessTokenBlacklisted(sessionId: string): Promise<boolean> {
+  if (accessTokenBlacklistCache.has(sessionId)) {
+    return true;
+  }
+  if (CacheFlags.authRedisState) {
+    try {
+      const exists = await redis.get(`auth:blacklist:${sessionId}`);
+      if (exists) {
+        // Read-through L1 cache with TTL <= 5s
+        accessTokenBlacklistCache.set(sessionId, 1, { ttl: 5000 });
+        return true;
+      }
+    } catch {
+      // Degrade gracefully to local cache
+    }
+  }
+  return false;
 }
 
-export function revokeAllUserTokens(userId: string): void {
-  userRevokeCache.set(userId, Date.now());
+export async function revokeAllUserTokens(userId: string): Promise<void> {
+  const now = Date.now();
+  userRevokeCache.set(userId, now);
+  if (CacheFlags.authRedisState) {
+    try {
+      await redis.set(`auth:cutoff:${userId}`, String(now), 'EX', 15 * 60);
+    } catch {
+      // Degrade gracefully to local cache
+    }
+  }
 }
 
-export function getUserRevokeCutoff(userId: string): number | null {
+export async function getUserRevokeCutoff(userId: string): Promise<number | null> {
   const v = userRevokeCache.get(userId);
-  return typeof v === 'number' ? v : null;
+  if (typeof v === 'number') {
+    return v;
+  }
+  if (CacheFlags.authRedisState) {
+    try {
+      const raw = await redis.get(`auth:cutoff:${userId}`);
+      if (raw) {
+        const val = Number(raw);
+        if (!Number.isNaN(val)) {
+          // Read-through L1 cache with TTL <= 5s
+          userRevokeCache.set(userId, val, { ttl: 5000 });
+          return val;
+        }
+      }
+    } catch {
+      // Degrade gracefully to local cache
+    }
+  }
+  return null;
 }
 
-export function recordStepUpFreshness(sessionId: string): void {
-  stepUpFreshnessCache.set(sessionId, Date.now());
+export async function recordStepUpFreshness(sessionId: string): Promise<void> {
+  const now = Date.now();
+  stepUpFreshnessCache.set(sessionId, now);
+  if (CacheFlags.authRedisState) {
+    try {
+      await redis.set(`auth:mfa:freshness:${sessionId}`, String(now), 'EX', 5 * 60);
+    } catch {
+      // Degrade gracefully
+    }
+  }
 }
 
-export function hasFreshStepUp(sessionId: string): boolean {
-  return stepUpFreshnessCache.has(sessionId);
+export async function hasFreshStepUp(sessionId: string): Promise<boolean> {
+  if (stepUpFreshnessCache.has(sessionId)) {
+    return true;
+  }
+  if (CacheFlags.authRedisState) {
+    try {
+      const exists = await redis.get(`auth:mfa:freshness:${sessionId}`);
+      if (exists) {
+        stepUpFreshnessCache.set(sessionId, Number(exists) || Date.now(), { ttl: 5000 });
+        return true;
+      }
+    } catch {
+      // Degrade gracefully
+    }
+  }
+  return false;
 }

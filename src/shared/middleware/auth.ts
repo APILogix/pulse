@@ -103,15 +103,15 @@ export async function authenticate(
   }
 
   try {
-    // 3. Token-level revocation (in-process LRU)
-    if (isAccessTokenBlacklisted(decoded.jti)) {
+    // 3. Token-level revocation (Redis state + L1 read-through)
+    if (await isAccessTokenBlacklisted(decoded.jti)) {
       log.warn({ reqId: request.id, sessionId: decoded.jti }, 'Token revoked');
       return unauthorized(reply, 'SESSION_INVALID', 'Session revoked');
     }
 
     // 4. User-wide revocation. The cutoff is epoch millis; the JWT's `iat`
     //    is in seconds. Tokens issued at-or-before the cutoff are dead.
-    const cutoff = getUserRevokeCutoff(decoded.sub);
+    const cutoff = await getUserRevokeCutoff(decoded.sub);
     if (cutoff !== null && decoded.iat * 1000 <= cutoff) {
       log.warn(
         { reqId: request.id, userId: decoded.sub, cutoff },

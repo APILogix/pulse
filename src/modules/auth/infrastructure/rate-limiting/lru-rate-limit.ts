@@ -1,15 +1,17 @@
 /**
- * In-process LRU rate limiter for the auth module.
+ * Shared Redis rate limiter with in-process LRU fallback for the auth module.
  *
- * Bootstrap-friendly: no Redis dependency. Counters live in memory and are
- * scoped per Node process (same tradeoff as MFA challenge caches in cache.ts).
- *
- * For multi-instance deployments, run a single API instance or accept that
- * limits are per-process until a shared store is introduced later.
+ * Tier 0.2 Implementation:
+ *   - Counters live in Redis under `auth:ratelimit:${scope}:${identity}`.
+ *   - Atomic evaluation via Lua script (INCR + PEXPIRE).
+ *   - Failure degradation:
+ *       * Login / MFA / Password routes FAIL CLOSED (503 Service Unavailable).
+ *       * Non-critical routes FAIL OPEN to preserve availability.
  */
 import type { FastifyRequest, preHandlerHookHandler } from 'fastify';
 import { LRUCache } from 'lru-cache';
-
+import { redis } from '../../../../config/redis.js';
+import { CacheFlags } from '../../../../config/cache-flags.js';
 import { AuthErrorCodes } from '../../domain/types.js';
 
 export interface LruRateLimitOptions {
@@ -32,14 +34,89 @@ const counterCache = new LRUCache<string, RateLimitBucket>({
   ttlAutopurge: true,
 });
 
+const ATOMIC_RATE_LIMIT_LUA = `
+local current = redis.call('INCR', KEYS[1])
+if current == 1 then
+  redis.call('PEXPIRE', KEYS[1], ARGV[1])
+end
+local ttl = redis.call('PTTL', KEYS[1])
+return {current, ttl}
+`;
+
+function isCriticalAuthRoute(scope: string): boolean {
+  const s = scope.toLowerCase();
+  return s.includes('login') || s.includes('mfa') || s.includes('password') || s.includes('stepup');
+}
+
 export function lruRateLimit(
   options: LruRateLimitOptions,
 ): preHandlerHookHandler {
   return async function lruRateLimitHandler(request, reply) {
-    const now = Date.now();
     const identity = options.keyGenerator
       ? options.keyGenerator(request)
       : request.ip || 'unknown';
+
+    if (CacheFlags.authRedisState) {
+      const redisKey = `auth:ratelimit:${options.scope}:${identity}`;
+      try {
+        const [currentCount, ttlMs] = (await redis.eval(
+          ATOMIC_RATE_LIMIT_LUA,
+          1,
+          redisKey,
+          String(options.windowMs),
+        )) as [number, number];
+
+        const remaining = Math.max(0, options.max - currentCount);
+        const retryAfterSeconds = Math.max(1, Math.ceil(ttlMs / 1000));
+        const resetAtEpoch = Math.ceil((Date.now() + Math.max(0, ttlMs)) / 1000);
+
+        reply.header('RateLimit-Limit', String(options.max));
+        reply.header('RateLimit-Remaining', String(remaining));
+        reply.header('RateLimit-Reset', String(resetAtEpoch));
+
+        if (currentCount > options.max) {
+          reply.header('Retry-After', String(retryAfterSeconds));
+          request.log.warn(
+            {
+              rateLimitScope: options.scope,
+              rateLimitKey: identity,
+              retryAfterSeconds,
+            },
+            'Auth route rate limit exceeded',
+          );
+          return reply.status(429).send({
+            error: {
+              code: AuthErrorCodes.RATE_LIMITED,
+              message: 'Too many requests. Please retry later.',
+              details: { retry_after_seconds: retryAfterSeconds },
+            },
+          });
+        }
+        return;
+      } catch (err) {
+        if (isCriticalAuthRoute(options.scope)) {
+          request.log.error(
+            { err, scope: options.scope },
+            'Redis rate limit check failed on critical auth route; failing closed for security',
+          );
+          return reply.status(503).send({
+            error: {
+              code: 'SERVICE_UNAVAILABLE',
+              message: 'Authentication service temporarily unavailable. Please retry later.',
+            },
+          });
+        }
+
+        request.log.warn(
+          { err, scope: options.scope },
+          'Redis rate limit check failed on non-critical route; failing open',
+        );
+        return;
+      }
+    }
+
+    // Fallback: in-process LRU limiter when flag is disabled
+    const now = Date.now();
     const key = `${options.scope}:${identity}`;
     const current = counterCache.get(key);
     const bucket =
@@ -88,5 +165,9 @@ export function lruRateLimit(
 export function ipPlusIdentityKey(
   identity: (req: FastifyRequest) => string,
 ): (req: FastifyRequest) => string {
-  return (req) => `${identity(req)}:${req.ip || 'unknown'}`;
+  return (req: FastifyRequest) => {
+    const ip = req.ip || 'unknown';
+    const id = identity(req);
+    return `${ip}:${id}`;
+  };
 }
