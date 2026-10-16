@@ -16,20 +16,40 @@ CREATE TABLE IF NOT EXISTS knowledge_documents (
   UNIQUE NULLS NOT DISTINCT (tenant_id, source_type, checksum)
 );
 
-CREATE TABLE IF NOT EXISTS knowledge_chunks (
-  chunk_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  document_id UUID NOT NULL REFERENCES knowledge_documents(document_id) ON DELETE CASCADE,
-  tenant_id UUID REFERENCES organizations(id) ON DELETE CASCADE,
-  chunk_index INTEGER NOT NULL CHECK (chunk_index >= 0),
-  content_summary TEXT NOT NULL,
-  embedding VECTOR(1536),
-  access_control JSONB NOT NULL DEFAULT '{}'::jsonb,
-  tags JSONB NOT NULL DEFAULT '{}'::jsonb,
-  confidence_weight NUMERIC(4,3) NOT NULL DEFAULT 1 CHECK (confidence_weight BETWEEN 0 AND 1),
-  search_vector TSVECTOR GENERATED ALWAYS AS (to_tsvector('simple', content_summary)) STORED,
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  UNIQUE (document_id, chunk_index)
-);
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'vector') THEN
+    CREATE TABLE IF NOT EXISTS knowledge_chunks (
+      chunk_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      document_id UUID NOT NULL REFERENCES knowledge_documents(document_id) ON DELETE CASCADE,
+      tenant_id UUID REFERENCES organizations(id) ON DELETE CASCADE,
+      chunk_index INTEGER NOT NULL CHECK (chunk_index >= 0),
+      content_summary TEXT NOT NULL,
+      embedding VECTOR(1536),
+      access_control JSONB NOT NULL DEFAULT '{}'::jsonb,
+      tags JSONB NOT NULL DEFAULT '{}'::jsonb,
+      confidence_weight NUMERIC(4,3) NOT NULL DEFAULT 1 CHECK (confidence_weight BETWEEN 0 AND 1),
+      search_vector TSVECTOR GENERATED ALWAYS AS (to_tsvector('simple', content_summary)) STORED,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (document_id, chunk_index)
+    );
+  ELSE
+    CREATE TABLE IF NOT EXISTS knowledge_chunks (
+      chunk_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      document_id UUID NOT NULL REFERENCES knowledge_documents(document_id) ON DELETE CASCADE,
+      tenant_id UUID REFERENCES organizations(id) ON DELETE CASCADE,
+      chunk_index INTEGER NOT NULL CHECK (chunk_index >= 0),
+      content_summary TEXT NOT NULL,
+      embedding REAL[],
+      access_control JSONB NOT NULL DEFAULT '{}'::jsonb,
+      tags JSONB NOT NULL DEFAULT '{}'::jsonb,
+      confidence_weight NUMERIC(4,3) NOT NULL DEFAULT 1 CHECK (confidence_weight BETWEEN 0 AND 1),
+      search_vector TSVECTOR GENERATED ALWAYS AS (to_tsvector('simple', content_summary)) STORED,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (document_id, chunk_index)
+    );
+  END IF;
+END $$;
 
 CREATE INDEX IF NOT EXISTS idx_knowledge_documents_tenant_status
   ON knowledge_documents (tenant_id, status, updated_at DESC);

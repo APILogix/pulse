@@ -14,6 +14,10 @@ Pulse provides end-to-end API monitoring, real-time metrics ingestion, intellige
 - **Enterprise Authentication & RBAC**: Multi-tenant authorization, session management, MFA, and organization hierarchy.
 - **Billing & Subscriptions**: Usage tracking, tier enforcement, and billing catalog synchronization.
 - **Worker Ecosystem**: Dedicated process roles for API gateway, ingestion, analytics, cron, and background queue workers managed via PM2.
+- **Production Architecture & Guides**:
+  - [DATABASE_POOLING_AND_SIZING_GUIDE.md](DATABASE_POOLING_AND_SIZING_GUIDE.md): Deep-dive into connection pooling, polling loops, code snippets, and why LogDB has 2x connections.
+  - [KVM4_DATABASE_DEPLOYMENT_GUIDE.md](KVM4_DATABASE_DEPLOYMENT_GUIDE.md): Hardware sizing math (16 GB RAM / 200 GB NVMe), PgBouncer setup, and database setup runbook.
+  - [PRODUCTION_DEPLOYMENT_HANDBOOK.md](PRODUCTION_DEPLOYMENT_HANDBOOK.md): Zero-trust database isolation, WireGuard encrypted mesh, multi-host real-time monitoring (Dozzle/Uptime Kuma), and offsite backups.
 
 ---
 

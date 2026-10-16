@@ -3,6 +3,7 @@ import { ProjectError } from "./shared/utils.js";
 import { ProjectRepository } from "./core/project.repository.js";
 import { MemberRepository } from "./members/member.repository.js";
 import { ProjectUsageRepository } from "./usage/project-usage.repository.js";
+import { getProjectRole } from "../../shared/middleware/tenant.js";
 export class ProjectsRepository {
     db;
     core;
@@ -22,6 +23,11 @@ export class ProjectsRepository {
         return this.members.findOrganizationMembership(orgId, userId, client);
     }
     async getProjectMemberRole(orgId, projectId, userId, client) {
+        if (!client) {
+            const cached = await getProjectRole(projectId, userId);
+            if (cached !== null)
+                return cached;
+        }
         const db = client ?? this.db;
         const result = await db.query(`SELECT pm.role
          FROM project_members pm

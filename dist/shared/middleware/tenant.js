@@ -1,21 +1,32 @@
 import { LRUCache } from "lru-cache";
 import { pool } from "../../config/database.js";
+import { registerL1Cache, publishInvalidation } from "../cache/invalidation-bus.js";
+import { recordCacheRequest } from "../../config/perf/metrics.js";
 // projectId -> orgId. 60s TTL: project ownership effectively never changes.
 // A sentinel ("") marks "project does not exist" so we can negatively cache
 // without violating the LRU value-type constraint (which disallows null).
 const NO_ORG = "";
-const projectOrgCache = new LRUCache({
+export const projectOrgCache = new LRUCache({
     max: 50_000,
     ttl: 60 * 1000,
     ttlAutopurge: true,
 });
 // `${orgId}:${userId}` -> isActiveMember. 30s TTL bounds how long a removed
 // member can keep reading after revocation.
-const membershipCache = new LRUCache({
+export const membershipCache = new LRUCache({
     max: 100_000,
     ttl: 30 * 1000,
     ttlAutopurge: true,
 });
+// `${projectId}:${userId}` -> role. 60s TTL bounds staleness of project role checks.
+export const projectRoleCache = new LRUCache({
+    max: 100_000,
+    ttl: 60 * 1000,
+    ttlAutopurge: true,
+});
+registerL1Cache("membership", membershipCache);
+registerL1Cache("projectOrg", projectOrgCache);
+registerL1Cache("projectRole", projectRoleCache);
 function unauthorized(reply, code, message, status = 403) {
     return reply.status(status).send({ error: { code, message } });
 }
@@ -132,10 +143,40 @@ export async function requireOrgMembership(request, reply) {
  * reflect the change immediately rather than after the TTL.
  */
 export function invalidateMembershipCache(orgId, userId) {
-    membershipCache.delete(`${orgId}:${userId}`);
+    const key = `${orgId}:${userId}`;
+    membershipCache.delete(key);
+    void publishInvalidation("membership", key);
 }
 /** Invalidate the cached project->org mapping (e.g. on project delete). */
 export function invalidateProjectOrgCache(projectId) {
     projectOrgCache.delete(projectId);
+    void publishInvalidation("projectOrg", projectId);
+}
+const NO_ROLE = "__NONE__";
+/**
+ * Resolve a user's role in a project with a 60s in-process LRU cache.
+ */
+export async function getProjectRole(projectId, userId) {
+    const cacheKey = `${projectId}:${userId}`;
+    const cached = projectRoleCache.get(cacheKey);
+    if (cached !== undefined) {
+        recordCacheRequest('projectRole', 'hit');
+        return cached === NO_ROLE ? null : cached;
+    }
+    recordCacheRequest('projectRole', 'miss');
+    const result = await pool.query(`SELECT pm.role
+     FROM project_members pm
+     JOIN projects p ON p.id = pm.project_id
+     WHERE pm.project_id = $1 AND pm.user_id = $2 AND pm.status = 'active' AND p.deleted_at IS NULL
+     LIMIT 1`, [projectId, userId]);
+    const role = result.rows[0]?.role ?? null;
+    projectRoleCache.set(cacheKey, role ?? NO_ROLE);
+    return role;
+}
+/** Invalidate cached project role on member add, remove, or role update. */
+export function invalidateProjectRoleCache(projectId, userId) {
+    const key = `${projectId}:${userId}`;
+    projectRoleCache.delete(key);
+    void publishInvalidation("projectRole", key);
 }
 //# sourceMappingURL=tenant.js.map

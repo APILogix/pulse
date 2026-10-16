@@ -74,8 +74,8 @@ export declare const UpdateRoutingDefaultSchema: z.ZodObject<{
     }>;
     destinationType: z.ZodEnum<{
         email: "email";
-        none: "none";
         dashboard: "dashboard";
+        none: "none";
     }>;
     isEnabled: z.ZodOptional<z.ZodBoolean>;
     config: z.ZodOptional<z.ZodRecord<z.ZodString, z.ZodUnknown>>;

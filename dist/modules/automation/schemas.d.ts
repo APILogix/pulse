@@ -37,8 +37,8 @@ export declare const PaginationSchema: z.ZodObject<{
 }, z.core.$strip>;
 export declare const TriggerDefinitionSchema: z.ZodObject<{
     triggerKind: z.ZodEnum<{
-        manual: "manual";
         event: "event";
+        manual: "manual";
         webhook: "webhook";
         schedule: "schedule";
     }>;
@@ -170,8 +170,8 @@ export declare const CreateWorkflowSchema: z.ZodObject<{
     description: z.ZodOptional<z.ZodString>;
     workflowType: z.ZodEnum<{
         custom: "custom";
-        report: "report";
         security: "security";
+        report: "report";
         dead_letter: "dead_letter";
         anomaly: "anomaly";
         escalation: "escalation";
@@ -196,8 +196,8 @@ export declare const CreateWorkflowSchema: z.ZodObject<{
     projectId: z.ZodOptional<z.ZodString>;
     trigger: z.ZodObject<{
         triggerKind: z.ZodEnum<{
-            manual: "manual";
             event: "event";
+            manual: "manual";
             webhook: "webhook";
             schedule: "schedule";
         }>;
@@ -327,8 +327,8 @@ export declare const UpdateWorkflowSchema: z.ZodObject<{
     description: z.ZodOptional<z.ZodString>;
     trigger: z.ZodOptional<z.ZodObject<{
         triggerKind: z.ZodEnum<{
-            manual: "manual";
             event: "event";
+            manual: "manual";
             webhook: "webhook";
             schedule: "schedule";
         }>;
@@ -481,8 +481,8 @@ export declare const ListWorkflowsQuerySchema: z.ZodObject<{
     }>>;
     workflowType: z.ZodOptional<z.ZodEnum<{
         custom: "custom";
-        report: "report";
         security: "security";
+        report: "report";
         dead_letter: "dead_letter";
         anomaly: "anomaly";
         escalation: "escalation";
@@ -657,8 +657,8 @@ export declare const TemplateDefinitionSchema: z.ZodObject<{
     schemaVersion: z.ZodNumber;
     workflowType: z.ZodEnum<{
         custom: "custom";
-        report: "report";
         security: "security";
+        report: "report";
         dead_letter: "dead_letter";
         anomaly: "anomaly";
         escalation: "escalation";
@@ -677,8 +677,8 @@ export declare const TemplateDefinitionSchema: z.ZodObject<{
     }>;
     trigger: z.ZodObject<{
         kind: z.ZodEnum<{
-            manual: "manual";
             event: "event";
+            manual: "manual";
             webhook: "webhook";
             schedule: "schedule";
         }>;

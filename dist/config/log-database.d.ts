@@ -53,6 +53,7 @@ declare class LogDatabaseManager {
     private primaryPool;
     private replicaPool;
     private replicaHealthy;
+    private replicaUnhealthyUntil;
     private isShuttingDown;
     private timescaleReady;
     constructor();
@@ -153,15 +154,17 @@ declare class LogDatabaseManager {
      * Execute a query with retry + exponential backoff (with jitter).
      *
      * - Non-retryable errors (constraint, permission, syntax) fail immediately.
-     * - A per-statement timeout, when supplied, is applied via `SET LOCAL` inside
-     *   a transaction so it can never leak onto a reused pooled connection.
+     * - Statement timeouts are never retried, preventing runaway zombie query storms on LogDB.
+     * - A per-statement timeout, when supplied, is applied via `set_config('statement_timeout', ..., true)`
+     *   inside a transaction so it can never leak onto a reused pooled connection and PostgreSQL
+     *   engine cancels the query if exceeded.
      * - Reads default to the configured read timeout; writes default to the
      *   write timeout (0/unbounded) so ingestion is never aborted mid-batch.
      */
     queryWithRetry<T extends QueryResultRow = QueryResultRow>(sql: string, params?: unknown[], options?: QueryOptions): Promise<QueryResult<T>>;
     /**
      * Run a single statement, optionally bounded by a transaction-scoped
-     * `SET LOCAL statement_timeout` and/or an RLS tenant scope.
+     * `set_config('statement_timeout', ..., true)` and/or an RLS tenant scope.
      *
      * A transaction is opened when EITHER a bounded timeout OR a tenant scope is
      * required, because both mechanisms are transaction-scoped. The no-transaction

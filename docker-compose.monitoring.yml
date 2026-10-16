@@ -1,0 +1,45 @@
+name: pulse-monitoring
+
+services:
+  # ── Dozzle Real-Time Log & Container Performance Dashboard (KVM 1 Master) ──
+  # Provides real-time streaming logs, CPU/Memory graphs, and container health.
+  # Can connect to remote agents on KVM 2 to view all servers in one screen.
+  dozzle:
+    image: amir20/dozzle:latest
+    container_name: pulse_dozzle
+    restart: unless-stopped
+    ports:
+      - "${DOZZLE_PORT:-8888}:8080"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    environment:
+      # Optional: protect dashboard with username and password
+      DOZZLE_AUTH_PROVIDER: ${DOZZLE_AUTH_PROVIDER:-none}
+      DOZZLE_REMOTE_AGENT: ${DOZZLE_REMOTE_AGENT:-} # e.g. 10.8.0.2:7007 (KVM 2 agent)
+      DOZZLE_LEVEL: info
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256M
+
+  # ── Uptime Kuma (Real-Time Service & Health Check Monitoring) ───────────────
+  # Monitors /health/live, /health/ready, database ports, and sends alerts to
+  # Telegram, Discord, Slack, or Email if any container or healthcheck fails.
+  uptime-kuma:
+    image: louislam/uptime-kuma:1
+    container_name: pulse_uptime_kuma
+    restart: unless-stopped
+    ports:
+      - "${UPTIME_KUMA_PORT:-3001}:3001"
+    volumes:
+      - uptime_kuma_data:/app/data
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 512M
+
+volumes:
+  uptime_kuma_data:
+    name: pulse_uptime_kuma_data

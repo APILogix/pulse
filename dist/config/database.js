@@ -36,8 +36,20 @@ const primaryPoolConfig = withPostgresAddressFamily({
     keepAliveInitialDelayMillis: env.DB_KEEPALIVE_INITIAL_DELAY_MS,
 }, env.DB_FAMILY);
 export const pool = new Pool(primaryPoolConfig);
-// Resilient pool.query: Automatically retries on transient connection drops
-// (e.g. Neon serverless idle socket termination, PgBouncer drop, ECONNRESET).
+const READ_QUERY_REGEX = /^\s*(?:\/\*[\s\S]*?\*\/\s*)*(?:SELECT|WITH\b(?![\s\S]*\b(?:INSERT|UPDATE|DELETE)\b)|SHOW|VALUES)\b/i;
+function isSafeToRetryQuery(textOrConfig, err) {
+    if (!isTransientPostgresError(err))
+        return false;
+    // Safe to retry if the error occurred prior to dispatch (socket connect / acquire error)
+    if (err?.code === 'ECONNREFUSED' || err?.code === 'ETIMEDOUT')
+        return true;
+    // Safe to retry if the SQL is an idempotent read query
+    const sql = typeof textOrConfig === 'string' ? textOrConfig : textOrConfig?.text;
+    if (sql && READ_QUERY_REGEX.test(sql))
+        return true;
+    return false;
+}
+// Resilient pool.query: Automatically retries on transient connection drops for safe read queries
 const rawPoolQuery = pool.query.bind(pool);
 pool.query = async function (textOrConfig, values, callback) {
     if (typeof values === 'function' || typeof callback === 'function') {
@@ -51,9 +63,9 @@ pool.query = async function (textOrConfig, values, callback) {
         }
         catch (err) {
             attempt++;
-            if (attempt <= maxRetries && isTransientPostgresError(err)) {
+            if (attempt <= maxRetries && isSafeToRetryQuery(textOrConfig, err)) {
                 const delayMs = 150 * attempt;
-                dbLogger.debug({ attempt, maxRetries, delayMs, err: err?.message || String(err) }, 'Transient database connection error in pool.query; retrying...');
+                dbLogger.debug({ attempt, maxRetries, delayMs, err: err?.message || String(err) }, 'Transient database connection error in pool.query; retrying safe read query...');
                 await new Promise((resolve) => setTimeout(resolve, delayMs));
                 continue;
             }
@@ -99,9 +111,9 @@ notificationPool.query = async function (textOrConfig, values, callback) {
         }
         catch (err) {
             attempt++;
-            if (attempt <= maxRetries && isTransientPostgresError(err)) {
+            if (attempt <= maxRetries && isSafeToRetryQuery(textOrConfig, err)) {
                 const delayMs = 150 * attempt;
-                dbLogger.debug({ attempt, maxRetries, delayMs, err: err?.message || String(err) }, 'Transient database connection error in notificationPool.query; retrying...');
+                dbLogger.debug({ attempt, maxRetries, delayMs, err: err?.message || String(err) }, 'Transient database connection error in notificationPool.query; retrying safe read query...');
                 await new Promise((resolve) => setTimeout(resolve, delayMs));
                 continue;
             }

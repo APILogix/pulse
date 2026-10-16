@@ -71,16 +71,15 @@ export class CoreRepository extends BaseRepository {
       }
       const org = r.rows[0]!;
 
-      await client.query(`INSERT INTO organization_settings (org_id) VALUES ($1)`, [org.id]);
-
       await client.query(
-        `INSERT INTO organization_members (org_id,user_id,role,status,joined_at,joined_method,last_active_at)
-         VALUES ($1,$2,'owner','active',NOW(),'admin_add',NOW())`,
-        [org.id, ownerUserId]
-      );
-
-      await client.query(
-        `UPDATE users SET current_org_id=$1, updated_at=NOW() WHERE id=$2`,
+        `WITH ins_settings AS (
+           INSERT INTO organization_settings (org_id) VALUES ($1)
+         ),
+         ins_member AS (
+           INSERT INTO organization_members (org_id, user_id, role, status, joined_at, joined_method, last_active_at)
+           VALUES ($1, $2, 'owner', 'active', NOW(), 'admin_add', NOW())
+         )
+         UPDATE users SET current_org_id=$1, updated_at=NOW() WHERE id=$2`,
         [org.id, ownerUserId],
       );
 

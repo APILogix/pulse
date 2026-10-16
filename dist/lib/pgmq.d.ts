@@ -50,6 +50,7 @@ export declare class PgmqClient {
     private commandPool;
     private ownsPool;
     private ownsCommandPool;
+    private readonly readerFactory?;
     private knownQueues;
     private knownQueuesLoaded;
     private knownQueuesInitPromise;
@@ -108,8 +109,14 @@ export declare class PgmqClient {
      */
     read<T = unknown>(queue: string, options?: PgmqReadOptions, client?: PoolClient): Promise<Array<PgmqMessage<T>>>;
     /**
-     * Long-polls for up to `quantity` messages.
-     * Blocks in PostgreSQL for up to `pollTimeoutSeconds` before returning.
+     * Polls for up to `quantity` messages using non-blocking client-side intervals.
+     *
+     * Why client-side polling instead of `pgmq.read_with_poll`:
+     * Server-side `pgmq.read_with_poll` executes `pg_sleep()` inside PL/pgSQL, pinning
+     * a physical PostgreSQL backend and PgBouncer transaction slot in `active` state for
+     * 2,000ms continuously. By executing fast `pgmq.read()` checks (~0.4ms) and sleeping
+     * in the Node.js event loop when empty, database connection hold time drops by ~500x
+     * and PgBouncer never starves API or heartbeat queries.
      */
     readWithPoll<T = unknown>(queue: string, options?: PgmqReadOptions, client?: PoolClient): Promise<Array<PgmqMessage<T>>>;
     /**

@@ -1,0 +1,4 @@
+;; Format: "username" "password" (plain text or md5/scram hash)
+;; In production, replace with your strong production password!
+"postgres" "postgres"
+"monitor" "monitor_secure_password"

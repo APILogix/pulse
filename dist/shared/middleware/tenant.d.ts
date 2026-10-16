@@ -25,6 +25,10 @@
  *   later in one place.
  */
 import type { FastifyReply, FastifyRequest } from "fastify";
+import { LRUCache } from "lru-cache";
+export declare const projectOrgCache: LRUCache<string, string, unknown>;
+export declare const membershipCache: LRUCache<string, boolean, unknown>;
+export declare const projectRoleCache: LRUCache<string, string, unknown>;
 export declare function requireProjectMembership(request: FastifyRequest, reply: FastifyReply): Promise<void>;
 /** Use when projectId is supplied via query string (ingestion read APIs). */
 export declare function requireProjectMembershipFromQuery(request: FastifyRequest, reply: FastifyReply): Promise<void>;
@@ -43,4 +47,10 @@ export declare function requireOrgMembership(request: FastifyRequest, reply: Fas
 export declare function invalidateMembershipCache(orgId: string, userId: string): void;
 /** Invalidate the cached project->org mapping (e.g. on project delete). */
 export declare function invalidateProjectOrgCache(projectId: string): void;
+/**
+ * Resolve a user's role in a project with a 60s in-process LRU cache.
+ */
+export declare function getProjectRole(projectId: string, userId: string): Promise<string | null>;
+/** Invalidate cached project role on member add, remove, or role update. */
+export declare function invalidateProjectRoleCache(projectId: string, userId: string): void;
 //# sourceMappingURL=tenant.d.ts.map

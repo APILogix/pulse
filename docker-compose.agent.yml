@@ -1,0 +1,20 @@
+name: pulse-monitoring-agent
+
+services:
+  # ── Dozzle Remote Agent (Runs on KVM 2 Database Node) ───────────────────────
+  # Streams database container status, metrics, and logs securely to KVM 1 Dozzle
+  dozzle-agent:
+    image: amir20/dozzle:latest
+    container_name: pulse_dozzle_agent
+    restart: unless-stopped
+    command: agent
+    ports:
+      # Bind strictly to the private network / WireGuard interface
+      - "${DOZZLE_AGENT_BIND_IP:-127.0.0.1}:7007:7007"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    deploy:
+      resources:
+        limits:
+          cpus: "0.2"
+          memory: 64M

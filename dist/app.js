@@ -16,6 +16,7 @@ import { checkPostgresHealth } from './config/postgres-network.js';
 import { logger } from './config/logger.js';
 import { registerHealthPlugin } from './config/plugins.js';
 import { registerMetricsPlugin } from './config/metrics.js';
+import { registerPerfPlugin } from './config/perf/http-plugin.js';
 import { memoryDiagnostics } from './lib/memory-diagnostics.js';
 import { BackpressureGauge } from './lib/gauge.js';
 import { registerHealthChecks } from './lib/health.js';
@@ -216,6 +217,7 @@ export async function buildApp() {
     });
     // ── Prometheus Metrics ─────────────────────────────────────────────
     await app.register(registerMetricsPlugin);
+    await app.register(registerPerfPlugin);
     // ── Memory Diagnostics & Local Diagnostic Mode ─────────────────────
     if (env.NODE_ENV !== 'production' || env.MEMORY_DIAGNOSTICS_ENABLED) {
         app.get('/diagnostics/memory', async (_req, reply) => {

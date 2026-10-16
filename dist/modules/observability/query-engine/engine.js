@@ -3,6 +3,7 @@ import { parseSearch } from './search-parser.js';
 import { createCursorPayload, encodeCursor } from './cursor.js';
 import { buildCombinedAggregateStatement, buildListStatement, buildStatisticsStatement, buildSummaryStatement, buildTimelineStatement, } from './sql-builder.js';
 import { QueryValidationError } from './errors.js';
+import { isObservabilityQueryCacheable, buildObservabilityQueryCacheKey, getCachedObservabilityQuery, setCachedObservabilityQuery, } from './cache.js';
 /** Coerce pg numeric/bigint strings to numbers (missing/NaN ⇒ 0). */
 function toNumberMap(row) {
     const out = {};
@@ -101,6 +102,14 @@ export class ExplorerQueryEngine {
     }
     /** Execute a list query and assemble the full explorer envelope. */
     async list(resource, ctx, rawQuery) {
+        let cacheKey = null;
+        if (isObservabilityQueryCacheable(rawQuery)) {
+            cacheKey = buildObservabilityQueryCacheKey(ctx.organizationId, resource.name, rawQuery, ctx);
+            const cached = await getCachedObservabilityQuery(cacheKey);
+            if (cached) {
+                return cached;
+            }
+        }
         const queryResource = resource;
         const { query, freeText } = this.normalize(queryResource, rawQuery);
         const listStmt = buildListStatement(queryResource, ctx, query, freeText);
@@ -136,7 +145,7 @@ export class ExplorerQueryEngine {
         const pagination = this.paginate(rawRows, listStmt.reversed, listStmt.limit, query, queryResource, ctx);
         const pageRows = pagination.rows;
         const items = pageRows.map((row) => resource.mapRow(row));
-        return {
+        const response = {
             success: true,
             items,
             pagination: pagination.meta,
@@ -153,6 +162,10 @@ export class ExplorerQueryEngine {
             },
             states: { empty: items.length === 0 },
         };
+        if (cacheKey) {
+            void setCachedObservabilityQuery(cacheKey, response, 30);
+        }
+        return response;
     }
     /** Slice the fetched rows and build bidirectional keyset cursors. */
     paginate(rawRows, reversed, limit, query, resource, ctx) {

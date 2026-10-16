@@ -25,6 +25,10 @@
  * the user's perspective.
  */
 import { LRUCache } from 'lru-cache';
+export declare const authSessionCache: LRUCache<string, any, unknown>;
+export declare function getCachedAuthSession(sessionId: string): Promise<any | null>;
+export declare function setCachedAuthSession(sessionId: string, sessionRecord: any, ttlSeconds?: number): Promise<void>;
+export declare function invalidateCachedAuthSession(sessionId: string): Promise<void>;
 /**
  * Per-session access-token blacklist.
  * key   = sessionId (JWT jti)
@@ -180,10 +184,10 @@ export interface WebAuthnChallengeState {
     deviceId?: string;
 }
 export declare const webauthnChallengeCache: LRUCache<string, WebAuthnChallengeState, unknown>;
-export declare function blacklistAccessToken(sessionId: string): void;
-export declare function isAccessTokenBlacklisted(sessionId: string): boolean;
-export declare function revokeAllUserTokens(userId: string): void;
-export declare function getUserRevokeCutoff(userId: string): number | null;
-export declare function recordStepUpFreshness(sessionId: string): void;
-export declare function hasFreshStepUp(sessionId: string): boolean;
+export declare function blacklistAccessToken(sessionId: string): Promise<void>;
+export declare function isAccessTokenBlacklisted(sessionId: string): Promise<boolean>;
+export declare function revokeAllUserTokens(userId: string): Promise<void>;
+export declare function getUserRevokeCutoff(userId: string): Promise<number | null>;
+export declare function recordStepUpFreshness(sessionId: string): Promise<void>;
+export declare function hasFreshStepUp(sessionId: string): Promise<boolean>;
 //# sourceMappingURL=auth.cache.d.ts.map

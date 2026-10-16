@@ -6,6 +6,7 @@ import { UsageRepository } from "../usage/usage.repository.js";
 import { MemberRepository } from "./member.repository.js";
 import { ProjectError } from "../shared/utils.js";
 import { BaseProjectService } from "../shared/base.service.js";
+import { invalidateProjectRoleCache } from "../../../shared/middleware/tenant.js";
 export class ProjectMemberService extends BaseProjectService {
     membersRepository;
     constructor(deps) {
@@ -36,6 +37,7 @@ export class ProjectMemberService extends BaseProjectService {
         const added = existing?.status === "removed"
             ? await this.membersRepository.restoreProjectMember(existing.id, body.role, userId)
             : await this.membersRepository.addProjectMember(projectId, orgId, body.userId, body.role, userId);
+        invalidateProjectRoleCache(projectId, added.userId);
         await this.auditMemberChange(meta, orgId, projectId, "member.added", "member", added.id, { userId: added.userId, role: added.role }, `Member added as ${added.role}`);
         return added;
     }
@@ -49,6 +51,7 @@ export class ProjectMemberService extends BaseProjectService {
             throw new ProjectError("MEMBER_OWNER_REMOVE", "Project owner cannot be removed; transfer ownership first", 403);
         }
         const removed = await this.membersRepository.removeProjectMember(memberId, userId);
+        invalidateProjectRoleCache(projectId, member.userId);
         await this.auditMemberChange(meta, orgId, projectId, "member.removed", "member", removed.id, { userId: removed.userId, role: removed.role }, "Member removed");
         return removed;
     }
@@ -62,6 +65,7 @@ export class ProjectMemberService extends BaseProjectService {
             throw new ProjectError("MEMBER_OWNER_ROLE", "Use the transfer ownership endpoint to change the owner", 403);
         }
         const updated = await this.membersRepository.updateProjectMemberRole(memberId, body.role);
+        invalidateProjectRoleCache(projectId, member.userId);
         await this.auditMemberChange(meta, orgId, projectId, "member.role_changed", "member", updated.id, { userId: updated.userId, oldRole: member.role, newRole: updated.role }, `Member role changed to ${updated.role}`);
         return updated;
     }
@@ -74,6 +78,8 @@ export class ProjectMemberService extends BaseProjectService {
             throw new ProjectError("MEMBER_NOT_ORG", "New owner must be an active organization member", 403);
         }
         const result = await this.membersRepository.transferOwnership(projectId, userId, newOwnerUserId, userId);
+        invalidateProjectRoleCache(projectId, userId);
+        invalidateProjectRoleCache(projectId, newOwnerUserId);
         await this.auditMemberChange(meta, orgId, projectId, "member.role_changed", "member", result.toMember.id, { previousOwnerId: userId, newOwnerId: newOwnerUserId }, "Project ownership transferred");
         return result;
     }

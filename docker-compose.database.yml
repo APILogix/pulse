@@ -1,0 +1,143 @@
+name: pulse-databases
+
+services:
+  # ── Primary Database (Control Plane + Relational + pgvector + PGMQ) ───────────
+  primarydb:
+    image: pgvector/pgvector:pg16
+    container_name: pulse_primarydb
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-pulse_primary}
+    command: >
+      postgres
+        -c shared_preload_libraries=pg_stat_statements
+        -c max_connections=40
+        -c shared_buffers=1024MB
+        -c effective_cache_size=2048MB
+        -c maintenance_work_mem=128MB
+        -c checkpoint_completion_target=0.9
+        -c wal_buffers=16MB
+        -c wal_compression=on
+        -c default_statistics_target=100
+        -c random_page_cost=1.1
+        -c effective_io_concurrency=200
+        -c work_mem=8MB
+        -c min_wal_size=512MB
+        -c max_wal_size=2GB
+        -c pg_stat_statements.track=top
+    ports:
+      - "${PRIMARY_DB_BIND_IP:-127.0.0.1}:5432:5432"
+    volumes:
+      - primarydb_data:/var/lib/postgresql/data
+      - ./docker/initdb/primarydb:/docker-entrypoint-initdb.d:ro
+    deploy:
+      resources:
+        limits:
+          cpus: "0.8"
+          memory: 2500M
+        reservations:
+          cpus: "0.25"
+          memory: 1024M
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-pulse_primary}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    networks:
+      - pulse_db_net
+
+  # ── Log Database (Dedicated TimescaleDB HA Telemetry & Analytics) ─────────────
+  logdb:
+    image: timescale/timescaledb-ha:pg16
+    container_name: pulse_logdb
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${LOG_POSTGRES_DB:-pulse_logdb}
+      PGDATA: /home/postgres/pgdata/data
+    command: >
+      postgres
+        -c shared_preload_libraries=timescaledb,pg_stat_statements
+        -c max_connections=60
+        -c shared_buffers=1536MB
+        -c effective_cache_size=3072MB
+        -c maintenance_work_mem=192MB
+        -c checkpoint_completion_target=0.9
+        -c wal_buffers=16MB
+        -c wal_compression=on
+        -c default_statistics_target=100
+        -c random_page_cost=1.1
+        -c effective_io_concurrency=200
+        -c work_mem=10MB
+        -c min_wal_size=1GB
+        -c max_wal_size=4GB
+        -c timescaledb.max_background_workers=3
+        -c pg_stat_statements.track=top
+    ports:
+      - "${LOG_DB_BIND_IP:-127.0.0.1}:5433:5432"
+    volumes:
+      - logdb_data:/home/postgres/pgdata
+      - ./docker/initdb/logdb:/docker-entrypoint-initdb.d:ro
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 4000M
+        reservations:
+          cpus: "0.5"
+          memory: 1536M
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${LOG_POSTGRES_DB:-pulse_logdb}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    networks:
+      - pulse_db_net
+
+  # ── PgBouncer Connection Pooler (Multiplexes hundreds of app connections) ────
+  pgbouncer:
+    image: edoburu/pgbouncer:v1.22.1
+    container_name: pulse_pgbouncer
+    restart: unless-stopped
+    depends_on:
+      primarydb:
+        condition: service_healthy
+      logdb:
+        condition: service_healthy
+    ports:
+      - "${PGBOUNCER_BIND_IP:-0.0.0.0}:6432:6432"
+    volumes:
+      - ./docker/pgbouncer/pgbouncer.ini:/etc/pgbouncer/pgbouncer.ini:ro
+      - ./docker/pgbouncer/userlist.txt:/etc/pgbouncer/userlist.txt:ro
+    deploy:
+      resources:
+        limits:
+          cpus: "0.2"
+          memory: 384M
+        reservations:
+          cpus: "0.05"
+          memory: 64M
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -p 6432 -U ${POSTGRES_USER:-postgres} || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - pulse_db_net
+
+volumes:
+  primarydb_data:
+    name: pulse_primarydb_data
+  logdb_data:
+    name: pulse_logdb_data
+
+networks:
+  pulse_db_net:
+    name: pulse_db_net
+    driver: bridge

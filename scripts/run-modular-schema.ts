@@ -113,6 +113,7 @@ export const LOGDB_DOMAIN_ORDER: readonly string[] = [
   '00_extensions',
   '01_types',
   '02_schema_notes',
+  '15_functions',
   '03_lookup',
   '04_ingestion',
   '05_observability',
@@ -125,7 +126,6 @@ export const LOGDB_DOMAIN_ORDER: readonly string[] = [
   '12_search',
   '13_geo',
   '14_retention',
-  '15_functions',
 ];
 
 // ============================================================================

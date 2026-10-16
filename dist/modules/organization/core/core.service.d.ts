@@ -16,7 +16,7 @@ export interface CoreServiceDeps {
     listOrgApiKeyHashes?: (orgId: string) => Promise<string[]>;
     deleteApiKeyCache?: (hash: string) => void;
     billingProvisioning: BillingProvisioningService;
-    provisionAlertingWorkspace: (client: PoolClient, context: AlertingProvisioningContext) => Promise<AlertingProvisioningSummary>;
+    provisionAlertingWorkspace?: (context: AlertingProvisioningContext, client?: PoolClient) => Promise<AlertingProvisioningSummary>;
 }
 export declare class CoreService {
     private deps;

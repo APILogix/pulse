@@ -21,9 +21,9 @@ const startedAt = Date.now();
 let activeAnalyticsPool = null;
 let activeAnalyticsRuntime = null;
 function logDbConnectionString() {
-    const connectionString = env.LOG_DB_PRIMARY ?? env.DATABASE_URL;
+    const connectionString = env.LOG_DB_DIRECT_URL ?? env.LOG_DB_PRIMARY ?? env.DATABASE_URL;
     if (!connectionString) {
-        throw new Error('Analytics engine requires LOG_DB_PRIMARY (or DATABASE_URL) to be set');
+        throw new Error('Analytics engine requires LOG_DB_DIRECT_URL or LOG_DB_PRIMARY (or DATABASE_URL) to be set');
     }
     return connectionString;
 }

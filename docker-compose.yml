@@ -1,43 +1,173 @@
+# ==============================================================================
+# Pulse SaaS Platform — Docker Compose (Calibrated for KVM 2: 2 vCPU, 8 GB RAM, 100 GB NVMe)
+# ==============================================================================
+
 x-common-environment: &common-environment
   NODE_ENV: production
-  UV_THREADPOOL_SIZE: "8"
-  DATABASE_URL: ${DATABASE_URL:?DATABASE_URL must be set}
+  UV_THREADPOOL_SIZE: "4"
+  DATABASE_URL: ${DATABASE_URL:-postgresql://postgres:postgres@primarydb:5432/pulse_primary}
+  PRIMARY_DATABASE_URL: ${PRIMARY_DATABASE_URL:-postgresql://postgres:postgres@primarydb:5432/pulse_primary}
   DB_FAMILY: ${DB_FAMILY:-0}
-  LOG_DB_PRIMARY: ${LOG_DB_PRIMARY:-}
+  LOG_DB_PRIMARY: ${LOG_DB_PRIMARY:-postgresql://postgres:postgres@logdb:5432/pulse_logdb}
+  LOG_DATABASE_URL: ${LOG_DATABASE_URL:-postgresql://postgres:postgres@logdb:5432/pulse_logdb}
   LOG_DB_REPLICA: ${LOG_DB_REPLICA:-}
+  TIMESCALEDB_URL: ${TIMESCALEDB_URL:-postgresql://postgres:postgres@logdb:5432/pulse_logdb}
+  LOG_DB_ENABLE_TIMESCALE: ${LOG_DB_ENABLE_TIMESCALE:-true}
   REDIS_URL: ${REDIS_URL:-redis://redis:6379}
   REDIS_REQUIRED: ${REDIS_REQUIRED:-false}
-  DB_POOL_MAX: ${DB_POOL_MAX:-20}
+  # Connection pools calibrated for KVM 2 (2 vCPU, max_connections = 40/60)
+  DB_POOL_MAX: ${DB_POOL_MAX:-10}
   DB_POOL_MIN: ${DB_POOL_MIN:-0}
   DB_IDLE_TIMEOUT_MS: ${DB_IDLE_TIMEOUT_MS:-30000}
   DB_CONNECTION_TIMEOUT_MS: ${DB_CONNECTION_TIMEOUT_MS:-30000}
-  LOG_POOL_MAX: ${LOG_POOL_MAX:-20}
+  LOG_POOL_MAX: ${LOG_POOL_MAX:-10}
   LOG_POOL_MIN: ${LOG_POOL_MIN:-0}
   LOG_DB_IDLE_TIMEOUT: ${LOG_DB_IDLE_TIMEOUT:-30000}
   LOG_DB_CONNECTION_TIMEOUT: ${LOG_DB_CONNECTION_TIMEOUT:-10000}
-  QUEUE_POOL_MAX: ${QUEUE_POOL_MAX:-20}
-  QUEUE_COMMAND_POOL_MAX: ${QUEUE_COMMAND_POOL_MAX:-5}
-  INGESTION_DB_POOL_SIZE: ${INGESTION_DB_POOL_SIZE:-8}
-  INGESTION_WRITE_POOL_SIZE: ${INGESTION_WRITE_POOL_SIZE:-20}
-  ANALYTICS_DB_POOL_MAX: ${ANALYTICS_DB_POOL_MAX:-4}
+  QUEUE_POOL_MAX: ${QUEUE_POOL_MAX:-6}
+  QUEUE_COMMAND_POOL_MAX: ${QUEUE_COMMAND_POOL_MAX:-2}
+  INGESTION_DB_POOL_SIZE: ${INGESTION_DB_POOL_SIZE:-4}
+  INGESTION_WRITE_POOL_SIZE: ${INGESTION_WRITE_POOL_SIZE:-10}
+  ANALYTICS_DB_POOL_MAX: ${ANALYTICS_DB_POOL_MAX:-3}
   STARTUP_DB_RETRY_MAX_ATTEMPTS: ${STARTUP_DB_RETRY_MAX_ATTEMPTS:-8}
   STARTUP_DB_RETRY_BASE_DELAY_MS: ${STARTUP_DB_RETRY_BASE_DELAY_MS:-2000}
   STARTUP_DB_RETRY_MAX_DELAY_MS: ${STARTUP_DB_RETRY_MAX_DELAY_MS:-15000}
   SHUTDOWN_TIMEOUT_MS: ${SHUTDOWN_TIMEOUT_MS:-20000}
-  QUEUE_BATCH_SIZE: ${QUEUE_BATCH_SIZE:-50}
+  QUEUE_BATCH_SIZE: ${QUEUE_BATCH_SIZE:-25}
   QUEUE_VISIBILITY_TIMEOUT_SECONDS: ${QUEUE_VISIBILITY_TIMEOUT_SECONDS:-60}
   QUEUE_POLL_SECONDS: ${QUEUE_POLL_SECONDS:-2}
-  JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set}
-  JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:?JWT_REFRESH_SECRET must be set}
-  COOKIE_SECRET: ${COOKIE_SECRET:?COOKIE_SECRET must be set}
-  AUTH_TOKEN_SECRET: ${AUTH_TOKEN_SECRET:?AUTH_TOKEN_SECRET must be set}
-  ENCRYPTION_KEY: ${ENCRYPTION_KEY:?ENCRYPTION_KEY must be exactly 32 characters}
+  JWT_SECRET: ${JWT_SECRET:-change-me-in-production-use-openssl-rand-hex-32}
+  JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:-change-me-in-production-use-openssl-rand-hex-32-refresh}
+  COOKIE_SECRET: ${COOKIE_SECRET:-change-me-in-production-use-openssl-rand-hex-32-cookie}
+  AUTH_TOKEN_SECRET: ${AUTH_TOKEN_SECRET:-change-me-in-production-use-openssl-rand-hex-32-auth}
+  ENCRYPTION_KEY: ${ENCRYPTION_KEY:-change-me-32-characters-exactly!!}
 
 services:
+  # ── Primary Database (Control Plane + Relational + pgvector + PGMQ) ───────────
+  primarydb:
+    image: pgvector/pgvector:pg16
+    container_name: pulse_primarydb
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-pulse_primary}
+    command: >
+      postgres
+        -c shared_preload_libraries=pg_stat_statements
+        -c max_connections=40
+        -c shared_buffers=768MB
+        -c effective_cache_size=1536MB
+        -c maintenance_work_mem=96MB
+        -c checkpoint_completion_target=0.9
+        -c wal_buffers=16MB
+        -c wal_compression=on
+        -c default_statistics_target=100
+        -c random_page_cost=1.1
+        -c effective_io_concurrency=200
+        -c work_mem=6MB
+        -c min_wal_size=512MB
+        -c max_wal_size=2GB
+        -c pg_stat_statements.track=top
+    ports:
+      - "${PRIMARY_DB_BIND_IP:-127.0.0.1}:5432:5432"
+    volumes:
+      - primarydb_data:/var/lib/postgresql/data
+      - ./docker/initdb/primarydb:/docker-entrypoint-initdb.d:ro
+    deploy:
+      resources:
+        limits:
+          cpus: "0.75"
+          memory: 1500M
+        reservations:
+          cpus: "0.25"
+          memory: 768M
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-pulse_primary}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  # ── Log Database (Dedicated TimescaleDB HA Telemetry & Analytics) ─────────────
+  logdb:
+    image: timescale/timescaledb-ha:pg16
+    container_name: pulse_logdb
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${LOG_POSTGRES_DB:-pulse_logdb}
+      PGDATA: /home/postgres/pgdata/data
+    command: >
+      postgres
+        -c shared_preload_libraries=timescaledb,pg_stat_statements
+        -c max_connections=60
+        -c shared_buffers=1024MB
+        -c effective_cache_size=2048MB
+        -c maintenance_work_mem=128MB
+        -c checkpoint_completion_target=0.9
+        -c wal_buffers=16MB
+        -c wal_compression=on
+        -c default_statistics_target=100
+        -c random_page_cost=1.1
+        -c effective_io_concurrency=200
+        -c work_mem=8MB
+        -c min_wal_size=1GB
+        -c max_wal_size=4GB
+        -c timescaledb.max_background_workers=3
+        -c pg_stat_statements.track=top
+    ports:
+      - "${LOG_DB_BIND_IP:-127.0.0.1}:5433:5432"
+    volumes:
+      - logdb_data:/home/postgres/pgdata
+      - ./docker/initdb/logdb:/docker-entrypoint-initdb.d:ro
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 2300M
+        reservations:
+          cpus: "0.5"
+          memory: 1024M
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${LOG_POSTGRES_DB:-pulse_logdb}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  # ── Redis Cache & State Store ────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: pulse_redis
+    restart: unless-stopped
+    ports:
+      - "${REDIS_BIND_IP:-127.0.0.1}:6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    deploy:
+      resources:
+        limits:
+          cpus: "0.25"
+          memory: 384M
+        reservations:
+          cpus: "0.1"
+          memory: 128M
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── API Backend ──────────────────────────────────────────────────────────────
   api:
     build:
       context: .
       dockerfile: Dockerfile
+    container_name: pulse_api
+    restart: unless-stopped
     ports:
       - "3000:3000"
     environment:
@@ -46,116 +176,125 @@ services:
       PORT: "3000"
       HOST: 0.0.0.0
       ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost:5173}
-    restart: unless-stopped
+      NODE_OPTIONS: "--max-old-space-size=512"
+    depends_on:
+      primarydb:
+        condition: service_healthy
+      logdb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     deploy:
       resources:
         limits:
-          memory: 1G
-          cpus: "1.0"
+          cpus: "0.75"
+          memory: 768M
         reservations:
-          memory: 512M
-          cpus: "0.5"
+          cpus: "0.25"
+          memory: 384M
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:3000/ready"]
       interval: 30s
       timeout: 5s
       retries: 3
-      start_period: ${STARTUP_HEALTH_START_PERIOD:-700s}
+      start_period: 60s
 
+  # ── Background Workers (PGMQ Queues & Notifications) ─────────────────────────
   workers:
     build:
       context: .
       dockerfile: Dockerfile
+    container_name: pulse_workers
+    restart: unless-stopped
     command: ["node", "dist/shared/workers/main.js"]
     environment:
       <<: *common-environment
       PROCESS_ROLE: worker
-    restart: unless-stopped
-    healthcheck:
-      disable: true
+      NODE_OPTIONS: "--max-old-space-size=256"
+    depends_on:
+      primarydb:
+        condition: service_healthy
+      logdb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     deploy:
       resources:
         limits:
-          memory: 768M
-          cpus: "1.0"
+          cpus: "0.25"
+          memory: 384M
+        reservations:
+          cpus: "0.1"
+          memory: 128M
 
+  # ── Ingestion Workers (High-Throughput Telemetry Pipeline) ─────────────────────
   ingestion-workers:
     build:
       context: .
       dockerfile: Dockerfile
+    container_name: pulse_ingestion_workers
+    restart: unless-stopped
     command: ["node", "dist/shared/workers/ingestion-worker-main.js"]
     environment:
       <<: *common-environment
       PROCESS_ROLE: ingestion
-    restart: unless-stopped
-    healthcheck:
-      disable: true
+      NODE_OPTIONS: "--max-old-space-size=384"
+    depends_on:
+      primarydb:
+        condition: service_healthy
+      logdb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     deploy:
       resources:
         limits:
-          memory: 768M
-          cpus: "1.0"
+          cpus: "0.5"
+          memory: 512M
+        reservations:
+          cpus: "0.2"
+          memory: 256M
 
+  # ── Analytics Workers (Rollup Aggregations & Materialized Views) ───────────────
   analytics-workers:
     build:
       context: .
       dockerfile: Dockerfile
+    container_name: pulse_analytics_workers
+    restart: unless-stopped
     command: ["node", "dist/shared/workers/analytics-worker-main.js"]
     environment:
       <<: *common-environment
       PROCESS_ROLE: analytics
       ANALYTICS_ENGINE_ENABLED: ${ANALYTICS_ENGINE_ENABLED:-true}
       ANALYTICS_HEALTH_PORT: "9301"
-    restart: unless-stopped
+      NODE_OPTIONS: "--max-old-space-size=256"
+    depends_on:
+      primarydb:
+        condition: service_healthy
+      logdb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          cpus: "0.25"
+          memory: 384M
+        reservations:
+          cpus: "0.1"
+          memory: 128M
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:9301/health"]
       interval: 30s
       timeout: 5s
       retries: 3
-      start_period: ${STARTUP_HEALTH_START_PERIOD:-700s}
-    deploy:
-      resources:
-        limits:
-          memory: 640M
-          cpus: "1.0"
-
-  # General workers already own alerting and scheduled maintenance queues. Do
-  # not launch alert-only or cron entry points concurrently unless those queue
-  # groups are explicitly removed from the general worker role.
-
-  postgres:
-    profiles: ["local-dev"]
-    image: pgvector/pgvector:pg17
-    environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: api_monitoring
-    ports:
-      - "5433:5432"
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-    restart: unless-stopped
-
-  redis:
-    profiles: ["local-dev"]
-    image: redis:7-alpine
-    ports:
-      - "6379:6379"
-    volumes:
-      - redis_data:/data
-    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-    restart: unless-stopped
+      start_period: 60s
 
 volumes:
-  postgres_data:
+  primarydb_data:
+    name: pulse_primarydb_data
+  logdb_data:
+    name: pulse_logdb_data
   redis_data:
+    name: pulse_redis_data

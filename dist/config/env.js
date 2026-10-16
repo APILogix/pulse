@@ -69,11 +69,11 @@ const envSchema = z.object({
     // tier; at 10 a burst of concurrent requests queued on pool acquisition.
     // Budget note: this is PER PROCESS. See docs/deployment/environment-configuration.md
     // for the fleet-wide connection accounting before raising it further.
-    DB_POOL_MAX: z.coerce.number().int().min(1).max(100).default(20),
+    DB_POOL_MAX: z.coerce.number().int().min(1).max(100).default(6),
     DB_POOL_MIN: z.coerce.number().int().min(0).max(100).default(0),
     // Dedicated notification subsystem pool maximum. Sized to bound notification
     // worker concurrency so delivery workers cannot exhaust primary API connections.
-    NOTIFICATION_POOL_MAX: z.coerce.number().int().min(1).max(50).default(10),
+    NOTIFICATION_POOL_MAX: z.coerce.number().int().min(1).max(50).default(2),
     DB_IDLE_TIMEOUT_MS: z.coerce.number().int().min(0).default(30000),
     DB_CONNECTION_TIMEOUT_MS: z.coerce.number().int().min(1000).default(30000),
     // Startup datastore retry budget. Sized so a managed-Postgres checkpoint or
@@ -106,15 +106,16 @@ const envSchema = z.object({
     // SDK Configuration & Remote Delivery
     SDK_INIT_DEADLINE_MS: z.coerce.number().int().min(1000).max(60000).default(30000),
     SDK_INIT_MAX_ACTIVE_FLIGHTS: z.coerce.number().int().min(1).max(1024).default(256),
-    // Log Database (Primary + Replica)
+    // Log Database (Primary + Replica + Direct Ingestion/Analytics URL)
     LOG_DB_PRIMARY: z.string().optional(),
+    LOG_DB_DIRECT_URL: z.string().optional(),
     LOG_DB_REPLICA: z.string().optional(),
     // Raised 10 -> 20. This pool serves Log DB READS (dashboards, analytics) in
     // the API tier and Log DB reads/migrations in the worker tiers. Ingest WRITES
     // no longer draw from it — they use the dedicated pool sized by
     // INGESTION_WRITE_POOL_SIZE (see shared/workers/ingestion-worker-main.ts) —
     // so raising this buys read concurrency without affecting write admission.
-    LOG_POOL_MAX: z.coerce.number().int().min(1).max(500).default(20),
+    LOG_POOL_MAX: z.coerce.number().int().min(1).max(500).default(6),
     // Do not pin warm log connections in every API replica while idle.
     LOG_POOL_MIN: z.coerce.number().int().min(0).max(500).default(0),
     // Read-path statement timeout (ms). Bounds runaway analytical reads.
@@ -179,6 +180,8 @@ const envSchema = z.object({
     CLICKHOUSE_URL: z.string().optional(),
     // Redis
     REDIS_URL: z.string(),
+    REDIS_CACHE_URL: z.string().optional(),
+    REDIS_STATE_URL: z.string().optional(),
     // Redis is an optional acceleration layer by default. Set true only when the
     // deployment requires Redis for readiness and startup correctness.
     REDIS_REQUIRED: z
@@ -339,11 +342,11 @@ const envSchema = z.object({
     // ingest writes from the shared Log DB pool (LOG_POOL_MAX) so a burst of
     // dashboard reads in the API process cannot steal ingest write capacity, and
     // vice versa.
-    INGESTION_WRITE_POOL_SIZE: z.coerce.number().int().min(2).max(200).default(24),
+    INGESTION_WRITE_POOL_SIZE: z.coerce.number().int().min(2).max(200).default(8),
     // Hard ceiling on concurrent ingest transactions (write-admission permits).
     // Bounded to (pool - reserve) at runtime by resolveWritePermits(), so this can
     // under-use the pool but can never oversubscribe it.
-    INGESTION_WRITE_CONCURRENCY: z.coerce.number().int().min(1).max(200).default(16),
+    INGESTION_WRITE_CONCURRENCY: z.coerce.number().int().min(1).max(200).default(4),
     INGESTION_FAST_REQUEST_MIN_DURATION_MS: z.coerce.number().min(0).default(1000),
     MAX_QUEUE_DEPTH: z.coerce.number().int().min(0).default(50_000),
     MAX_GAUGE_AGE_MS: z.coerce.number().int().min(1000).default(10_000),
@@ -399,8 +402,8 @@ const envSchema = z.object({
     QUEUE_MAX_ATTEMPTS: z.coerce.number().int().min(1).max(20).default(5),
     QUEUE_HEARTBEAT_INTERVAL_SECONDS: z.coerce.number().int().min(1).max(300).default(15),
     QUEUE_DRAIN_TIMEOUT_MS: z.coerce.number().int().min(1000).max(60000).default(30000),
-    QUEUE_POOL_MAX: z.coerce.number().int().min(2).max(200).default(20),
-    QUEUE_COMMAND_POOL_MAX: z.coerce.number().int().min(1).max(50).default(15),
+    QUEUE_POOL_MAX: z.coerce.number().int().min(2).max(200).default(4),
+    QUEUE_COMMAND_POOL_MAX: z.coerce.number().int().min(1).max(50).default(3),
     QUEUE_MAX_IDLE_POLL_MS: z.coerce.number().int().min(100).max(60000).default(5000),
     // ── Alerting v2 rollout flags ───────────────────────────────────────────────
     ALERTING_V2_WRITE: z

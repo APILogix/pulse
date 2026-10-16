@@ -30,7 +30,8 @@ import { createHash } from 'crypto';
 import { v7 as uuidv7 } from 'uuid';
 import { env } from '../../config/env.js';
 import { logger } from '../../config/logger.js';
-import { apiKeyCache } from '../../config/lrucashe.js';
+import { apiKeyCache, invalidApiKeyCache } from '../../config/lrucashe.js';
+import { CacheFlags } from '../../config/cache-flags.js';
 import { syncApiKeyLookupToLogDbBestEffort, syncEnvironmentLookupToLogDbBestEffort, syncEnvironmentSdkConfigLookupToLogDbBestEffort, syncProjectLookupToLogDbBestEffort, } from '../../shared/logdb/lookup-sync.js';
 import { PostgresWriter } from './postgress.writter.js';
 import { UsageCounter } from './usage/usage-counter.js';
@@ -128,13 +129,18 @@ export class IngestionService {
             bufferLimit: env.INGESTION_USAGE_BUFFER_LIMIT,
             driveRollup: false,
         });
-        this.usage.start();
-        // Warm provisioning at boot (pgboss.start() precedes module registration
-        // in main.ts). The request path enqueues optimistically and only waits for
-        // provisioning if the enqueue proves queues are unavailable.
-        warmIngestQueuesProvisioned();
+        if (process.env.NODE_ENV !== 'test') {
+            this.usage.start();
+            // Warm provisioning at boot (pgboss.start() precedes module registration
+            // in main.ts). The request path enqueues optimistically and only waits for
+            // provisioning if the enqueue proves queues are unavailable.
+            warmIngestQueuesProvisioned();
+        }
         // Register with central entitlements invalidation event bus
         entitlementsService.onOrgInvalidate((orgId) => this.invalidateOrgQuotaCache(orgId));
+    }
+    async stop() {
+        await this.usage.stop();
     }
     invalidateOrgQuotaCache(orgId) {
         this.quotaCache.delete(orgId);
@@ -142,6 +148,10 @@ export class IngestionService {
     // ── Project resolution (LRU only; Postgres fallback) ──────────────────────
     async resolveProject(apiKey) {
         const keyHash = hashApiKey(apiKey);
+        // Negative cache fast-path: reject known-invalid keys immediately without DB query
+        if (CacheFlags.ingestionNegativeCache && invalidApiKeyCache.has(keyHash)) {
+            return null;
+        }
         const cached = apiKeyCache.get(keyHash);
         if (cached) {
             return {
@@ -176,8 +186,15 @@ export class IngestionService {
             };
         }
         const auth = await this.writer.resolveApiKey(apiKey);
-        if (!auth)
+        if (!auth) {
+            if (CacheFlags.ingestionNegativeCache) {
+                invalidApiKeyCache.set(keyHash, true);
+            }
             return null;
+        }
+        if (CacheFlags.ingestionNegativeCache && invalidApiKeyCache.has(keyHash)) {
+            invalidApiKeyCache.delete(keyHash);
+        }
         const resolved = {
             id: auth.projectId,
             projectSlug: auth.projectSlug,

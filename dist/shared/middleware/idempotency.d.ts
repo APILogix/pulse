@@ -7,27 +7,26 @@
  * 409 or the cached response. This prevents duplicate side effects (e.g.,
  * double project creation) from retries and network timeouts.
  *
- * Design notes:
- *   - Only caches successful 2xx responses so transient 5xx errors are not
- *     frozen for replays.
- *   - TTL defaults to 24 hours for completed responses and 30 seconds for
- *     in-flight markers.
- *   - Only idempotent HTTP methods are guarded (POST, PATCH, PUT, DELETE).
- *   - Falls back to allowing the request if Redis is unavailable.
- *
- * Implementation: this middleware is intentionally paired with the route's
- * `onSend` hook for response capture. The preHandler validates the key and sets
- * a request symbol; the onSend hook writes the final 2xx payload to Redis.
+ * Security & Isolation (Tier 0.1):
+ *   - Redis key is strictly scoped by server-verified org_id and user_id.
+ *   - Unauthenticated requests presenting an Idempotency-Key are rejected with 400.
+ *   - Payload fingerprinting (SHA-256) rejects mismatched bodies with 422.
+ *   - Explicit opt-out flag `disableResponseCaching` for sensitive routes (tokens/secrets).
+ *   - Payload cache size capped at 64 KB without synchronous compression.
  */
 import type { FastifyRequest, preHandlerHookHandler, FastifyReply } from "fastify";
 export declare const IDEMPOTENCY_KEY_SYMBOL: unique symbol;
 export declare const IDEMPOTENCY_REDIS_KEY_SYMBOL: unique symbol;
 export declare const IDEMPOTENCY_TTL_SYMBOL: unique symbol;
+export declare const IDEMPOTENCY_PAYLOAD_HASH_SYMBOL: unique symbol;
+export declare const IDEMPOTENCY_OPT_OUT_SYMBOL: unique symbol;
 export interface IdempotencyOptions {
     /** TTL for completed cached responses (seconds). */
     completedTtl?: number;
     /** TTL for in-flight processing markers (seconds). */
     processingTtl?: number;
+    /** When true, locks concurrent execution but never caches response payloads in Redis (for sensitive routes). */
+    disableResponseCaching?: boolean;
 }
 export declare function idempotency(options?: IdempotencyOptions): preHandlerHookHandler;
 /**

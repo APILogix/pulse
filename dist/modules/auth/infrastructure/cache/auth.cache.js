@@ -25,6 +25,58 @@
  * the user's perspective.
  */
 import { LRUCache } from 'lru-cache';
+import { redis } from '../../../../config/redis.js';
+import { CacheFlags } from '../../../../config/cache-flags.js';
+import { registerL1Cache, publishInvalidation } from '../../../../shared/cache/invalidation-bus.js';
+export const authSessionCache = new LRUCache({
+    max: 50_000,
+    ttl: 30_000, // 30 seconds L1
+    updateAgeOnGet: false,
+});
+registerL1Cache('authSession', authSessionCache);
+export async function getCachedAuthSession(sessionId) {
+    const local = authSessionCache.get(sessionId);
+    if (local) {
+        return local;
+    }
+    if (CacheFlags.authRedisState) {
+        try {
+            const raw = await redis.get(`auth:session:${sessionId}`);
+            if (raw) {
+                const parsed = JSON.parse(raw);
+                authSessionCache.set(sessionId, parsed);
+                return parsed;
+            }
+        }
+        catch {
+            // Degrade gracefully
+        }
+    }
+    return null;
+}
+export async function setCachedAuthSession(sessionId, sessionRecord, ttlSeconds = 30) {
+    authSessionCache.set(sessionId, sessionRecord, { ttl: ttlSeconds * 1000 });
+    if (CacheFlags.authRedisState) {
+        try {
+            await redis.set(`auth:session:${sessionId}`, JSON.stringify(sessionRecord), 'EX', ttlSeconds);
+        }
+        catch {
+            // Degrade gracefully
+        }
+    }
+}
+export async function invalidateCachedAuthSession(sessionId) {
+    authSessionCache.delete(sessionId);
+    if (CacheFlags.authRedisState) {
+        try {
+            await redis.del(`auth:session:${sessionId}`);
+        }
+        catch {
+            // Degrade gracefully
+        }
+    }
+    publishInvalidation('authSession', sessionId).catch(() => { });
+}
 /**
  * Per-session access-token blacklist.
  * key   = sessionId (JWT jti)
@@ -121,23 +173,100 @@ export const webauthnChallengeCache = new LRUCache({
 // ---------------------------------------------------------------------------
 // Tiny semantic helpers so service code does not poke caches directly.
 // ---------------------------------------------------------------------------
-export function blacklistAccessToken(sessionId) {
+export async function blacklistAccessToken(sessionId) {
     accessTokenBlacklistCache.set(sessionId, 1);
+    await invalidateCachedAuthSession(sessionId);
+    if (CacheFlags.authRedisState) {
+        try {
+            await redis.set(`auth:blacklist:${sessionId}`, '1', 'EX', 15 * 60);
+        }
+        catch {
+            // Degrade gracefully to local cache
+        }
+    }
 }
-export function isAccessTokenBlacklisted(sessionId) {
-    return accessTokenBlacklistCache.has(sessionId);
+export async function isAccessTokenBlacklisted(sessionId) {
+    if (accessTokenBlacklistCache.has(sessionId)) {
+        return true;
+    }
+    if (CacheFlags.authRedisState) {
+        try {
+            const exists = await redis.get(`auth:blacklist:${sessionId}`);
+            if (exists) {
+                // Read-through L1 cache with TTL <= 5s
+                accessTokenBlacklistCache.set(sessionId, 1, { ttl: 5000 });
+                return true;
+            }
+        }
+        catch {
+            // Degrade gracefully to local cache
+        }
+    }
+    return false;
 }
-export function revokeAllUserTokens(userId) {
-    userRevokeCache.set(userId, Date.now());
+export async function revokeAllUserTokens(userId) {
+    const now = Date.now();
+    userRevokeCache.set(userId, now);
+    if (CacheFlags.authRedisState) {
+        try {
+            await redis.set(`auth:cutoff:${userId}`, String(now), 'EX', 15 * 60);
+        }
+        catch {
+            // Degrade gracefully to local cache
+        }
+    }
 }
-export function getUserRevokeCutoff(userId) {
+export async function getUserRevokeCutoff(userId) {
     const v = userRevokeCache.get(userId);
-    return typeof v === 'number' ? v : null;
+    if (typeof v === 'number') {
+        return v;
+    }
+    if (CacheFlags.authRedisState) {
+        try {
+            const raw = await redis.get(`auth:cutoff:${userId}`);
+            if (raw) {
+                const val = Number(raw);
+                if (!Number.isNaN(val)) {
+                    // Read-through L1 cache with TTL <= 5s
+                    userRevokeCache.set(userId, val, { ttl: 5000 });
+                    return val;
+                }
+            }
+        }
+        catch {
+            // Degrade gracefully to local cache
+        }
+    }
+    return null;
 }
-export function recordStepUpFreshness(sessionId) {
-    stepUpFreshnessCache.set(sessionId, Date.now());
+export async function recordStepUpFreshness(sessionId) {
+    const now = Date.now();
+    stepUpFreshnessCache.set(sessionId, now);
+    if (CacheFlags.authRedisState) {
+        try {
+            await redis.set(`auth:mfa:freshness:${sessionId}`, String(now), 'EX', 5 * 60);
+        }
+        catch {
+            // Degrade gracefully
+        }
+    }
 }
-export function hasFreshStepUp(sessionId) {
-    return stepUpFreshnessCache.has(sessionId);
+export async function hasFreshStepUp(sessionId) {
+    if (stepUpFreshnessCache.has(sessionId)) {
+        return true;
+    }
+    if (CacheFlags.authRedisState) {
+        try {
+            const exists = await redis.get(`auth:mfa:freshness:${sessionId}`);
+            if (exists) {
+                stepUpFreshnessCache.set(sessionId, Number(exists) || Date.now(), { ttl: 5000 });
+                return true;
+            }
+        }
+        catch {
+            // Degrade gracefully
+        }
+    }
+    return false;
 }
 //# sourceMappingURL=auth.cache.js.map

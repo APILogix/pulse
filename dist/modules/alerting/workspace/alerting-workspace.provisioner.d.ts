@@ -5,5 +5,6 @@ export declare class AlertingWorkspaceProvisioner {
     private readonly repository;
     constructor(repository?: AlertingWorkspaceRepository);
     provision(client: PoolClient, context: AlertingProvisioningContext): Promise<AlertingProvisioningSummary>;
+    provisionWorkspace(context: AlertingProvisioningContext): Promise<AlertingProvisioningSummary>;
 }
 //# sourceMappingURL=alerting-workspace.provisioner.d.ts.map

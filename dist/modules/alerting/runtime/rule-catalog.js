@@ -2,6 +2,7 @@ import { LRUCache } from 'lru-cache';
 import { ALERT_RULE_CONDITIONS_COLUMNS } from '../rules/rules.repository.js';
 import { resolveEffectiveRule, } from '../policy/resolve-rule.js';
 import { recordCatalogCacheHit, recordCatalogCacheMiss, recordCatalogCacheLoad, recordCatalogCacheInvalidation, } from './alert-runtime-metrics.js';
+import { registerL1Cache, publishInvalidation } from '../../../shared/cache/invalidation-bus.js';
 const RULE_COLUMNS = `
   id, organization_id, name, description, severity, enabled,
   evaluation_interval_seconds, cooldown_seconds, auto_resolve_after_minutes,
@@ -204,20 +205,26 @@ export class AlertRuntimeRuleCatalog {
     }
     static invalidateGlobal(organizationId, tier, reason = 'mutation') {
         if (organizationId && tier) {
-            AlertRuntimeRuleCatalog.globalCache.delete(`${organizationId}:${tier}`);
+            const key = `${organizationId}:${tier}`;
+            AlertRuntimeRuleCatalog.globalCache.delete(key);
+            void publishInvalidation('ruleCatalog', key);
         }
         else if (organizationId) {
             for (const t of ['fast', 'window', 'operational', 'ai']) {
-                AlertRuntimeRuleCatalog.globalCache.delete(`${organizationId}:${t}`);
+                const key = `${organizationId}:${t}`;
+                AlertRuntimeRuleCatalog.globalCache.delete(key);
+                void publishInvalidation('ruleCatalog', key);
             }
         }
         else {
             AlertRuntimeRuleCatalog.globalCache.clear();
+            void publishInvalidation('ruleCatalog', '*');
         }
         recordCatalogCacheInvalidation(reason);
     }
     static clearGlobalCache() {
         AlertRuntimeRuleCatalog.globalCache.clear();
+        void publishInvalidation('ruleCatalog', '*');
     }
     /**
      * Load catalog snapshot for an organization and runtime tier.
@@ -374,4 +381,15 @@ export class AlertRuntimeRuleCatalog {
         return snapshot.resolveRulesForScope(scope);
     }
 }
+registerL1Cache('ruleCatalog', {
+    delete: (key) => {
+        if (key === '*') {
+            AlertRuntimeRuleCatalog.globalCache.clear();
+        }
+        else {
+            AlertRuntimeRuleCatalog.globalCache.delete(key);
+        }
+    },
+    clear: () => AlertRuntimeRuleCatalog.globalCache.clear(),
+});
 //# sourceMappingURL=rule-catalog.js.map

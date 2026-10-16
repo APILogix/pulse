@@ -49,6 +49,7 @@ declare const envSchema: z.ZodObject<{
     SDK_INIT_DEADLINE_MS: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
     SDK_INIT_MAX_ACTIVE_FLIGHTS: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
     LOG_DB_PRIMARY: z.ZodOptional<z.ZodString>;
+    LOG_DB_DIRECT_URL: z.ZodOptional<z.ZodString>;
     LOG_DB_REPLICA: z.ZodOptional<z.ZodString>;
     LOG_POOL_MAX: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
     LOG_POOL_MIN: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
@@ -68,6 +69,8 @@ declare const envSchema: z.ZodObject<{
     LOG_DB_AUTO_MIGRATE: z.ZodPipe<z.ZodOptional<z.ZodString>, z.ZodTransform<boolean, string | undefined>>;
     CLICKHOUSE_URL: z.ZodOptional<z.ZodString>;
     REDIS_URL: z.ZodString;
+    REDIS_CACHE_URL: z.ZodOptional<z.ZodString>;
+    REDIS_STATE_URL: z.ZodOptional<z.ZodString>;
     REDIS_REQUIRED: z.ZodPipe<z.ZodOptional<z.ZodString>, z.ZodTransform<boolean, string | undefined>>;
     REDIS_CONNECT_TIMEOUT_MS: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
     REDIS_COMMAND_TIMEOUT_MS: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
@@ -448,8 +451,11 @@ export declare const env: {
     ANALYTICS_SESSION_IDLE_MINUTES: number;
     API_PUBLIC_URL?: string | undefined;
     LOG_DB_PRIMARY?: string | undefined;
+    LOG_DB_DIRECT_URL?: string | undefined;
     LOG_DB_REPLICA?: string | undefined;
     CLICKHOUSE_URL?: string | undefined;
+    REDIS_CACHE_URL?: string | undefined;
+    REDIS_STATE_URL?: string | undefined;
     CORS_ORIGINS?: string | undefined;
     FRONTEND_URL?: string | undefined;
     SMTP_HOST?: string | undefined;

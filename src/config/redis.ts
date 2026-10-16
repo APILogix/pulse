@@ -39,7 +39,7 @@ export function classifyRedisKey(key: string): RedisStoreRole {
     cleanKey = cleanKey.slice(7);
   }
   const prefix = cleanKey.split(':')[0];
-  return REDIS_KEY_MAPPING[prefix] ?? 'state';
+  return (prefix ? REDIS_KEY_MAPPING[prefix] : undefined) ?? 'state';
 }
 
 export function parseRedisOptions(rawUrl: string): RedisOptions {

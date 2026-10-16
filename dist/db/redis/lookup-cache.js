@@ -15,6 +15,10 @@ import { LRUCache } from "lru-cache";
 import { redis } from "../../config/redis.js";
 import { logger } from "../../config/logger.js";
 import { RedisKeys, RedisTTL } from "./keys.js";
+import { performance } from "node:perf_hooks";
+import { recordCacheRequest, recordCacheOp } from "../../config/perf/metrics.js";
+import { recordContextCache } from "../../config/perf/context.js";
+import { registerL1Cache, publishInvalidation } from "../../shared/cache/invalidation-bus.js";
 const cacheLogger = logger.child({ component: "redis-lookup-cache" });
 function sha256Hex(input) {
     return createHash("sha256").update(input, "utf8").digest("hex");
@@ -36,11 +40,11 @@ export class RedisLookupCache {
     // Tier-0 In-Memory LRU Caches for sub-millisecond hot-path lookups
     l1ApiKeyCache = new LRUCache({
         max: 10_000,
-        ttl: 1000 * 60 * 60, // 1 hour in-process TTL; explicitly invalidated on key changes
+        ttl: 60_000, // 60s backstop TTL (Tier 0.3 revocation-critical)
     });
     l1InitDeliveryCache = new LRUCache({
         max: 5_000,
-        ttl: 1000 * 60 * 60, // 1 hour in-process TTL
+        ttl: 300_000, // 5 minutes (aligned with Redis TTL RedisTTL.LOOKUP_INIT_DELIVERY_SECS = 300)
     });
     l1NegativeKeyCache = new LRUCache({
         max: 10_000,
@@ -52,11 +56,11 @@ export class RedisLookupCache {
     });
     l1OrgOverrideCache = new LRUCache({
         max: 2_000,
-        ttl: 1000 * 60 * 60, // 1 hour in-process TTL
+        ttl: 600_000, // 10 minutes (aligned with Redis TTL RedisTTL.LOOKUP_ORG_OVERRIDE_SECS = 600)
     });
     l1RemoteConfigCache = new LRUCache({
         max: 5_000,
-        ttl: 1000 * 60 * 60 * 24, // 24 hours in-process TTL; explicitly invalidated on config update
+        ttl: 600_000, // 10 minutes (aligned with Redis remote-config TTL policy)
     });
     l1RateLimitCache = new LRUCache({
         max: 10_000,
@@ -66,12 +70,19 @@ export class RedisLookupCache {
     constructor(client = redis, readTimeoutMs = 1500) {
         this.client = client;
         this.readTimeoutMs = readTimeoutMs;
+        registerL1Cache('lookupApiKey', this.l1ApiKeyCache);
+        registerL1Cache('lookupInitDelivery', this.l1InitDeliveryCache);
+        registerL1Cache('lookupOrgOverride', this.l1OrgOverrideCache);
+        registerL1Cache('lookupRemoteConfig', this.l1RemoteConfigCache);
     }
     /** Cache latency must not consume the SDK startup budget. Never queue unbounded reads. */
-    async read(key) {
-        if (Date.now() < this.readCooldownUntil || this.pendingReads >= 256)
+    async read(key, cacheEntity = 'general') {
+        if (Date.now() < this.readCooldownUntil || this.pendingReads >= 256) {
+            recordCacheRequest('redis', cacheEntity, 'miss');
             return null;
+        }
         this.pendingReads++;
+        const start = performance.now();
         let timer;
         const operation = Promise.resolve().then(() => this.client.get(key));
         const release = () => { this.pendingReads--; };
@@ -89,12 +100,20 @@ export class RedisLookupCache {
                     }, this.readTimeoutMs);
                 }),
             ]);
+            const durationMs = performance.now() - start;
+            recordCacheOp('get', cacheEntity, durationMs);
+            recordContextCache(durationMs);
+            recordCacheRequest('redis', cacheEntity, res !== null ? 'hit' : 'miss');
             if (res !== null) {
                 this.consecutiveReadFailures = 0;
             }
             return res;
         }
         catch {
+            const durationMs = performance.now() - start;
+            recordCacheOp('get', cacheEntity, durationMs);
+            recordContextCache(durationMs);
+            recordCacheRequest('redis', cacheEntity, 'miss');
             this.consecutiveReadFailures++;
             if (this.consecutiveReadFailures >= 3) {
                 this.readCooldownUntil = Date.now() + 2_000;
@@ -131,6 +150,7 @@ export class RedisLookupCache {
         const keyHash = sha256Hex(rawKey);
         // 0. Fast-path: Check Tier-0 in-memory LRU cache (<0.01ms)
         const l1Record = this.l1ApiKeyCache.get(keyHash);
+        recordCacheRequest('l1', 'api_key', l1Record ? 'hit' : 'miss');
         if (l1Record) {
             if (!constantTimeHexEqual(keyHash, l1Record.secretHash)) {
                 this.l1ApiKeyCache.delete(keyHash);
@@ -150,7 +170,7 @@ export class RedisLookupCache {
             return null;
         try {
             const cacheKey = RedisKeys.lookupApiKey(keyHash);
-            const data = await this.read(cacheKey);
+            const data = await this.read(cacheKey, 'api_key');
             if (!data)
                 return null;
             const record = JSON.parse(data);
@@ -197,9 +217,13 @@ export class RedisLookupCache {
         this.l1ApiKeyCache.set(keyHash, record);
         if (!this.isAvailable())
             return;
+        const start = performance.now();
         try {
             const cacheKey = RedisKeys.lookupApiKey(keyHash);
             await this.client.setex(cacheKey, ttlSeconds, JSON.stringify(record));
+            const durationMs = performance.now() - start;
+            recordCacheOp('set', 'api_key', durationMs);
+            recordContextCache(durationMs);
         }
         catch (err) {
             cacheLogger.debug({ err }, "Redis setApiKeyMapping failed");
@@ -320,6 +344,7 @@ export class RedisLookupCache {
     async getOrgEntitlementOverride(organizationId) {
         // 0. Fast-path: Check Tier-0 in-memory LRU cache (<0.01ms)
         const l1Record = this.l1OrgOverrideCache.get(organizationId);
+        recordCacheRequest('l1', 'org_override', l1Record ? 'hit' : 'miss');
         if (l1Record) {
             return l1Record.override ?? undefined;
         }
@@ -327,7 +352,7 @@ export class RedisLookupCache {
             return null;
         try {
             const cacheKey = RedisKeys.lookupOrgOverride(organizationId);
-            const data = await this.read(cacheKey);
+            const data = await this.read(cacheKey, 'org_override');
             if (data === null)
                 return null; // Cache miss
             const record = JSON.parse(data);
@@ -346,9 +371,13 @@ export class RedisLookupCache {
         this.l1OrgOverrideCache.set(organizationId, record);
         if (!this.isAvailable())
             return;
+        const start = performance.now();
         try {
             const cacheKey = RedisKeys.lookupOrgOverride(organizationId);
             await this.client.setex(cacheKey, ttlSeconds, JSON.stringify(record));
+            const durationMs = performance.now() - start;
+            recordCacheOp('set', 'org_override', durationMs);
+            recordContextCache(durationMs);
         }
         catch (err) {
             cacheLogger.debug({ err, organizationId }, "Redis setOrgEntitlementOverride failed");
@@ -370,6 +399,7 @@ export class RedisLookupCache {
         const keyHash = sha256Hex(rawKey);
         const l1Key = `${keyHash}:${hintsHash}`;
         const l1Record = this.l1InitDeliveryCache.get(l1Key);
+        recordCacheRequest('l1', 'init_delivery', l1Record ? 'hit' : 'miss');
         if (l1Record && l1Record.config && l1Record.etag) {
             return {
                 organizationId: l1Record.organizationId,
@@ -385,7 +415,7 @@ export class RedisLookupCache {
             return null;
         try {
             const cacheKey = RedisKeys.lookupInitDelivery(keyHash, hintsHash);
-            const data = await this.read(cacheKey);
+            const data = await this.read(cacheKey, 'init_delivery');
             if (!data)
                 return null;
             const record = JSON.parse(data);
@@ -421,9 +451,13 @@ export class RedisLookupCache {
         this.l1InitDeliveryCache.set(`${keyHash}:${hintsHash}`, record);
         if (!this.isAvailable())
             return;
+        const start = performance.now();
         try {
             const cacheKey = RedisKeys.lookupInitDelivery(keyHash, hintsHash);
             await this.client.setex(cacheKey, ttlSeconds, JSON.stringify(record));
+            const durationMs = performance.now() - start;
+            recordCacheOp('set', 'init_delivery', durationMs);
+            recordContextCache(durationMs);
         }
         catch (err) {
             cacheLogger.debug({ err }, "Redis setInitDelivery failed");
@@ -470,6 +504,7 @@ export class RedisLookupCache {
     async getRemoteConfig(projectId, environment) {
         // 0. Tier-0 L1 in-memory LRU cache (<0.01ms)
         const l1 = this.getRemoteConfigL1(projectId, environment);
+        recordCacheRequest('l1', 'remote_config', l1 ? 'hit' : 'miss');
         if (l1)
             return l1;
         const cacheKey = RedisKeys.remoteConfig(projectId, environment);
@@ -477,9 +512,9 @@ export class RedisLookupCache {
         if (!this.isAvailable())
             return null;
         try {
-            let data = await this.read(cacheKey);
+            let data = await this.read(cacheKey, 'remote_config');
             if (!data && (!environment || environment === "production" || environment === "default") && cacheKey !== defaultKey) {
-                data = await this.read(defaultKey);
+                data = await this.read(defaultKey, 'remote_config');
             }
             if (!data)
                 return null;
@@ -514,6 +549,7 @@ export class RedisLookupCache {
         }
         if (!this.isAvailable())
             return;
+        const start = performance.now();
         try {
             const payload = JSON.stringify(doc);
             // STRICT ARCHITECTURAL REQUIREMENT: Cache in Redis WITHOUT an application-level TTL (indefinite hot cache)
@@ -522,6 +558,9 @@ export class RedisLookupCache {
             if (doc.environment === "production" || !doc.environment || doc.environment === "default") {
                 await this.client.set(defaultKey, payload);
             }
+            const durationMs = performance.now() - start;
+            recordCacheOp('set', 'remote_config', durationMs);
+            recordContextCache(durationMs);
         }
         catch (err) {
             cacheLogger.debug({ err, projectId: doc.projectId }, "Redis setRemoteConfig failed");

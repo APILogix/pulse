@@ -16,10 +16,11 @@ const pgmqLogger = logger.child({ component: 'pgmq' });
  *   blocked or starved behind 2-second blocking long polls.
  */
 export class PgmqClient {
-    pool;
+    pool = null;
     commandPool;
     ownsPool = false;
     ownsCommandPool = false;
+    readerFactory;
     knownQueues = new Set();
     knownQueuesLoaded = false;
     knownQueuesInitPromise = null;
@@ -37,24 +38,38 @@ export class PgmqClient {
             });
             const maxReader = options.maxConnections ?? env.QUEUE_POOL_MAX;
             const maxCommand = options.maxCommandConnections ?? env.QUEUE_COMMAND_POOL_MAX;
-            this.pool = new pg.Pool(withPostgresAddressFamily({
-                connectionString: cleanConnStr,
-                ssl,
-                max: maxReader,
-                min: 0,
-                idleTimeoutMillis: env.DB_IDLE_TIMEOUT_MS,
-                connectionTimeoutMillis: env.DB_CONNECTION_TIMEOUT_MS,
-                application_name: options.applicationName ?? `pulse_pgmq_poll_${env.NODE_ENV}`,
-                keepAlive: true,
-                keepAliveInitialDelayMillis: env.DB_KEEPALIVE_INITIAL_DELAY_MS,
-            }, env.DB_FAMILY));
-            this.pool.on('error', (err) => {
-                if (isExpectedServerlessDisconnect(err)) {
-                    pgmqLogger.debug({ err: err.message }, 'Idle PGMQ reader connection closed by serverless host');
-                    return;
-                }
-                pgmqLogger.error({ err }, 'Unexpected PGMQ reader pool error');
-            });
+            // Lazily instantiate the Reader Pool ONLY on processes that actually consume queues
+            this.readerFactory = () => {
+                const readerPool = new pg.Pool(withPostgresAddressFamily({
+                    connectionString: cleanConnStr,
+                    ssl,
+                    max: maxReader,
+                    min: 0,
+                    idleTimeoutMillis: env.DB_IDLE_TIMEOUT_MS,
+                    connectionTimeoutMillis: env.DB_CONNECTION_TIMEOUT_MS,
+                    application_name: options.applicationName ?? `pulse_pgmq_poll_${env.NODE_ENV}`,
+                    keepAlive: true,
+                    keepAliveInitialDelayMillis: env.DB_KEEPALIVE_INITIAL_DELAY_MS,
+                }, env.DB_FAMILY));
+                readerPool.on('error', (err) => {
+                    if (isExpectedServerlessDisconnect(err)) {
+                        pgmqLogger.debug({ err: err.message }, 'Idle PGMQ reader connection closed by serverless host');
+                        return;
+                    }
+                    pgmqLogger.error({ err }, 'Unexpected PGMQ reader pool error');
+                });
+                pgmqLogger.info({
+                    pool: 'reader',
+                    ...getSafePostgresConnectionMetadata(connStr, {
+                        family: env.DB_FAMILY,
+                        ssl,
+                        poolMax: maxReader,
+                        poolMin: 0,
+                    }),
+                }, 'PGMQ PostgreSQL reader pool initialized');
+                this.ownsPool = true;
+                return readerPool;
+            };
             this.commandPool = new pg.Pool(withPostgresAddressFamily({
                 connectionString: cleanConnStr,
                 ssl,
@@ -75,37 +90,21 @@ export class PgmqClient {
                 }
                 pgmqLogger.error({ err }, 'Unexpected PGMQ command pool error');
             });
-            pgmqLogger.info({
-                pool: 'reader',
-                ...getSafePostgresConnectionMetadata(connStr, {
-                    family: env.DB_FAMILY,
-                    ssl,
-                    poolMax: maxReader,
-                    poolMin: 0,
-                }),
-            }, 'PGMQ PostgreSQL configuration');
-            pgmqLogger.info({
-                pool: 'command',
-                ...getSafePostgresConnectionMetadata(connStr, {
-                    family: env.DB_FAMILY,
-                    ssl,
-                    poolMax: maxCommand,
-                    poolMin: 0,
-                }),
-            }, 'PGMQ PostgreSQL configuration');
-            this.ownsPool = true;
             this.ownsCommandPool = true;
         }
     }
     getPool() {
+        if (!this.pool) {
+            this.pool = this.readerFactory ? this.readerFactory() : this.commandPool;
+        }
         return this.pool;
     }
     getCommandPool() {
         return this.commandPool;
     }
     /** Executes SQL query with resilient exponential backoff for transient serverless disconnects. */
-    async query(text, params, client, useCommandPool = true) {
-        const executor = client ?? (useCommandPool ? this.commandPool : this.pool);
+    async query(text, params, client, useCommandPool = true, isIdempotent = false) {
+        const executor = client ?? (useCommandPool ? this.commandPool : this.getPool());
         const maxRetries = client ? 0 : 3; // Do not auto-retry queries inside explicit client transactions
         let attempt = 0;
         while (true) {
@@ -114,7 +113,14 @@ export class PgmqClient {
             }
             catch (err) {
                 attempt++;
-                if (attempt <= maxRetries && isTransientPostgresError(err)) {
+                const isPreDispatchError = err?.code === 'ECONNREFUSED' ||
+                    err?.code === 'ETIMEDOUT' ||
+                    err?.code === 'EHOSTUNREACH' ||
+                    err?.code === 'ENETUNREACH';
+                const canRetry = isIdempotent
+                    ? isTransientPostgresError(err)
+                    : isPreDispatchError;
+                if (attempt <= maxRetries && canRetry) {
                     const delayMs = Math.min(2000, 150 * 2 ** (attempt - 1));
                     pgmqLogger.debug({ attempt, maxRetries, delayMs, err: err instanceof Error ? err.message : String(err) }, 'Transient Postgres error in PGMQ query; retrying...');
                     await new Promise((resolve) => setTimeout(resolve, delayMs));
@@ -310,7 +316,7 @@ export class PgmqClient {
     async send(queue, message, options = {}, client) {
         const delay = Math.max(0, options.delaySeconds ?? 0);
         const jsonPayload = JSON.stringify(message);
-        const res = await this.query(`SELECT pgmq.send($1::text, $2::jsonb, $3::integer);`, [queue, jsonPayload, delay], client);
+        const res = await this.query(`SELECT pgmq.send($1::text, $2::jsonb, $3::integer);`, [queue, jsonPayload, delay], client, true, false);
         const msgId = String(res.rows[0]?.send);
         return msgId;
     }
@@ -323,7 +329,7 @@ export class PgmqClient {
             return [];
         const delay = Math.max(0, options.delaySeconds ?? 0);
         const jsonPayloads = messages.map((m) => JSON.stringify(m));
-        const res = await this.query(`SELECT pgmq.send_batch($1::text, $2::jsonb[], $3::integer);`, [queue, jsonPayloads, delay], client);
+        const res = await this.query(`SELECT pgmq.send_batch($1::text, $2::jsonb[], $3::integer);`, [queue, jsonPayloads, delay], client, true, false);
         return res.rows.map((r) => String(r.send_batch));
     }
     /**
@@ -334,7 +340,7 @@ export class PgmqClient {
         const vt = Math.max(1, options.visibilityTimeoutSeconds ?? env.QUEUE_VISIBILITY_TIMEOUT_SECONDS ?? 60);
         const qty = Math.max(1, options.quantity ?? 1);
         const res = await this.query(`SELECT msg_id, read_ct, enqueued_at, vt, message, headers
-       FROM pgmq.read($1::text, $2::integer, $3::integer);`, [queue, vt, qty], client, false);
+       FROM pgmq.read($1::text, $2::integer, $3::integer);`, [queue, vt, qty], client, false, true);
         return res.rows.map((r) => ({
             msgId: String(r.msg_id),
             readCt: Number(r.read_ct),
@@ -345,24 +351,34 @@ export class PgmqClient {
         }));
     }
     /**
-     * Long-polls for up to `quantity` messages.
-     * Blocks in PostgreSQL for up to `pollTimeoutSeconds` before returning.
+     * Polls for up to `quantity` messages using non-blocking client-side intervals.
+     *
+     * Why client-side polling instead of `pgmq.read_with_poll`:
+     * Server-side `pgmq.read_with_poll` executes `pg_sleep()` inside PL/pgSQL, pinning
+     * a physical PostgreSQL backend and PgBouncer transaction slot in `active` state for
+     * 2,000ms continuously. By executing fast `pgmq.read()` checks (~0.4ms) and sleeping
+     * in the Node.js event loop when empty, database connection hold time drops by ~500x
+     * and PgBouncer never starves API or heartbeat queries.
      */
     async readWithPoll(queue, options = {}, client) {
         const vt = Math.max(1, options.visibilityTimeoutSeconds ?? env.QUEUE_VISIBILITY_TIMEOUT_SECONDS ?? 60);
         const qty = Math.max(1, options.quantity ?? 1);
-        const pollTimeout = Math.max(1, options.pollTimeoutSeconds ?? env.QUEUE_POLL_SECONDS ?? 2);
-        const pollInterval = Math.max(25, options.pollIntervalMs ?? 100);
-        const res = await this.query(`SELECT msg_id, read_ct, enqueued_at, vt, message, headers
-       FROM pgmq.read_with_poll($1::text, $2::integer, $3::integer, $4::integer, $5::integer);`, [queue, vt, qty, pollTimeout, pollInterval], client, false);
-        return res.rows.map((r) => ({
-            msgId: String(r.msg_id),
-            readCt: Number(r.read_ct),
-            enqueuedAt: new Date(r.enqueued_at),
-            vt: new Date(r.vt),
-            message: r.message,
-            headers: r.headers ?? null,
-        }));
+        const pollTimeoutMs = Math.max(1, options.pollTimeoutSeconds ?? env.QUEUE_POLL_SECONDS ?? 2) * 1000;
+        const pollIntervalMs = Math.max(50, options.pollIntervalMs ?? 200);
+        const deadline = Date.now() + pollTimeoutMs;
+        while (true) {
+            const messages = await this.read(queue, { visibilityTimeoutSeconds: vt, quantity: qty }, client);
+            if (messages.length > 0 || Date.now() >= deadline) {
+                return messages;
+            }
+            // Add +/- 15% jitter so multiple queue consumers never synchronize into thundering herds
+            const jitter = Math.floor(pollIntervalMs * (0.85 + Math.random() * 0.3));
+            const remainingMs = deadline - Date.now();
+            if (remainingMs <= 0) {
+                return [];
+            }
+            await new Promise((resolve) => setTimeout(resolve, Math.min(jitter, remainingMs)));
+        }
     }
     /**
      * Heartbeat / Visibility Extension:
@@ -465,7 +481,7 @@ export class PgmqClient {
      * Closes the PGMQ client and connection pools.
      */
     async close() {
-        if (this.ownsPool && !this.pool.ending) {
+        if (this.ownsPool && this.pool && !this.pool.ending) {
             await this.pool.end();
         }
         if (this.ownsCommandPool && this.commandPool && !this.commandPool.ending) {

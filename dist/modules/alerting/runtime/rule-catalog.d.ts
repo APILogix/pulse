@@ -1,4 +1,5 @@
 import type { Pool } from 'pg';
+import { LRUCache } from 'lru-cache';
 import type { AlertRuleConditionRow, AlertRuleRow } from '../rules/rules.types.js';
 import { type AlertRuleBindingRow, type EffectiveRule, type EvaluationScope } from '../policy/resolve-rule.js';
 export type AlertRuntimeTier = 'fast' | 'window' | 'operational' | 'ai';
@@ -31,7 +32,7 @@ export declare class AlertCatalogSnapshot {
 }
 export declare class AlertRuntimeRuleCatalog {
     private readonly db;
-    private static readonly globalCache;
+    static readonly globalCache: LRUCache<string, AlertCatalogSnapshot, unknown>;
     private readonly cache;
     private readonly inFlightLoads;
     constructor(db: Pool, options?: {

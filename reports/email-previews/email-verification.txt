@@ -1,7 +1,0 @@
-Hi Ada,
-
-Confirm this email address to finish setting up your Pulsiv account. The link expires in 60 minutes.
-
-https://app.pulsiv.io/verify-email?token=1c9d4e77af02b3e5
-
-If you did not create this account, you can safely ignore this email.

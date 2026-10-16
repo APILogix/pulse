@@ -20,11 +20,14 @@ class IngestionWorkerProcess {
     pool = null;
     writePool = null;
     registry = null;
+    migrationPromise = null;
+    asyncCommitEnabled = false;
     shuttingDown = false;
     async start() {
         this.installSignalHandlers();
         logProcessConnectionBudget('ingestion', log);
-        const maxPrimary = env.INGESTION_DB_POOL_SIZE ?? env.DB_POOL_MAX ?? 10;
+        // KVM 4 optimal default: 6 control-plane connections (usage flushes + metadata lookups)
+        const maxPrimary = env.INGESTION_DB_POOL_SIZE ?? Math.min(env.DB_POOL_MAX ?? 6, 8);
         const primarySsl = resolvePostgresSslConfig(env.DATABASE_URL, {
             enabled: env.DB_SSL_ENABLED,
             rejectUnauthorized: env.DB_SSL_REJECT_UNAUTHORIZED,
@@ -36,6 +39,8 @@ class IngestionWorkerProcess {
             min: 0,
             idleTimeoutMillis: env.DB_IDLE_TIMEOUT_MS ?? 30000,
             connectionTimeoutMillis: env.DB_CONNECTION_TIMEOUT_MS ?? 30000,
+            statement_timeout: env.DB_STATEMENT_TIMEOUT_MS ?? 30000,
+            query_timeout: env.DB_QUERY_TIMEOUT_MS ?? 0,
             application_name: `pulse_ingestion_workers_${env.NODE_ENV}`,
             keepAlive: true,
             keepAliveInitialDelayMillis: env.DB_KEEPALIVE_INITIAL_DELAY_MS ?? 10000,
@@ -65,22 +70,36 @@ class IngestionWorkerProcess {
         await retryConfiguredStartupOperation('ingestion control database', () => this.pool.query('SELECT 1'), log);
         this.writePool = this.createTelemetryWritePool();
         await retryConfiguredStartupOperation('ingestion write database', () => this.writePool.query('SELECT 1'), log);
+        // Run LogDB migrations BEFORE enabling synchronous_commit = off so DDL changes
+        // are guaranteed to be durably fsynced to WAL before workers start.
         if (env.LOG_DB_AUTO_MIGRATE) {
-            const migrationResult = await applyLogDbMigrations(this.writePool, {
+            this.migrationPromise = applyLogDbMigrations(this.writePool, {
                 logger: log,
                 executionMode: 'automatic',
             });
-            if (migrationResult.deferred > 0) {
-                log.warn({ deferredMigrations: migrationResult.deferred }, 'Operator-drained Log DB migrations remain pending; continuing ingestion worker startup');
+            try {
+                const migrationResult = (await this.migrationPromise);
+                if (migrationResult.deferred > 0) {
+                    log.warn({ deferredMigrations: migrationResult.deferred }, 'Operator-drained Log DB migrations remain pending; continuing ingestion worker startup');
+                }
+            }
+            finally {
+                this.migrationPromise = null;
             }
         }
+        if (this.shuttingDown)
+            return;
+        // Enable asynchronous WAL commit only after migrations have completed
+        await this.enableAsyncCommitOnWritePool();
         this.registry = new WorkerRegistry(this.pool, log, this.writePool);
         await this.registry.start();
         process.send?.('ready');
         log.info('Ingestion worker process started with Supabase PGMQ');
     }
     createTelemetryWritePool() {
-        const connectionString = env.LOG_DB_PRIMARY ?? env.DATABASE_URL;
+        // Prefer dedicated direct URL (port 5433) so bulk UNNEST writes and migrations
+        // bypass PgBouncer transaction mode while API reads/writes use PgBouncer (port 6432).
+        const connectionString = env.LOG_DB_DIRECT_URL ?? env.LOG_DB_PRIMARY ?? env.DATABASE_URL;
         const ssl = resolvePostgresSslConfig(connectionString, {
             enabled: env.LOG_DB_SSL_ENABLED,
             rejectUnauthorized: env.LOG_DB_SSL_REJECT_UNAUTHORIZED,
@@ -104,6 +123,11 @@ class IngestionWorkerProcess {
             poolMin: 0,
         }), 'Ingestion write PostgreSQL configuration');
         writePool.on('connect', (client) => {
+            if (this.asyncCommitEnabled) {
+                client.query('SET synchronous_commit = off').catch((err) => {
+                    log.debug({ err: err.message }, 'Failed to set synchronous_commit = off on telemetry write client');
+                });
+            }
             client.on('error', (err) => {
                 if (isExpectedServerlessDisconnect(err)) {
                     log.debug({ err: err.message }, 'Client telemetry write pool connection closed by serverless host');
@@ -120,6 +144,18 @@ class IngestionWorkerProcess {
             log.error({ err }, 'Telemetry write pool error');
         });
         return writePool;
+    }
+    async enableAsyncCommitOnWritePool() {
+        this.asyncCommitEnabled = true;
+        if (!this.writePool)
+            return;
+        // Apply to any warm connection already checked in from startup/migration checks
+        try {
+            await this.writePool.query('SET synchronous_commit = off');
+        }
+        catch (err) {
+            log.debug({ err: err?.message }, 'Could not set initial synchronous_commit = off on writePool');
+        }
     }
     installSignalHandlers() {
         process.once('SIGTERM', () => void this.shutdown('SIGTERM'));
@@ -144,6 +180,10 @@ class IngestionWorkerProcess {
             process.exit(exitCode || 1);
         }, env.SHUTDOWN_TIMEOUT_MS);
         timeout.unref();
+        // Wait for any in-flight startup migration to finish before closing writePool
+        if (this.migrationPromise) {
+            await Promise.allSettled([this.migrationPromise]);
+        }
         const stopResults = this.registry
             ? await Promise.allSettled([this.registry.stop()])
             : [];

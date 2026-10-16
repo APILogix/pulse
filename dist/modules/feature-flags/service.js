@@ -13,6 +13,7 @@
 import { LRUCache } from 'lru-cache';
 import { pool } from '../../config/database.js';
 import { FEATURE_FLAGS, } from './types.js';
+import { registerL1Cache, publishInvalidation } from '../../shared/cache/invalidation-bus.js';
 export { FEATURE_FLAGS };
 const FLAG_CACHE_TTL_MS = 30_000;
 function flagCacheKey(key, ctx, defaultEnabled = false) {
@@ -26,6 +27,17 @@ export const flagCache = new LRUCache({
     allowStale: false,
     // Exposed as flagCache.invalidate(...) below.
 });
+registerL1Cache('flag', {
+    delete: (key) => {
+        if (key.includes(':')) {
+            flagCache.delete(key);
+        }
+        else {
+            flagCache.invalidate(key);
+        }
+    },
+    clear: () => flagCache.clear(),
+});
 /**
  * Drop cached resolutions for a flag. With `ctx`, only that exact context;
  * without it, every cached context for the flag (LRUCache has no prefix
@@ -34,6 +46,7 @@ export const flagCache = new LRUCache({
 flagCache.invalidate = (key, ctx) => {
     if (ctx) {
         flagCache.delete(flagCacheKey(key, ctx));
+        void publishInvalidation('flag', flagCacheKey(key, ctx));
         return;
     }
     const prefix = `${key}:`;
@@ -41,6 +54,7 @@ flagCache.invalidate = (key, ctx) => {
         if (k.startsWith(prefix))
             flagCache.delete(k);
     }
+    void publishInvalidation('flag', key);
 };
 /**
  * Whether a flag is enabled for the given context. Most specific existing row

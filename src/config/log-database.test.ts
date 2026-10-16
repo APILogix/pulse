@@ -132,10 +132,10 @@ describe('LogDatabaseManager tenant scope — leak regression', () => {
     const scope = tenantScopeCalls();
     expect(scope).toHaveLength(1);
     // is_local = true -> reverted automatically at COMMIT/ROLLBACK.
-    expect(scope[0]?.sql).toMatch(/set_config\(\s*\$1\s*,\s*\$2\s*,\s*true\s*\)/i);
+    expect(scope[0]?.sql).toMatch(/set_config\(\s*'app\.current_project_id'\s*,\s*\$1\s*,\s*true\s*\)/i);
     // Bound, not interpolated: the project id must not appear in the SQL text.
     expect(scope[0]?.sql).not.toContain(PROJECT);
-    expect(scope[0]?.params).toEqual(['app.current_project_id', PROJECT]);
+    expect(scope[0]?.params).toEqual([PROJECT, '30000']);
   });
 
   it('applies the tenant scope AFTER BEGIN', async () => {
@@ -190,8 +190,8 @@ describe('LogDatabaseManager tenant scope — leak regression', () => {
 
     const scope = tenantScopeCalls();
     expect(scope).toHaveLength(2);
-    expect(scope[0]?.params).toEqual(['app.current_project_id', PROJECT]);
-    expect(scope[1]?.params).toEqual(['app.current_project_id', OTHER_PROJECT]);
+    expect(scope[0]?.params).toEqual([PROJECT, '30000']);
+    expect(scope[1]?.params).toEqual([OTHER_PROJECT, '30000']);
   });
 
   it('applies the tenant scope inside the transaction for withTransaction', async () => {

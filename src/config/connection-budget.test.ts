@@ -55,7 +55,6 @@ describe('Connection Budget', () => {
     expect(getProcessBudget('api').pools.map((pool) => pool.name)).toEqual([
       'primary_pool',
       ...expectedLogPools,
-      'pgmq_reader_pool',
       'pgmq_command_pool',
     ]);
     expect(getProcessBudget('worker').pools.map((pool) => pool.name)).toEqual([

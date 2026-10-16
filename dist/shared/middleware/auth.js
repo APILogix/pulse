@@ -1,5 +1,5 @@
 import jwt from 'jsonwebtoken';
-import { getUserRevokeCutoff, hasFreshStepUp, isAccessTokenBlacklisted, } from '../../modules/auth/infrastructure/cache/auth.cache.js';
+import { getUserRevokeCutoff, hasFreshStepUp, isAccessTokenBlacklisted, getCachedAuthSession, setCachedAuthSession, } from '../../modules/auth/infrastructure/cache/auth.cache.js';
 import { findSessionAndUserById } from '../../modules/auth/infrastructure/repositories/index.js';
 import { AuthErrorCodes } from '../../modules/auth/domain/types.js';
 import { verifyAccessToken } from '../../modules/auth/infrastructure/crypto/jwt.js';
@@ -35,20 +35,26 @@ export async function authenticate(request, reply) {
         return unauthorized(reply, 'INVALID_TOKEN_TYPE', 'Expected access token');
     }
     try {
-        // 3. Token-level revocation (in-process LRU)
-        if (isAccessTokenBlacklisted(decoded.jti)) {
+        // 3. Token-level revocation (Redis state + L1 read-through)
+        if (await isAccessTokenBlacklisted(decoded.jti)) {
             log.warn({ reqId: request.id, sessionId: decoded.jti }, 'Token revoked');
             return unauthorized(reply, 'SESSION_INVALID', 'Session revoked');
         }
         // 4. User-wide revocation. The cutoff is epoch millis; the JWT's `iat`
         //    is in seconds. Tokens issued at-or-before the cutoff are dead.
-        const cutoff = getUserRevokeCutoff(decoded.sub);
+        const cutoff = await getUserRevokeCutoff(decoded.sub);
         if (cutoff !== null && decoded.iat * 1000 <= cutoff) {
             log.warn({ reqId: request.id, userId: decoded.sub, cutoff }, 'User-wide revocation matched');
             return unauthorized(reply, 'SESSION_INVALID', 'Credentials no longer valid');
         }
-        // 5-7. Database lookup (single joined query for session + user)
-        const record = await findSessionAndUserById(decoded.jti);
+        // 5-7. Database lookup (single joined query for session + user, cached for 30s)
+        let record = await getCachedAuthSession(decoded.jti);
+        if (!record) {
+            record = await findSessionAndUserById(decoded.jti);
+            if (record && record.session_status === 'active' && !record.user_deleted_at && record.user_status !== 'suspended') {
+                await setCachedAuthSession(decoded.jti, record, 30);
+            }
+        }
         if (!record) {
             log.warn({ reqId: request.id, sessionId: decoded.jti }, 'Session not found');
             return unauthorized(reply, 'SESSION_INVALID', 'Session not found');
@@ -84,7 +90,7 @@ export async function authenticate(request, reply) {
             currentOrgId: record.user_current_org_id ?? null,
             sessionId: decoded.jti,
             mfaVerified: decoded.mfa_verified === true,
-            stepUpFresh: hasFreshStepUp(decoded.jti),
+            stepUpFresh: await hasFreshStepUp(decoded.jti),
         };
     }
     catch (error) {

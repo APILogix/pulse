@@ -177,4 +177,44 @@ describe('PgmqClient (Supabase PGMQ Driver)', () => {
     expect(metrics?.queueVisibleLength).toBe(20);
     expect(metrics?.totalMessages).toBe(1000);
   });
+
+  it('polls for messages via readWithPoll and returns immediately when messages are found', async () => {
+    const fakeRow = {
+      msg_id: '99',
+      read_ct: 1,
+      enqueued_at: new Date(),
+      vt: new Date(Date.now() + 60000),
+      message: { event: 'user_signup' },
+      headers: null,
+    };
+    mockPool.query.mockResolvedValueOnce({ rows: [fakeRow] });
+
+    const msgs = await client.readWithPoll('test_queue', {
+      visibilityTimeoutSeconds: 60,
+      quantity: 1,
+      pollTimeoutSeconds: 1,
+      pollIntervalMs: 50,
+    });
+
+    expect(msgs).toHaveLength(1);
+    expect(msgs[0]?.msgId).toBe('99');
+    expect(mockPool.query).toHaveBeenCalledWith(
+      expect.stringContaining('SELECT msg_id, read_ct, enqueued_at, vt, message, headers\n       FROM pgmq.read($1::text, $2::integer, $3::integer);'),
+      ['test_queue', 60, 1],
+    );
+  });
+
+  it('returns empty array when readWithPoll hits deadline with no messages', async () => {
+    mockPool.query.mockResolvedValue({ rows: [] });
+
+    const msgs = await client.readWithPoll('test_queue', {
+      visibilityTimeoutSeconds: 60,
+      quantity: 1,
+      pollTimeoutSeconds: 1,
+      pollIntervalMs: 50,
+    });
+
+    expect(msgs).toEqual([]);
+    expect(mockPool.query).toHaveBeenCalled();
+  });
 });

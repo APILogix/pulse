@@ -18,6 +18,10 @@ export class AlertingWorkspaceService {
     return this.provisioner.provision(client, context);
   }
 
+  provisionWorkspace(context: AlertingProvisioningContext) {
+    return this.provisioner.provisionWorkspace(context);
+  }
+
   getWorkspaceSnapshot(organizationId: string) {
     return this.repository.getWorkspaceSnapshot(organizationId);
   }

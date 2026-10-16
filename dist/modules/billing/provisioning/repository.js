@@ -54,13 +54,14 @@ export class BillingProvisioningRepository {
         const entitlementSnapshot = buildEntitlementsSnapshot(entitlements);
         const eventLimit = integerEntitlement(entitlements, EVENT_LIMIT_FEATURE_KEY);
         const aiCreditLimit = integerEntitlement(entitlements, AI_CREDIT_LIMIT_FEATURE_KEY);
-        const periodResult = await client.query(`SELECT
-         NOW() AS period_start,
-         CASE
-           WHEN $1::integer > 0 THEN NOW() + ($1::integer * INTERVAL '1 day')
-           ELSE NOW() + INTERVAL '1 month'
-         END AS period_end`, [plan.trial_days]);
-        const period = periodResult.rows[0];
+        const periodStart = new Date();
+        const periodEnd = new Date(periodStart);
+        if (plan.trial_days > 0) {
+            periodEnd.setDate(periodEnd.getDate() + plan.trial_days);
+        }
+        else {
+            periodEnd.setMonth(periodEnd.getMonth() + 1);
+        }
         const status = plan.trial_days > 0 ? 'trialing' : 'active';
         const provisioningMetadata = {
             reason: 'organization_created',
@@ -109,33 +110,45 @@ export class BillingProvisioningRepository {
             organizationId,
             plan.id,
             status,
-            period.period_start,
-            period.period_end,
+            periodStart,
+            periodEnd,
             plan.trial_days,
             JSON.stringify(modules),
             JSON.stringify(provisioningMetadata),
         ]);
         const subscriptionId = subscriptionResult.rows[0].id;
-        await client.query(`INSERT INTO subscription_events (
-         organization_id, subscription_id, event_type, actor, new_plan_id, metadata
-       ) VALUES ($1, $2, 'created', 'system', $3, $4::jsonb)`, [organizationId, subscriptionId, plan.id, JSON.stringify(provisioningMetadata)]);
-        await client.query(`INSERT INTO organization_usage_current_period (
-         organization_id, subscription_id, period_start, period_end,
-         events_used, ai_credits_used, projects_used, members_used,
-         api_keys_used, connectors_used, alert_rules_used, dashboards_used,
-         event_limit, ai_credit_limit, overage_events, overage_ai_credits,
-         metadata
+        // Batched single round-trip insert for subscription_events, usage counters, and audit logs
+        await client.query(`WITH ins_event AS (
+         INSERT INTO subscription_events (
+           organization_id, subscription_id, event_type, actor, new_plan_id, metadata
+         ) VALUES ($1, $2, 'created', 'system', $3, $4::jsonb)
+       ),
+       ins_usage AS (
+         INSERT INTO organization_usage_current_period (
+           organization_id, subscription_id, period_start, period_end,
+           events_used, ai_credits_used, projects_used, members_used,
+           api_keys_used, connectors_used, alert_rules_used, dashboards_used,
+           event_limit, ai_credit_limit, overage_events, overage_ai_credits,
+           metadata
+         ) VALUES (
+           $1, $2, $5, $6,
+           0, 0, 0, 1,
+           0, 0, 0, 0,
+           $7, $8, 0, 0,
+           $9::jsonb
+         )
+       )
+       INSERT INTO billing_audit_logs (
+         organization_id, subscription_id, actor_type, action, new_state, metadata
        ) VALUES (
-         $1, $2, $3, $4,
-         0, 0, 0, 1,
-         0, 0, 0, 0,
-         $5, $6, 0, 0,
-         $7::jsonb
+         $1, $2, 'system', 'subscription.provisioned', $10::jsonb, $4::jsonb
        )`, [
             organizationId,
             subscriptionId,
-            period.period_start,
-            period.period_end,
+            plan.id,
+            JSON.stringify(provisioningMetadata),
+            periodStart,
+            periodEnd,
             usageLimitParameter(eventLimit),
             usageLimitParameter(aiCreditLimit),
             JSON.stringify({
@@ -143,23 +156,14 @@ export class BillingProvisioningRepository {
                 entitlements: entitlementSnapshot,
                 modules,
             }),
-        ]);
-        await client.query(`INSERT INTO billing_audit_logs (
-         organization_id, subscription_id, actor_type, action, new_state, metadata
-       ) VALUES (
-         $1, $2, 'system', 'subscription.provisioned', $3::jsonb, $4::jsonb
-       )`, [
-            organizationId,
-            subscriptionId,
             JSON.stringify({
                 status,
                 planId: plan.id,
-                periodStart: period.period_start,
-                periodEnd: period.period_end,
+                periodStart,
+                periodEnd,
                 eventLimit,
                 aiCreditLimit,
             }),
-            JSON.stringify(provisioningMetadata),
         ]);
         return { subscriptionId, planId: plan.id, status, featureCount: entitlements.length, eventLimit, aiCreditLimit };
     }

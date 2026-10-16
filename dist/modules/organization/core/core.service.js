@@ -43,25 +43,18 @@ export class CoreService {
         return org;
     }
     async createOrganization(meta, data) {
-        const provisioned = await this.deps.repository.withTransaction(async (client) => {
+        const { org, billing } = await this.deps.repository.withTransaction(async (client) => {
             // 1. Create organization (status is synced to default billing below)
             const created = await this.deps.repository.createOrg(client, data.name, meta.actorUserId, data, 'trialing');
             // 2. Billing provisioning: creates subscription, subscription_events, and usage_current_period
             const billing = await this.deps.billingProvisioning.provisionDefaultSubscription(client, created.organization.id);
-            // 3. Provision Alerting V2 configuration in the same transaction.
-            await this.deps.provisionAlertingWorkspace(client, {
-                organizationId: created.organization.id,
-                initializedBy: meta.actorUserId,
-                subscriptionId: billing.subscriptionId,
-                planId: billing.planId,
-            });
-            // 4. Sync org status with the billing subscription status
+            // 3. Sync org status with the billing subscription status
             //    (e.g. 'active' if default plan has trial_days=0, 'trialing' if trial_days>0)
             if (billing.status !== 'trialing') {
                 await client.query(`UPDATE organizations SET status=$1, updated_at=NOW() WHERE id=$2`, [billing.status, created.organization.id]);
                 created.organization.status = billing.status;
             }
-            // 5. Audit log
+            // 4. Audit log
             await client.query(`INSERT INTO organization_audit_logs (
            org_id, actor_user_id, actor_email, actor_ip, actor_user_agent, actor_session_id,
            action, entity_type, entity_id, entity_name, request_id, http_method, endpoint,
@@ -77,10 +70,26 @@ export class CoreService {
                 JSON.stringify({ name: created.organization.name, slug: created.organization.slug, billing }),
                 JSON.stringify({ source: 'organization.create' }),
             ]);
-            return created.organization;
+            return { org: created.organization, billing };
         });
-        syncOrganizationLookupToLogDbBestEffort(provisioned.id, "organization.created");
-        return toOrgDto(provisioned);
+        // 5. Post-commit best-effort side-effects:
+        // Sync organization lookup to Log DB
+        syncOrganizationLookupToLogDbBestEffort(org.id, "organization.created");
+        // 6. Asynchronously provision Alerting V2 workspace in background.
+        // Heavy configuration seeding (46 alert rules, 46 policy definitions, routing defaults,
+        // escalation policies, 20+ tables) is executed post-commit so the create org HTTP API
+        // completes in milliseconds instead of blocking for ~3 seconds holding row locks.
+        if (this.deps.provisionAlertingWorkspace) {
+            void this.deps.provisionAlertingWorkspace({
+                organizationId: org.id,
+                initializedBy: meta.actorUserId,
+                subscriptionId: billing.subscriptionId,
+                planId: billing.planId,
+            }).catch((err) => {
+                this.deps.log.error({ err, orgId: org.id }, 'Background alerting workspace provisioning failed');
+            });
+        }
+        return toOrgDto(org);
     }
     async switchOrganization(meta, orgId) {
         await this.deps.requireMember(orgId, meta.actorUserId);

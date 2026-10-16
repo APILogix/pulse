@@ -1,0 +1,73 @@
+# ==============================================================================
+# database-perf-alerts.yml
+# Prometheus Alerting Rules for PostgreSQL, Connection Pools, and Cache Health
+# ==============================================================================
+
+groups:
+  - name: DatabasePerformanceAlerts
+    rules:
+      # ── 1. Query Latency Budget Breach ─────────────────────────────────────
+      - alert: DbQueryLatencyBudgetBreached
+        expr: >
+          histogram_quantile(0.95, sum(rate(db_query_duration_seconds_bucket[5m])) by (le, query, db)) > 0.200
+        for: 5m
+        labels:
+          severity: warning
+          tier: database
+        annotations:
+          summary: "Database query {{ $labels.query }} on {{ $labels.db }} exceeded latency budget"
+          description: >
+            The 95th percentile execution duration for query '{{ $labels.query }}' on database '{{ $labels.db }}'
+            is currently {{ $value | humanizeDuration }}, which breaches the latency budget for more than 5 minutes.
+          runbook_url: "https://docs.pulse.dev/runbooks/db-slow-queries"
+
+      # ── 2. Connection Pool Saturation ──────────────────────────────────────
+      - alert: DbPoolSaturation
+        expr: >
+          (histogram_quantile(0.95, sum(rate(db_pool_wait_seconds_bucket[3m])) by (le, db)) > 0.05)
+          or
+          (db_pool_connections{state="waiting"} > 0)
+        for: 3m
+        labels:
+          severity: critical
+          tier: database
+        annotations:
+          summary: "Database connection pool {{ $labels.db }} saturated"
+          description: >
+            Database connection pool for {{ $labels.db }} is saturated. Pool acquisition p95 wait time
+            exceeds 50ms or callers are actively queuing for connection slots for > 3 minutes.
+          runbook_url: "https://docs.pulse.dev/runbooks/db-pool-exhaustion"
+
+      # ── 3. N+1 Database Query Pattern Detected ────────────────────────────
+      - alert: DbNPlusOneDetected
+        expr: >
+          histogram_quantile(0.95, sum(rate(db_queries_per_request_bucket[5m])) by (le, route)) > 15
+        for: 5m
+        labels:
+          severity: warning
+          tier: application
+        annotations:
+          summary: "Potential N+1 database queries on route {{ $labels.route }}"
+          description: >
+            The 95th percentile query count per request for route '{{ $labels.route }}' exceeds 15 queries.
+            Inspect application logs for 'N+1 database query pattern detected in request' to identify repeated queries.
+          runbook_url: "https://docs.pulse.dev/runbooks/n-plus-one-optimization"
+
+      # ── 4. Cache Hit Rate Degradation ─────────────────────────────────────
+      - alert: CacheHitRateDegraded
+        expr: >
+          (
+            sum(rate(cache_requests_total{result="hit"}[10m])) by (layer, cache)
+            /
+            sum(rate(cache_requests_total[10m])) by (layer, cache)
+          ) < 0.85
+        for: 10m
+        labels:
+          severity: warning
+          tier: cache
+        annotations:
+          summary: "Cache hit rate for {{ $labels.cache }} ({{ $labels.layer }}) degraded below 85%"
+          description: >
+            The cache hit rate for {{ $labels.cache }} on layer {{ $labels.layer }} has dropped to
+            {{ $value | humanizePercentage }} over the last 10 minutes, putting excess read pressure on PostgreSQL.
+          runbook_url: "https://docs.pulse.dev/runbooks/cache-hit-rate"

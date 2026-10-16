@@ -1,3 +1,10 @@
+import { LRUCache } from 'lru-cache';
+/**
+ * Cache timestamp of last successful best-effort sync for read/init triggers (e.g. 'sdk.init').
+ * Explicit mutations (e.g. publish, rollback, create, update) bypass this cache.
+ * Bounded with LRUCache (max 10000, ttl 60000, ttlAutopurge: true) to eliminate memory leaks.
+ */
+export declare const recentInitSyncTimestamps: LRUCache<string, number, unknown>;
 export declare function resetLookupSyncCachesForTest(): void;
 export declare const ORGANIZATION_LOOKUP_UPSERT_SQL = "\n  INSERT INTO organization_lookup (\n    organization_id,\n    name,\n    slug,\n    plan_key,\n    metadata,\n    synced_at\n  )\n  VALUES ($1, $2, $3, $4, $5::jsonb, NOW())\n  ON CONFLICT (organization_id) DO UPDATE SET\n    name = EXCLUDED.name,\n    slug = EXCLUDED.slug,\n    plan_key = EXCLUDED.plan_key,\n    metadata = organization_lookup.metadata || EXCLUDED.metadata,\n    synced_at = NOW()\n  WHERE organization_lookup.name IS DISTINCT FROM EXCLUDED.name\n     OR organization_lookup.slug IS DISTINCT FROM EXCLUDED.slug\n     OR organization_lookup.plan_key IS DISTINCT FROM EXCLUDED.plan_key\n     OR organization_lookup.metadata IS DISTINCT FROM (organization_lookup.metadata || EXCLUDED.metadata)";
 export declare function syncOrganizationLookupToLogDb(organizationId: string, reason: string): Promise<boolean>;

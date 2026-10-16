@@ -36,6 +36,13 @@ export interface CachedProjectConfig {
 }
 export declare const apiKeyCache: LRUCache<string, CachedProjectConfig, unknown>;
 /**
+ * Separate bounded LRU for invalid API keys (Tier 1.3 negative caching).
+ * Max: 10,000, TTL: 30 seconds.
+ * Keyed strictly by SHA-256 hash of the key, NEVER the raw key.
+ */
+export declare const invalidApiKeyCache: LRUCache<string, boolean, unknown>;
+export declare function evictApiKeyCache(keyHash: string): void;
+/**
  * Cached organization alert-threshold config (latency SLO gates) keyed by
  * `${orgId}:${projectId ?? 'org'}`. The alerting evaluator reads this on every
  * window so we keep it in-process (no Redis). Short TTL bounds how long a

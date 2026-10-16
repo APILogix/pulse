@@ -9,6 +9,7 @@ export declare class AlertingWorkspaceService {
     private readonly logger?;
     constructor(repository?: AlertingWorkspaceRepository, provisioner?: AlertingWorkspaceProvisioner, logger?: FastifyBaseLogger | undefined);
     provision(client: PoolClient, context: AlertingProvisioningContext): Promise<import("./alerting-workspace.types.js").AlertingProvisioningSummary>;
+    provisionWorkspace(context: AlertingProvisioningContext): Promise<import("./alerting-workspace.types.js").AlertingProvisioningSummary>;
     getWorkspaceSnapshot(organizationId: string): Promise<{
         workspace: any;
         categories: any[];

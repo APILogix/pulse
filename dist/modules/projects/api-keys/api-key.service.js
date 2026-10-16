@@ -1,4 +1,4 @@
-import { apiKeyCache } from "../../../config/lrucashe.js";
+import { apiKeyCache, evictApiKeyCache, invalidApiKeyCache } from "../../../config/lrucashe.js";
 import { redisLookupCache } from "../../../db/redis/lookup-cache.js";
 import { ProjectMemberRole } from "../types.js";
 import { ProjectsRepository } from "../repository.js";
@@ -99,6 +99,7 @@ export class ApiKeyService extends BaseProjectService {
             allowedEnvironmentIds: [created.environmentId],
         }, created.secretHash);
         try {
+            invalidApiKeyCache.delete(created.secretHash);
             apiKeyCache.set(created.secretHash, {
                 projectId,
                 environmentId: created.environmentId,
@@ -457,7 +458,7 @@ export class ApiKeyService extends BaseProjectService {
     }
     evictApiKeyConfig(secretHash) {
         try {
-            apiKeyCache.delete(secretHash);
+            evictApiKeyCache(secretHash);
             void redisLookupCache.invalidateApiKey(secretHash);
         }
         catch (err) {

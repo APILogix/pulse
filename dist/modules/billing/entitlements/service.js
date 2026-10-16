@@ -1,4 +1,7 @@
 import { LRUCache } from 'lru-cache';
+import { registerL1Cache, publishInvalidation } from '../../../shared/cache/invalidation-bus.js';
+import { CacheFlags } from '../../../config/cache-flags.js';
+import { recordCacheRequest } from '../../../config/perf/metrics.js';
 import { EntitlementsRepository } from './repository.js';
 import { BillingFeatureDisabledError, BillingQuotaExceededError, SubscriptionInactiveError, } from './errors.js';
 export class EntitlementsService {
@@ -6,13 +9,16 @@ export class EntitlementsService {
     cache;
     defaultTtlMs;
     listeners = new Set();
+    inFlightLoads = new Map();
     constructor(repository = new EntitlementsRepository(), options = {}) {
         this.repository = repository;
         this.defaultTtlMs = options.ttlMs ?? 60_000; // 60 seconds TTL
         this.cache = new LRUCache({
             max: options.maxCachedOrgs ?? 5_000,
             ttl: this.defaultTtlMs,
+            updateAgeOnGet: false,
         });
+        registerL1Cache('entitlements', this.cache);
     }
     /** Register a callback invoked whenever an organization's billing state / entitlements are invalidated */
     onOrgInvalidate(listener) {
@@ -24,6 +30,8 @@ export class EntitlementsService {
     /** Invalidate cached entitlements for an organization (e.g. after subscription or override changes) */
     invalidateOrgCache(orgId) {
         this.cache.delete(orgId);
+        this.inFlightLoads.delete(orgId);
+        void publishInvalidation('entitlements', orgId);
         for (const listener of this.listeners) {
             try {
                 listener(orgId);
@@ -36,32 +44,71 @@ export class EntitlementsService {
     /** Clear entire in-memory entitlement cache */
     clearCache() {
         this.cache.clear();
+        this.inFlightLoads.clear();
     }
     async getOrLoadOrgEntitlements(orgId) {
         const cached = this.cache.get(orgId);
         if (cached) {
+            recordCacheRequest('entitlements', 'hit');
             return cached;
         }
-        const [rows, sub] = await Promise.all([
-            this.repository.getEffectiveEntitlements(orgId),
-            this.repository.getSubscriptionState(orgId),
-        ]);
-        const map = {};
-        for (const curr of rows) {
-            map[curr.feature_key] = {
-                booleanValue: curr.boolean_value,
-                integerValue: curr.integer_value !== null ? Number(curr.integer_value) : null,
-                decimalValue: curr.decimal_value !== null ? Number(curr.decimal_value) : null,
-                stringValue: curr.string_value,
+        recordCacheRequest('entitlements', 'miss');
+        if (!CacheFlags.entitlementsSingleFlight) {
+            // Legacy behavior (kill-switch fallback)
+            const [rows, sub] = await Promise.all([
+                this.repository.getEffectiveEntitlements(orgId),
+                this.repository.getSubscriptionState(orgId),
+            ]);
+            const map = {};
+            for (const curr of rows) {
+                map[curr.feature_key] = {
+                    booleanValue: curr.boolean_value,
+                    integerValue: curr.integer_value !== null ? Number(curr.integer_value) : null,
+                    decimalValue: curr.decimal_value !== null ? Number(curr.decimal_value) : null,
+                    stringValue: curr.string_value,
+                };
+            }
+            const entry = {
+                map,
+                subscription: sub,
+                cachedAt: Date.now(),
             };
+            this.cache.set(orgId, entry);
+            return entry;
         }
-        const entry = {
-            map,
-            subscription: sub,
-            cachedAt: Date.now(),
-        };
-        this.cache.set(orgId, entry);
-        return entry;
+        const inFlight = this.inFlightLoads.get(orgId);
+        if (inFlight) {
+            return inFlight;
+        }
+        const loadPromise = (async () => {
+            try {
+                const [rows, sub] = await Promise.all([
+                    this.repository.getEffectiveEntitlements(orgId),
+                    this.repository.getSubscriptionState(orgId),
+                ]);
+                const map = {};
+                for (const curr of rows) {
+                    map[curr.feature_key] = {
+                        booleanValue: curr.boolean_value,
+                        integerValue: curr.integer_value !== null ? Number(curr.integer_value) : null,
+                        decimalValue: curr.decimal_value !== null ? Number(curr.decimal_value) : null,
+                        stringValue: curr.string_value,
+                    };
+                }
+                const entry = {
+                    map,
+                    subscription: sub,
+                    cachedAt: Date.now(),
+                };
+                this.cache.set(orgId, entry);
+                return entry;
+            }
+            finally {
+                this.inFlightLoads.delete(orgId);
+            }
+        })();
+        this.inFlightLoads.set(orgId, loadPromise);
+        return loadPromise;
     }
     /**
      * Get all resolved effective entitlements as a key-value dictionary for an organization.

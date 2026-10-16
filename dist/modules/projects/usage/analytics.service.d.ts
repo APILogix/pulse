@@ -28,6 +28,7 @@ export declare class UsageAnalyticsService {
      * aggregates or when a project is mutated so dashboards see fresh data.
      */
     evictProjectCache(projectId: string): void;
+    private quantizeQuery;
     private cacheKey;
     private encodeCursor;
     private decodeCursor;

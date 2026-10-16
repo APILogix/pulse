@@ -3,147 +3,193 @@ import { Redis } from 'ioredis';
 import { env } from './env.js';
 import { logger } from './logger.js';
 const redisLogger = logger.child({ component: 'redis' });
-/**
- * Shared Redis connection for the application layer (sessions, caching, etc.).
- *
- * The ingestion module maintains its own dedicated Redis connection because
- * BullMQ requires `maxRetriesPerRequest: null` which is incompatible with
- * normal Redis usage. This separation is intentional.
- */
-const parsedRedisUrl = new URL(env.REDIS_URL);
-const isTls = parsedRedisUrl.protocol === 'rediss:';
-const redisOptions = {
-    host: parsedRedisUrl.hostname,
-    port: Number(parsedRedisUrl.port) || 6379,
-    password: parsedRedisUrl.password ? decodeURIComponent(parsedRedisUrl.password) : undefined,
-    username: parsedRedisUrl.username ? decodeURIComponent(parsedRedisUrl.username) : undefined,
-    family: 4,
-    tls: isTls ? { servername: parsedRedisUrl.hostname } : undefined,
-    lazyConnect: true,
-    enableOfflineQueue: false,
-    connectTimeout: Math.max(env.REDIS_CONNECT_TIMEOUT_MS, 15000),
-    commandTimeout: Math.max(env.REDIS_COMMAND_TIMEOUT_MS, 8000),
-    keepAlive: 10000,
-    maxRetriesPerRequest: 2,
-    retryStrategy: (times) => {
-        // Resilient continuous background reconnection to survive WAN packet drops
-        const delay = Math.min(times * 250, 3000);
-        if (times % 5 === 0) {
-            redisLogger.warn({ attempt: times, nextRetryMs: delay }, 'Redis background reconnection in progress');
-        }
-        return delay;
-    },
-    reconnectOnError: (err) => {
-        const targetErrors = ['READONLY', 'ECONNRESET', 'ETIMEDOUT', 'EHOSTUNREACH', 'ECONNREFUSED'];
-        return targetErrors.some((e) => err.message.includes(e));
-    },
+export const REDIS_KEY_MAPPING = {
+    // State: streams, rate limits, idempotency, alert cooldowns, remote-config, sessions/auth state
+    ratelimit: 'state',
+    idempotency: 'state',
+    auth: 'state',
+    'remote-config': 'state',
+    alert: 'state',
+    stream: 'state',
+    security: 'state',
+    circuit: 'state',
+    replay: 'state',
+    session: 'state',
+    // Cache: lookup caches, dashboard results, query results, events
+    lookup: 'cache',
+    dashboard: 'cache',
+    analytics: 'cache',
+    event: 'cache',
+    query: 'cache',
+    stats: 'cache',
 };
-export const redis = new Redis(redisOptions);
-// Lifecycle events
-redis.on('connect', () => {
-    redisLogger.info('Redis connection established');
+/**
+ * Classify a Redis key into 'state' or 'cache'.
+ */
+export function classifyRedisKey(key) {
+    let cleanKey = key;
+    if (cleanKey.startsWith('ingest:')) {
+        cleanKey = cleanKey.slice(7);
+    }
+    const prefix = cleanKey.split(':')[0];
+    return (prefix ? REDIS_KEY_MAPPING[prefix] : undefined) ?? 'state';
+}
+export function parseRedisOptions(rawUrl) {
+    const parsed = new URL(rawUrl);
+    const isTls = parsed.protocol === 'rediss:';
+    return {
+        host: parsed.hostname,
+        port: Number(parsed.port) || 6379,
+        password: parsed.password ? decodeURIComponent(parsed.password) : undefined,
+        username: parsed.username ? decodeURIComponent(parsed.username) : undefined,
+        family: 4,
+        tls: isTls ? { servername: parsed.hostname } : undefined,
+        lazyConnect: true,
+        enableOfflineQueue: false,
+        connectTimeout: Math.max(env.REDIS_CONNECT_TIMEOUT_MS, 15000),
+        commandTimeout: Math.max(env.REDIS_COMMAND_TIMEOUT_MS, 8000),
+        keepAlive: 10000,
+        maxRetriesPerRequest: 2,
+        retryStrategy: (times) => {
+            const delay = Math.min(times * 250, 3000);
+            if (times % 5 === 0) {
+                redisLogger.warn({ attempt: times, nextRetryMs: delay }, 'Redis background reconnection in progress');
+            }
+            return delay;
+        },
+        reconnectOnError: (err) => {
+            const targetErrors = ['READONLY', 'ECONNRESET', 'ETIMEDOUT', 'EHOSTUNREACH', 'ECONNREFUSED'];
+            return targetErrors.some((e) => err.message.includes(e));
+        },
+    };
+}
+export function createRedisClient(options) {
+    const targetUrl = options.customUrl || options.fallbackUrl || env.REDIS_URL;
+    const clientOptions = parseRedisOptions(targetUrl);
+    const client = new Redis(clientOptions);
+    client.on('connect', () => {
+        redisLogger.info({ role: options.role }, `Redis ${options.role} connection established`);
+    });
+    client.on('ready', () => {
+        redisLogger.info({ role: options.role }, `Redis ${options.role} ready to accept commands`);
+    });
+    client.on('error', (err) => {
+        redisLogger.error({ err, role: options.role }, `Redis ${options.role} connection error`);
+    });
+    client.on('close', () => {
+        redisLogger.warn({ role: options.role }, `Redis ${options.role} connection closed`);
+    });
+    return client;
+}
+export const redisCache = createRedisClient({
+    role: 'cache',
+    customUrl: env.REDIS_CACHE_URL,
+    fallbackUrl: env.REDIS_URL,
 });
-redis.on('ready', () => {
-    redisLogger.info('Redis ready to accept commands');
+export const redisState = createRedisClient({
+    role: 'state',
+    customUrl: env.REDIS_STATE_URL,
+    fallbackUrl: env.REDIS_URL,
 });
-redis.on('error', (err) => {
-    redisLogger.error({ err }, 'Redis connection error');
-});
-redis.on('close', () => {
-    redisLogger.warn('Redis connection closed');
-});
-let reconnectPromise = null;
-async function ensureRedisConnected() {
-    if (redis.status === 'ready')
+// Backward-compatible primary export
+export const redis = redisState;
+export function getRedisClientForPrefix(key) {
+    const role = classifyRedisKey(key);
+    return role === 'cache' ? redisCache : redisState;
+}
+async function ensureClientConnected(client, label) {
+    if (client.status === 'ready')
         return;
-    if (redis.status === 'wait' || redis.status === 'end' || redis.status === 'close') {
-        if (!reconnectPromise) {
-            reconnectPromise = redis.connect().finally(() => {
-                reconnectPromise = null;
-            });
-        }
-        await reconnectPromise;
+    if (client.status === 'wait' || client.status === 'end' || client.status === 'close') {
+        await client.connect();
         return;
     }
-    // If connecting/reconnecting, wait until ready or closed
     await new Promise((resolve, reject) => {
-        if (redis.status === 'ready')
+        if (client.status === 'ready')
             return resolve();
         const onReady = () => { cleanup(); resolve(); };
-        const onClose = () => { cleanup(); reject(new Error('Redis connection closed')); };
+        const onClose = () => { cleanup(); reject(new Error(`Redis ${label} connection closed`)); };
         const onError = (err) => { cleanup(); reject(err); };
-        const timer = setTimeout(() => { cleanup(); reject(new Error('Redis connection wait timeout')); }, env.REDIS_CONNECT_TIMEOUT_MS);
+        const timer = setTimeout(() => {
+            cleanup();
+            reject(new Error(`Redis ${label} connection wait timeout`));
+        }, env.REDIS_CONNECT_TIMEOUT_MS);
         function cleanup() {
             clearTimeout(timer);
-            redis.off('ready', onReady);
-            redis.off('close', onClose);
-            redis.off('error', onError);
+            client.off('ready', onReady);
+            client.off('close', onClose);
+            client.off('error', onError);
         }
-        redis.once('ready', onReady);
-        redis.once('close', onClose);
-        redis.once('error', onError);
+        client.once('ready', onReady);
+        client.once('close', onClose);
+        client.once('error', onError);
     });
 }
-/**
- * Connect to Redis — should be called during bootstrap BEFORE app.listen().
- */
-export const connectRedis = async (maxRetries = 3) => {
+async function connectSingleClient(client, label, maxRetries) {
     let attempt = 0;
     while (true) {
         try {
-            await ensureRedisConnected();
-            const response = await redis.ping();
+            await ensureClientConnected(client, label);
+            const response = await client.ping();
             if (response !== 'PONG') {
-                throw new Error(`Redis health check failed during bootstrap: ${response}`);
+                throw new Error(`Redis ${label} health check failed during bootstrap: ${response}`);
             }
-            redisLogger.info('Redis connected');
+            redisLogger.info(`Redis ${label} connected`);
             return;
         }
         catch (error) {
             attempt++;
             if (attempt < maxRetries) {
-                redisLogger.warn({ attempt, maxRetries, err: error?.message || String(error) }, 'Redis bootstrap connection attempt failed, retrying...');
-                redis.disconnect(false);
+                redisLogger.warn({ attempt, maxRetries, label, err: error?.message || String(error) }, `Redis ${label} bootstrap connection attempt failed, retrying...`);
+                client.disconnect(false);
                 await new Promise((r) => setTimeout(r, 500 * attempt));
                 continue;
             }
-            // Leave the client with a background reconnect attempt so that as soon as
-            // network/Redis recovers, the optional cache becomes ready automatically.
             setTimeout(() => {
-                void redis.connect().catch(() => { });
+                void client.connect().catch(() => { });
             }, 2000);
             throw error;
         }
     }
+}
+export const connectRedis = async (maxRetries = 3) => {
+    await Promise.all([
+        connectSingleClient(redisState, 'state', maxRetries),
+        connectSingleClient(redisCache, 'cache', maxRetries),
+    ]);
 };
-/**
- * Health check — reconnects a previously unavailable optional cache, then PINGs.
- */
 export const checkRedis = async () => {
     try {
-        await ensureRedisConnected();
-        const res = await redis.ping();
-        redisLogger.debug({ response: res }, 'Redis health check passed');
-        return res === 'PONG';
+        await Promise.all([
+            ensureClientConnected(redisState, 'state'),
+            ensureClientConnected(redisCache, 'cache'),
+        ]);
+        const [statePong, cachePong] = await Promise.all([
+            redisState.ping(),
+            redisCache.ping(),
+        ]);
+        const ok = statePong === 'PONG' && cachePong === 'PONG';
+        redisLogger.debug({ statePong, cachePong, ok }, 'Redis health check passed');
+        return ok;
     }
     catch (err) {
         redisLogger.error({ err }, 'Redis health check failed');
         return false;
     }
 };
-/**
- * Graceful shutdown — sends QUIT and waits for pending commands to flush.
- */
 export const closeRedis = async () => {
-    redisLogger.info('Closing Redis connection');
-    if (redis.status !== 'end') {
-        try {
-            await redis.quit();
+    redisLogger.info('Closing Redis connections');
+    const closeSingle = async (client) => {
+        if (client.status !== 'end') {
+            try {
+                await client.quit();
+            }
+            catch {
+                client.disconnect(false);
+            }
         }
-        catch {
-            redis.disconnect(false);
-        }
-    }
-    redisLogger.info('Redis connection closed');
+    };
+    await Promise.all([closeSingle(redisState), closeSingle(redisCache)]);
+    redisLogger.info('Redis connections closed');
 };
 //# sourceMappingURL=redis.js.map

@@ -22,6 +22,7 @@ export declare class EntitlementsService {
     private readonly cache;
     private readonly defaultTtlMs;
     private readonly listeners;
+    private readonly inFlightLoads;
     constructor(repository?: EntitlementsRepository, options?: {
         maxCachedOrgs?: number;
         ttlMs?: number;

@@ -28,7 +28,7 @@ function positiveInteger(value, fallback) {
 // workers should be an explicit capacity decision because every replica owns
 // DB, Redis, log-DB, and pg-boss pools. Defaulting to `max` can OOM/throttle a
 // small host before it receives traffic.
-const apiInstances = Math.min(cpuCount, positiveInteger(process.env.API_INSTANCES, 1));
+const apiInstances = positiveInteger(process.env.API_INSTANCES, cpuCount > 2 ? 2 : 1);
 
 function startupBackoffBudget(attempts, baseDelayMs, maxDelayMs) {
   let total = 0;

@@ -27,6 +27,10 @@ const NON_RETRYABLE_PG_CODES = new Set([
   '42P01', // undefined_table
   '42703', // undefined_column
   '22P02', // invalid_text_representation
+  '22003', // numeric_value_out_of_range
+  '22012', // division_by_zero
+  '57014', // query_canceled (statement_timeout) — NEVER retry timed-out queries!
+  '53200', // out_of_memory
 ]);
 
 /** Connection-level errors where a retry on a fresh connection is worthwhile. */
@@ -43,6 +47,34 @@ const RETRYABLE_CONNECTION_CODES = new Set([
   '40001', // serialization_failure
   '40P01', // deadlock_detected
 ]);
+
+function isTimeoutError(err: unknown): boolean {
+  if (!err || typeof err !== 'object') return false;
+  const code = (err as { code?: string }).code;
+  const msg = String((err as { message?: string }).message ?? '').toLowerCase();
+  return (
+    code === '57014' ||
+    msg.includes('query read timeout') ||
+    msg.includes('statement timeout') ||
+    msg.includes('canceling statement due to statement timeout')
+  );
+}
+
+function isRetryableLogDbError(err: unknown): boolean {
+  if (!err || typeof err !== 'object') return false;
+  if (isTimeoutError(err)) return false;
+
+  const code = (err as { code?: string }).code;
+  if (code) {
+    if (NON_RETRYABLE_PG_CODES.has(code)) return false;
+    if (RETRYABLE_CONNECTION_CODES.has(code)) return true;
+  }
+
+  return (
+    isExpectedServerlessDisconnect(err as Error) ||
+    ['ECONNRESET', 'ECONNREFUSED', 'ETIMEDOUT', 'EPIPE'].includes(code ?? '')
+  );
+}
 
 export type DbOperation = 'read' | 'write';
 
@@ -100,6 +132,7 @@ class LogDatabaseManager {
   private primaryPool: Pool;
   private replicaPool: Pool | null = null;
   private replicaHealthy = false;
+  private replicaUnhealthyUntil = 0;
   private isShuttingDown = false;
   private timescaleReady = false;
 
@@ -326,6 +359,11 @@ class LogDatabaseManager {
       throw new Error('Log database is shutting down — refusing new connections');
     }
 
+    // Auto-recover replica after 15s cooldown if it was marked unhealthy by a transient drop
+    if (!this.replicaHealthy && this.replicaPool && Date.now() >= this.replicaUnhealthyUntil) {
+      this.replicaHealthy = true;
+    }
+
     const useReplica = options?.operation === 'read' && this.replicaPool !== null && this.replicaHealthy;
     const pool = useReplica ? this.replicaPool! : this.primaryPool;
     return pool.connect();
@@ -386,8 +424,10 @@ class LogDatabaseManager {
    * Execute a query with retry + exponential backoff (with jitter).
    *
    * - Non-retryable errors (constraint, permission, syntax) fail immediately.
-   * - A per-statement timeout, when supplied, is applied via `SET LOCAL` inside
-   *   a transaction so it can never leak onto a reused pooled connection.
+   * - Statement timeouts are never retried, preventing runaway zombie query storms on LogDB.
+   * - A per-statement timeout, when supplied, is applied via `set_config('statement_timeout', ..., true)`
+   *   inside a transaction so it can never leak onto a reused pooled connection and PostgreSQL
+   *   engine cancels the query if exceeded.
    * - Reads default to the configured read timeout; writes default to the
    *   write timeout (0/unbounded) so ingestion is never aborted mid-batch.
    */
@@ -405,6 +445,7 @@ class LogDatabaseManager {
     for (let attempt = 0; attempt < maxRetries; attempt++) {
       const useReplica = operation === 'read' && this.replicaPool !== null && this.replicaHealthy;
       let client: PoolClient | null = null;
+      let destroyClientOnRelease = false;
 
       try {
         client = await this.getConnection({ operation });
@@ -412,7 +453,16 @@ class LogDatabaseManager {
         // projectId is threaded into runWithTimeout rather than applied at
         // checkout, so the tenant scope lives inside the same transaction as the
         // statement it scopes.
-        const result = await this.runWithTimeout<T>(client, sql, params, effectiveTimeout, projectId);
+        const result = await this.runWithTimeout<T>(
+          client,
+          sql,
+          params,
+          effectiveTimeout,
+          projectId,
+          () => {
+            destroyClientOnRelease = true;
+          },
+        );
         const duration = Date.now() - start;
 
         if (duration > env.LOG_DB_SLOW_QUERY_MS) {
@@ -427,33 +477,41 @@ class LogDatabaseManager {
         lastError = err as Error;
         const code = (err as { code?: string }).code;
 
-        if (useReplica) {
-          this.replicaHealthy = false;
-          dbLogger.warn(
-            { error: (err as Error).message, code },
-            'Log DB replica read failed — retrying once against primary',
-          );
-          if (client) client.release();
-          client = null;
-          return this.queryWithRetry<T>(sql, params, { ...options, maxRetries });
-        }
-
-        if (code && NON_RETRYABLE_PG_CODES.has(code)) {
+        // Never retry timed-out queries (prevents 3x zombie query storms on LogDB)
+        if (isTimeoutError(err)) {
+          destroyClientOnRelease = true;
           throw err;
         }
 
+        // Only trip replica circuit breaker on genuine connection failures, with 15s auto-recovery
+        if (useReplica && isRetryableLogDbError(err)) {
+          this.replicaHealthy = false;
+          this.replicaUnhealthyUntil = Date.now() + 15_000;
+          destroyClientOnRelease = true;
+          dbLogger.warn(
+            { error: (err as Error).message, code },
+            'Log DB replica connection failed — falling back to primary for 15s',
+          );
+          continue;
+        }
+
+        if (!isRetryableLogDbError(err)) {
+          throw err;
+        }
+
+        destroyClientOnRelease = true;
         const isLastAttempt = attempt === maxRetries - 1;
         if (!isLastAttempt) {
           const base = Math.min(1000 * 2 ** attempt, 5000);
           const delay = base + Math.floor(Math.random() * 250); // jitter
           dbLogger.warn(
             { error: (err as Error).message, code, attempt: attempt + 1, nextRetryMs: delay },
-            'Log query failed — retrying',
+            'Transient log query error — retrying',
           );
           await sleep(delay);
         }
       } finally {
-        client?.release();
+        client?.release(destroyClientOnRelease);
       }
     }
 
@@ -462,7 +520,7 @@ class LogDatabaseManager {
 
   /**
    * Run a single statement, optionally bounded by a transaction-scoped
-   * `SET LOCAL statement_timeout` and/or an RLS tenant scope.
+   * `set_config('statement_timeout', ..., true)` and/or an RLS tenant scope.
    *
    * A transaction is opened when EITHER a bounded timeout OR a tenant scope is
    * required, because both mechanisms are transaction-scoped. The no-transaction
@@ -479,37 +537,42 @@ class LogDatabaseManager {
     params: unknown[] | undefined,
     timeout: number,
     projectId?: string | undefined,
+    markClientPoisoned?: () => void,
   ): Promise<QueryResult<T>> {
     const hasBoundedTimeout = typeof timeout === 'number' && timeout > 0;
     const needsTenantScope = typeof projectId === 'string' && projectId.length > 0;
 
-    // Fast path: when tenant scoping is not required, avoid wrapping in BEGIN..COMMIT.
-    // Client-side query_timeout bounds execution without incurring 3 extra network round trips
-    // and virtual transaction allocation on PostgreSQL.
-    if (!needsTenantScope) {
-      if (hasBoundedTimeout) {
-        return client.query<T>({
-          text: sql,
-          values: params,
-          query_timeout: Math.floor(timeout),
-        } as any);
-      }
+    // Fast path when neither timeout nor tenant scope is needed (e.g. unbounded writes)
+    if (!needsTenantScope && !hasBoundedTimeout) {
       return client.query<T>(sql, params);
     }
 
+    // Use a real PostgreSQL transaction with server-side `set_config('statement_timeout', ..., true)`
+    // so PostgreSQL itself cancels runaway queries at the engine level instead of leaving zombie
+    // queries running after a client-side `query_timeout` timer.
     await client.query('BEGIN');
     try {
-      // Both of the following are transaction-scoped, so neither can leak onto
-      // the pooled connection once this transaction ends.
-      await this.applyTenantScope(client, projectId);
-      if (hasBoundedTimeout) {
-        await client.query(`SET LOCAL statement_timeout = ${Math.floor(timeout)}`);
+      if (needsTenantScope && hasBoundedTimeout) {
+        await client.query(
+          `SELECT set_config('app.current_project_id', $1, true), set_config('statement_timeout', $2, true)`,
+          [projectId, String(Math.floor(timeout))],
+        );
+      } else if (needsTenantScope) {
+        await this.applyTenantScope(client, projectId);
+      } else if (hasBoundedTimeout) {
+        await client.query(
+          `SELECT set_config('statement_timeout', $1, true)`,
+          [String(Math.floor(timeout))],
+        );
       }
+
       const result = await client.query<T>(sql, params);
       await client.query('COMMIT');
       return result;
     } catch (err) {
-      await client.query('ROLLBACK').catch(() => {});
+      await client.query('ROLLBACK').catch(() => {
+        markClientPoisoned?.();
+      });
       throw err;
     }
   }
@@ -526,26 +589,37 @@ class LogDatabaseManager {
     const client = await this.getConnection({ operation: 'write' });
     const timeout = options?.timeout ?? env.LOG_DB_WRITE_TIMEOUT;
     const projectId = options?.projectId;
+    let destroyClientOnRelease = false;
 
     try {
       await client.query('BEGIN');
-      // Applied AFTER BEGIN so it is transaction-scoped and reverts on
-      // COMMIT/ROLLBACK. Applying it before BEGIN (the previous behaviour) made
-      // it session-scoped and leaked it onto the pooled connection.
-      if (typeof projectId === 'string' && projectId.length > 0) {
+      const hasProject = typeof projectId === 'string' && projectId.length > 0;
+      const hasTimeout = timeout > 0;
+
+      if (hasProject && hasTimeout) {
+        await client.query(
+          `SELECT set_config('app.current_project_id', $1, true), set_config('statement_timeout', $2, true)`,
+          [projectId, String(Math.floor(timeout))],
+        );
+      } else if (hasProject) {
         await this.applyTenantScope(client, projectId);
+      } else if (hasTimeout) {
+        await client.query(`SELECT set_config('statement_timeout', $1, true)`, [String(Math.floor(timeout))]);
       }
-      if (timeout > 0) {
-        await client.query(`SET LOCAL statement_timeout = ${Math.floor(timeout)}`);
-      }
+
       const result = await fn(client);
       await client.query('COMMIT');
       return result;
     } catch (err) {
-      await client.query('ROLLBACK').catch(() => {});
+      if (isTimeoutError(err)) {
+        destroyClientOnRelease = true;
+      }
+      await client.query('ROLLBACK').catch(() => {
+        destroyClientOnRelease = true;
+      });
       throw err;
     } finally {
-      client.release();
+      client.release(destroyClientOnRelease);
     }
   }
 

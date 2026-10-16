@@ -41,6 +41,7 @@ export declare class IngestionService {
     private readonly quotaRefreshes;
     private readonly quotaCacheTtlMs;
     constructor(pool: Pool, writer: PostgresWriter, config: ServiceConfig, sdkConfigService?: RemoteSdkConfigService | undefined);
+    stop(): Promise<void>;
     invalidateOrgQuotaCache(orgId: string): void;
     private resolveProject;
     private refreshQueueDepth;

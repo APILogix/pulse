@@ -89,7 +89,9 @@ export class OrganizationService {
             requireMember: this.requireMember.bind(this),
             audit: this.audit.bind(this),
             billingProvisioning: new BillingProvisioningService(),
-            provisionAlertingWorkspace: (client, context) => alertingWorkspaceProvisioner.provision(client, context),
+            provisionAlertingWorkspace: (context, client) => client
+                ? alertingWorkspaceProvisioner.provision(client, context)
+                : alertingWorkspaceProvisioner.provisionWorkspace(context),
             deleteApiKeyCache: (hash) => { try {
                 apiKeyCache.delete(hash);
             }

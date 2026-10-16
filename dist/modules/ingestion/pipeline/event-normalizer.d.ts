@@ -191,6 +191,7 @@ export declare const eventSchema: z.ZodDiscriminatedUnion<[z.ZodObject<{
         unknown: "unknown";
         custom: "custom";
         http: "http";
+        cache: "cache";
         security: "security";
         system: "system";
         queue: "queue";
@@ -198,7 +199,6 @@ export declare const eventSchema: z.ZodDiscriminatedUnion<[z.ZodObject<{
         application: "application";
         worker: "worker";
         cron: "cron";
-        cache: "cache";
         runtime: "runtime";
     }>>;
     endpoint: z.ZodOptional<z.ZodString>;

@@ -1,0 +1,21 @@
+# ==============================================================================
+# WireGuard Configuration for KVM 1 (App Node)
+# Location: /etc/wireguard/wg0.conf on KVM 1
+# ==============================================================================
+
+[Interface]
+# Private IP of KVM 1 inside the VPN mesh
+Address = 10.8.0.1/24
+ListenPort = 51820
+# Generate with: wg genkey > privatekey && wg pubkey < privatekey > publickey
+PrivateKey = <KVM1_PRIVATE_KEY_HERE>
+
+[Peer]
+# KVM 2 (Database Node) Public Key
+PublicKey = <KVM2_PUBLIC_KEY_HERE>
+# Public IP and WireGuard port of KVM 2
+Endpoint = <KVM2_PUBLIC_IP>:51820
+# Routed subnet for KVM 2
+AllowedIPs = 10.8.0.2/32
+# Keep NAT session alive through VPS firewalls
+PersistentKeepalive = 25

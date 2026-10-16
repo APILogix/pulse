@@ -1,11 +1,12 @@
 /**
- * In-process LRU rate limiter for the auth module.
+ * Shared Redis rate limiter with in-process LRU fallback for the auth module.
  *
- * Bootstrap-friendly: no Redis dependency. Counters live in memory and are
- * scoped per Node process (same tradeoff as MFA challenge caches in cache.ts).
- *
- * For multi-instance deployments, run a single API instance or accept that
- * limits are per-process until a shared store is introduced later.
+ * Tier 0.2 Implementation:
+ *   - Counters live in Redis under `auth:ratelimit:${scope}:${identity}`.
+ *   - Atomic evaluation via Lua script (INCR + PEXPIRE).
+ *   - Failure degradation:
+ *       * Login / MFA / Password routes FAIL CLOSED (503 Service Unavailable).
+ *       * Non-critical routes FAIL OPEN to preserve availability.
  */
 import type { FastifyRequest, preHandlerHookHandler } from 'fastify';
 export interface LruRateLimitOptions {

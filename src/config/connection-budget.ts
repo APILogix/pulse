@@ -82,26 +82,39 @@ function logPools(): PoolBudgetItem[] {
     : [primary];
 }
 
-function pgmqPools(): PoolBudgetItem[] {
+function pgmqCommandPool(max = 2): PoolBudgetItem {
+  return {
+    name: 'pgmq_command_pool',
+    max,
+    min: 0,
+    idleTimeoutMs: env.DB_IDLE_TIMEOUT_MS,
+    acquireTimeoutMs: env.DB_CONNECTION_TIMEOUT_MS,
+    purpose: 'PGMQ enqueue operations (send / send_batch)',
+    poolingMode: 'transaction',
+    targetEnvVar: 'DATABASE_URL',
+  };
+}
+
+function pgmqWorkerPools(readerMax = 4, commandMax = 3): PoolBudgetItem[] {
   return [
     {
       name: 'pgmq_reader_pool',
-      max: env.QUEUE_POOL_MAX,
+      max: readerMax,
       min: 0,
       idleTimeoutMs: env.DB_IDLE_TIMEOUT_MS,
       acquireTimeoutMs: env.DB_CONNECTION_TIMEOUT_MS,
-      purpose: 'PGMQ message reads and worker polling',
-      poolingMode: 'direct',
+      purpose: 'PGMQ message reads and worker long-polling (session-mode isolated)',
+      poolingMode: 'session',
       targetEnvVar: 'DATABASE_URL',
     },
     {
       name: 'pgmq_command_pool',
-      max: env.QUEUE_COMMAND_POOL_MAX,
+      max: commandMax,
       min: 0,
       idleTimeoutMs: env.DB_IDLE_TIMEOUT_MS,
       acquireTimeoutMs: env.DB_CONNECTION_TIMEOUT_MS,
       purpose: 'PGMQ send, ACK, delete, and heartbeat commands',
-      poolingMode: 'direct',
+      poolingMode: 'transaction',
       targetEnvVar: 'DATABASE_URL',
     },
   ];
@@ -119,16 +132,17 @@ function budget(role: ProcessRole, description: string, pools: PoolBudgetItem[])
 export function getProcessBudget(role: ProcessRole): ProcessBudget {
   switch (role) {
     case 'api':
-      return budget(role, 'Fastify API server', [primaryPool(), ...logPools(), ...pgmqPools()]);
+      // Fastify API only enqueues messages via pgmq.send; never allocate a blocking reader pool
+      return budget(role, 'Fastify API server', [primaryPool(), ...logPools(), pgmqCommandPool(2)]);
     case 'worker':
-      return budget(role, 'General background workers', [primaryPool(), ...logPools(), ...pgmqPools()]);
+      return budget(role, 'General background workers', [primaryPool(), ...logPools(), ...pgmqWorkerPools(4, 3)]);
     case 'alert-worker':
-      return budget(role, 'Dedicated alert delivery workers', [primaryPool(), ...logPools(), ...pgmqPools()]);
+      return budget(role, 'Dedicated alert delivery workers', [primaryPool(), ...logPools(), ...pgmqWorkerPools(4, 3)]);
     case 'ingestion':
       return budget(role, 'High-throughput ingestion workers', [
         {
           name: 'ingestion_control_pool',
-          max: env.INGESTION_DB_POOL_SIZE,
+          max: env.INGESTION_DB_POOL_SIZE ?? 6,
           min: 0,
           idleTimeoutMs: env.DB_IDLE_TIMEOUT_MS,
           acquireTimeoutMs: env.DB_CONNECTION_TIMEOUT_MS,
@@ -138,32 +152,33 @@ export function getProcessBudget(role: ProcessRole): ProcessBudget {
         },
         {
           name: 'ingestion_write_pool',
-          max: env.INGESTION_WRITE_POOL_SIZE,
+          max: env.INGESTION_WRITE_POOL_SIZE ?? 8,
           min: 0,
           idleTimeoutMs: env.LOG_DB_IDLE_TIMEOUT,
           acquireTimeoutMs: env.LOG_DB_CONNECTION_TIMEOUT,
           purpose: 'Dedicated telemetry persistence',
           poolingMode: 'direct',
-          targetEnvVar: 'LOG_DB_PRIMARY',
+          targetEnvVar: 'LOG_DB_DIRECT_URL',
         },
-        ...pgmqPools(),
+        ...pgmqWorkerPools(4, 4),
       ]);
     case 'analytics':
       return budget(role, 'Analytics and rollup workers', [
         {
           name: 'analytics_logdb_pool',
-          max: env.ANALYTICS_DB_POOL_MAX,
+          max: env.ANALYTICS_DB_POOL_MAX ?? 6,
           min: 0,
           idleTimeoutMs: env.LOG_DB_IDLE_TIMEOUT,
           acquireTimeoutMs: env.LOG_DB_CONNECTION_TIMEOUT,
           purpose: 'Rollups, retention, and partition maintenance',
           poolingMode: 'direct',
-          targetEnvVar: 'LOG_DB_PRIMARY',
+          targetEnvVar: 'LOG_DB_DIRECT_URL',
         },
-        ...pgmqPools(),
+        ...pgmqWorkerPools(2, 2),
       ]);
     case 'cron':
-      return budget(role, 'Scheduled PGMQ jobs', [primaryPool(), ...pgmqPools()]);
+      // Cron only dispatches scheduled jobs via pgmq.send; never allocate a blocking reader pool
+      return budget(role, 'Scheduled PGMQ jobs', [primaryPool(), pgmqCommandPool(2)]);
     case 'migration':
       return budget(role, 'One-shot database migration runner', [
         {
