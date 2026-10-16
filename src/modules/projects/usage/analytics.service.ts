@@ -220,14 +220,45 @@ export class UsageAnalyticsService {
     }
   }
 
+  private quantizeQuery(query: Record<string, unknown>): Record<string, unknown> {
+    if (!CacheFlags.analyticsTimeQuantization) {
+      return query;
+    }
+    const fromStr = query.from;
+    const toStr = query.to;
+    if (typeof fromStr !== 'string' || typeof toStr !== 'string') {
+      return query;
+    }
+
+    const fromMs = new Date(fromStr).getTime();
+    const toMs = new Date(toStr).getTime();
+    if (Number.isNaN(fromMs) || Number.isNaN(toMs)) {
+      return query;
+    }
+
+    const rangeMs = Math.abs(toMs - fromMs);
+    // < 1 hour: 1 minute (60_000ms) bucket. >= 1 hour: 5 minutes (300_000ms) bucket.
+    const bucketMs = rangeMs < 60 * 60 * 1000 ? 60_000 : 300_000;
+
+    const flooredFrom = new Date(Math.floor(fromMs / bucketMs) * bucketMs).toISOString();
+    const flooredTo = new Date(Math.floor(toMs / bucketMs) * bucketMs).toISOString();
+
+    return {
+      ...query,
+      from: flooredFrom,
+      to: flooredTo,
+    };
+  }
+
   private cacheKey(method: string, orgId: string, projectId: string, query: Record<string, unknown>): string {
     if (!CacheFlags.analyticsPaginationFix) {
       // Legacy behavior (kill-switch fallback)
       const { cursor, ...rest } = query;
       return `${method}:${projectId}:${JSON.stringify(rest)}`;
     }
-    // Fixed: Retain cursor to prevent cross-page cache collisions and scope by orgId
-    return `org:${orgId}:${method}:${projectId}:${JSON.stringify(query)}`;
+    const normalizedQuery = this.quantizeQuery(query);
+    // Fixed: Retain cursor to prevent cross-page cache collisions, scope by orgId, and quantize time bounds
+    return `org:${orgId}:${method}:${projectId}:${JSON.stringify(normalizedQuery)}`;
   }
 
   private encodeCursor(offset: number): string {
