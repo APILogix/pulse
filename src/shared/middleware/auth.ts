@@ -32,6 +32,8 @@ import {
   getUserRevokeCutoff,
   hasFreshStepUp,
   isAccessTokenBlacklisted,
+  getCachedAuthSession,
+  setCachedAuthSession,
 } from '../../modules/auth/infrastructure/cache/auth.cache.js';
 import { findSessionAndUserById } from '../../modules/auth/infrastructure/repositories/index.js';
 import { AuthErrorCodes } from '../../modules/auth/domain/types.js';
@@ -124,8 +126,14 @@ export async function authenticate(
       );
     }
 
-    // 5-7. Database lookup (single joined query for session + user)
-    const record = await findSessionAndUserById(decoded.jti);
+    // 5-7. Database lookup (single joined query for session + user, cached for 30s)
+    let record = await getCachedAuthSession(decoded.jti);
+    if (!record) {
+      record = await findSessionAndUserById(decoded.jti);
+      if (record && record.session_status === 'active' && !record.user_deleted_at && record.user_status !== 'suspended') {
+        await setCachedAuthSession(decoded.jti, record, 30);
+      }
+    }
     if (!record) {
       log.warn({ reqId: request.id, sessionId: decoded.jti }, 'Session not found');
       return unauthorized(reply, 'SESSION_INVALID', 'Session not found');
@@ -178,7 +186,7 @@ export async function authenticate(
       currentOrgId: record.user_current_org_id ?? null,
       sessionId: decoded.jti,
       mfaVerified: decoded.mfa_verified === true,
-      stepUpFresh: hasFreshStepUp(decoded.jti),
+      stepUpFresh: await hasFreshStepUp(decoded.jti),
     };
   } catch (error) {
     log.error({ reqId: request.id, err: error }, 'Authentication failed unexpectedly');

@@ -27,6 +27,62 @@
 import { LRUCache } from 'lru-cache';
 import { redis } from '../../../../config/redis.js';
 import { CacheFlags } from '../../../../config/cache-flags.js';
+import { registerL1Cache, publishInvalidation } from '../../../../shared/cache/invalidation-bus.js';
+
+export const authSessionCache = new LRUCache<string, any>({
+  max: 50_000,
+  ttl: 30_000, // 30 seconds L1
+  updateAgeOnGet: false,
+});
+
+registerL1Cache('authSession', authSessionCache);
+
+export async function getCachedAuthSession(sessionId: string): Promise<any | null> {
+  const local = authSessionCache.get(sessionId);
+  if (local) {
+    return local;
+  }
+  if (CacheFlags.authRedisState) {
+    try {
+      const raw = await redis.get(`auth:session:${sessionId}`);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        authSessionCache.set(sessionId, parsed);
+        return parsed;
+      }
+    } catch {
+      // Degrade gracefully
+    }
+  }
+  return null;
+}
+
+export async function setCachedAuthSession(
+  sessionId: string,
+  sessionRecord: any,
+  ttlSeconds: number = 30,
+): Promise<void> {
+  authSessionCache.set(sessionId, sessionRecord, { ttl: ttlSeconds * 1000 });
+  if (CacheFlags.authRedisState) {
+    try {
+      await redis.set(`auth:session:${sessionId}`, JSON.stringify(sessionRecord), 'EX', ttlSeconds);
+    } catch {
+      // Degrade gracefully
+    }
+  }
+}
+
+export async function invalidateCachedAuthSession(sessionId: string): Promise<void> {
+  authSessionCache.delete(sessionId);
+  if (CacheFlags.authRedisState) {
+    try {
+      await redis.del(`auth:session:${sessionId}`);
+    } catch {
+      // Degrade gracefully
+    }
+  }
+  publishInvalidation('authSession', sessionId).catch(() => {});
+}
 
 /**
  * Per-session access-token blacklist.
@@ -251,6 +307,7 @@ export const webauthnChallengeCache = new LRUCache<string, WebAuthnChallengeStat
 
 export async function blacklistAccessToken(sessionId: string): Promise<void> {
   accessTokenBlacklistCache.set(sessionId, 1);
+  await invalidateCachedAuthSession(sessionId);
   if (CacheFlags.authRedisState) {
     try {
       await redis.set(`auth:blacklist:${sessionId}`, '1', 'EX', 15 * 60);
