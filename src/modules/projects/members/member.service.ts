@@ -18,6 +18,7 @@ import { MemberRepository } from "./member.repository.js";
 import { ProjectError } from "../shared/utils.js";
 import { BaseProjectService } from "../shared/base.service.js";
 import type { RequestMeta } from "../service.js";
+import { invalidateProjectRoleCache } from "../../../shared/middleware/tenant.js";
 
 export interface ProjectMemberServiceDeps {
   repository: ProjectsRepository;
@@ -95,6 +96,8 @@ export class ProjectMemberService extends BaseProjectService {
       ? await this.membersRepository.restoreProjectMember(existing.id, body.role, userId)
       : await this.membersRepository.addProjectMember(projectId, orgId, body.userId, body.role, userId);
 
+    invalidateProjectRoleCache(projectId, added.userId);
+
     await this.auditMemberChange(
       meta, orgId, projectId, "member.added", "member", added.id,
       { userId: added.userId, role: added.role },
@@ -122,6 +125,7 @@ export class ProjectMemberService extends BaseProjectService {
       );
     }
     const removed = await this.membersRepository.removeProjectMember(memberId, userId);
+    invalidateProjectRoleCache(projectId, member.userId);
     await this.auditMemberChange(
       meta, orgId, projectId, "member.removed", "member", removed.id,
       { userId: removed.userId, role: removed.role }, "Member removed",
@@ -150,6 +154,7 @@ export class ProjectMemberService extends BaseProjectService {
       );
     }
     const updated = await this.membersRepository.updateProjectMemberRole(memberId, body.role);
+    invalidateProjectRoleCache(projectId, member.userId);
     await this.auditMemberChange(
       meta, orgId, projectId, "member.role_changed", "member", updated.id,
       { userId: updated.userId, oldRole: member.role, newRole: updated.role },
@@ -175,6 +180,8 @@ export class ProjectMemberService extends BaseProjectService {
     const result = await this.membersRepository.transferOwnership(
       projectId, userId, newOwnerUserId, userId,
     );
+    invalidateProjectRoleCache(projectId, userId);
+    invalidateProjectRoleCache(projectId, newOwnerUserId);
     await this.auditMemberChange(
       meta, orgId, projectId, "member.role_changed", "member", result.toMember.id,
       { previousOwnerId: userId, newOwnerId: newOwnerUserId },

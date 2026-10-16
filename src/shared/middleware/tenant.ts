@@ -48,8 +48,16 @@ export const membershipCache = new LRUCache<string, boolean>({
   ttlAutopurge: true,
 });
 
+// `${projectId}:${userId}` -> role. 60s TTL bounds staleness of project role checks.
+export const projectRoleCache = new LRUCache<string, string>({
+  max: 100_000,
+  ttl: 60 * 1000,
+  ttlAutopurge: true,
+});
+
 registerL1Cache("membership", membershipCache);
 registerL1Cache("projectOrg", projectOrgCache);
+registerL1Cache("projectRole", projectRoleCache);
 
 function unauthorized(
   reply: FastifyReply,
@@ -229,3 +237,37 @@ export function invalidateProjectOrgCache(projectId: string): void {
   projectOrgCache.delete(projectId);
   void publishInvalidation("projectOrg", projectId);
 }
+
+const NO_ROLE = "__NONE__";
+
+/**
+ * Resolve a user's role in a project with a 60s in-process LRU cache.
+ */
+export async function getProjectRole(
+  projectId: string,
+  userId: string,
+): Promise<string | null> {
+  const cacheKey = `${projectId}:${userId}`;
+  const cached = projectRoleCache.get(cacheKey);
+  if (cached !== undefined) return cached === NO_ROLE ? null : cached;
+
+  const result = await pool.query<{ role: string }>(
+    `SELECT pm.role
+     FROM project_members pm
+     JOIN projects p ON p.id = pm.project_id
+     WHERE pm.project_id = $1 AND pm.user_id = $2 AND pm.status = 'active' AND p.deleted_at IS NULL
+     LIMIT 1`,
+    [projectId, userId],
+  );
+  const role = result.rows[0]?.role ?? null;
+  projectRoleCache.set(cacheKey, role ?? NO_ROLE);
+  return role;
+}
+
+/** Invalidate cached project role on member add, remove, or role update. */
+export function invalidateProjectRoleCache(projectId: string, userId: string): void {
+  const key = `${projectId}:${userId}`;
+  projectRoleCache.delete(key);
+  void publishInvalidation("projectRole", key);
+}
+

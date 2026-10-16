@@ -29,6 +29,7 @@ import { ProjectError } from "./shared/utils.js";
 import { ProjectRepository } from "./core/project.repository.js";
 import { MemberRepository } from "./members/member.repository.js";
 import { ProjectUsageRepository } from "./usage/project-usage.repository.js";
+import { getProjectRole } from "../../shared/middleware/tenant.js";
 
 export interface ProjectModuleUsageCounts {
   projects: number;
@@ -69,6 +70,10 @@ export class ProjectsRepository {
     userId: string,
     client?: PoolClient,
   ): Promise<ProjectMemberRole | null> {
+    if (!client) {
+      const cached = await getProjectRole(projectId, userId);
+      if (cached !== null) return cached as ProjectMemberRole;
+    }
     const db = client ?? this.db;
     const result = await db.query<{ role: ProjectMemberRole }>(
       `SELECT pm.role
