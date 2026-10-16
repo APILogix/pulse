@@ -32,7 +32,8 @@ import type { Pool } from 'pg';
 
 import { env } from '../../config/env.js';
 import { logger } from '../../config/logger.js';
-import { apiKeyCache, type CachedProjectConfig } from '../../config/lrucashe.js';
+import { apiKeyCache, invalidApiKeyCache, type CachedProjectConfig } from '../../config/lrucashe.js';
+import { CacheFlags } from '../../config/cache-flags.js';
 import {
   syncApiKeyLookupToLogDbBestEffort,
   syncEnvironmentLookupToLogDbBestEffort,
@@ -253,15 +254,21 @@ export class IngestionService {
       bufferLimit: env.INGESTION_USAGE_BUFFER_LIMIT,
       driveRollup: false,
     });
-    this.usage.start();
+    if (process.env.NODE_ENV !== 'test') {
+      this.usage.start();
 
-    // Warm provisioning at boot (pgboss.start() precedes module registration
-    // in main.ts). The request path enqueues optimistically and only waits for
-    // provisioning if the enqueue proves queues are unavailable.
-    warmIngestQueuesProvisioned();
+      // Warm provisioning at boot (pgboss.start() precedes module registration
+      // in main.ts). The request path enqueues optimistically and only waits for
+      // provisioning if the enqueue proves queues are unavailable.
+      warmIngestQueuesProvisioned();
+    }
 
     // Register with central entitlements invalidation event bus
     entitlementsService.onOrgInvalidate((orgId) => this.invalidateOrgQuotaCache(orgId));
+  }
+
+  async stop(): Promise<void> {
+    await this.usage.stop();
   }
 
   public invalidateOrgQuotaCache(orgId: string): void {
@@ -271,6 +278,11 @@ export class IngestionService {
   // ── Project resolution (LRU only; Postgres fallback) ──────────────────────
   private async resolveProject(apiKey: string): Promise<ResolvedProject | null> {
     const keyHash = hashApiKey(apiKey);
+
+    // Negative cache fast-path: reject known-invalid keys immediately without DB query
+    if (CacheFlags.ingestionNegativeCache && invalidApiKeyCache.has(keyHash)) {
+      return null;
+    }
 
     const cached = apiKeyCache.get(keyHash) as CachedProjectConfig | undefined;
     if (cached) {
@@ -309,7 +321,16 @@ export class IngestionService {
     }
 
     const auth = await this.writer.resolveApiKey(apiKey);
-    if (!auth) return null;
+    if (!auth) {
+      if (CacheFlags.ingestionNegativeCache) {
+        invalidApiKeyCache.set(keyHash, true);
+      }
+      return null;
+    }
+
+    if (CacheFlags.ingestionNegativeCache && invalidApiKeyCache.has(keyHash)) {
+      invalidApiKeyCache.delete(keyHash);
+    }
 
     const resolved: ResolvedProject = {
       id: auth.projectId,

@@ -13,7 +13,7 @@
  */
 import type { PoolClient } from "pg";
 import type { FastifyBaseLogger } from "fastify";
-import { apiKeyCache } from "../../../config/lrucashe.js";
+import { apiKeyCache, evictApiKeyCache, invalidApiKeyCache } from "../../../config/lrucashe.js";
 import { redisLookupCache } from "../../../db/redis/lookup-cache.js";
 import type { OrganizationRepository } from "../../organization/repository.js";
 import type { OrganizationAuditService } from "../../organization/audit-logs/audit-logs.service.js";
@@ -206,6 +206,7 @@ export class ApiKeyService extends BaseProjectService {
     );
 
     try {
+      invalidApiKeyCache.delete(created.secretHash);
       apiKeyCache.set(created.secretHash, {
         projectId,
         environmentId: created.environmentId,
@@ -712,7 +713,7 @@ export class ApiKeyService extends BaseProjectService {
 
   public evictApiKeyConfig(secretHash: string): void {
     try {
-      apiKeyCache.delete(secretHash);
+      evictApiKeyCache(secretHash);
       void redisLookupCache.invalidateApiKey(secretHash);
     } catch (err) {
       this.logger.warn({ err }, "Failed to evict API key cache");
